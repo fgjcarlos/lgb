@@ -1,0 +1,85 @@
+# openspec/config.yaml — lgb
+schema: spec-driven
+
+project: lgb
+module: github.com/fgjcarlos/lgb
+go_version: "1.24.0"
+
+context: |
+  Stack: Go 1.24.0 (pure-Go, no CGo), React + Vite + TypeScript (planned frontend)
+  Architecture: CLI/server binary at cmd/lgb; internal packages TBD by sdd-new
+  Database: SQLite via modernc.org/sqlite (pure-Go, CGO_ENABLED=0)
+  Protocols: OPC UA (gopcua/opcua), MQTT (eclipse/paho.mqtt.golang), CIP (danomagnum/gologix)
+  Backup: restic
+  Targets: linux/amd64, linux/arm64, darwin/arm64, windows/amd64
+
+constraints:
+  - Pure-Go only — no CGo dependencies ever (CGO_ENABLED=0 in CI)
+  - Multi-platform: linux/amd64, linux/arm64, darwin/arm64, windows/amd64
+  - No source code yet — architecture defined by /sdd-new
+
+testing:
+  strict_tdd: true
+  detected: "2026-05-22"
+  runner:
+    command: "go test ./... -race -count=1"
+    make_target: "make test"
+    framework: "testing (stdlib)"
+  vet:
+    command: "go vet ./..."
+    make_target: "make vet"
+  layers:
+    unit:
+      available: true
+      tool: "testing (stdlib)"
+    integration:
+      available: true
+      tool: "net/http/httptest"
+    e2e:
+      available: false
+      tool: null
+  coverage:
+    available: true
+    command: "go test ./... -race -count=1 -coverprofile=coverage.out"
+  quality:
+    linter:
+      available: false
+      command: null
+      note: "No golangci-lint config detected yet; add when source exists"
+    type_checker:
+      available: true
+      command: "go vet ./..."
+    formatter:
+      available: true
+      command: "gofmt -l ."
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Confirm pure-Go dependency choices (no CGo)
+    - Document cross-platform impact for any OS-specific code
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Call out platform-specific behaviour explicitly
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Verify all external library choices are pure-Go
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - First task in any apply batch must be the failing test (strict TDD)
+  apply:
+    - Follow existing code patterns
+    tdd: true
+    test_command: "go test ./... -race -count=1"
+    vet_command: "go vet ./..."
+    build_command: "go build -o bin/lgb ./cmd/lgb"
+  verify:
+    test_command: "go test ./... -race -count=1"
+    build_command: "go build ./..."
+    vet_command: "go vet ./..."
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

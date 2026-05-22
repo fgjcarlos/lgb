@@ -1,0 +1,22 @@
+# invalid.yaml — configuration with two deliberate violations.
+# Used by Validate() tests to verify that both errors are aggregated.
+# Violations:
+#   1. gateway.logLevel: "verbose"  (must be one of debug|info|warn|error)
+#   2. auth.sessionTTL: "not-a-duration"  (must be a valid Go duration string)
+
+gateway:
+  id: "lgb-invalid"
+  logLevel: "verbose"
+  logFormat: "text"
+  dataDir: "/tmp/lgb-invalid"
+
+server:
+  httpAddr: ":8080"
+  tlsEnabled: false
+
+auth:
+  jwtSecret: ""
+  sessionTTL: "not-a-duration"
+
+historian:
+  retentionDays: 90

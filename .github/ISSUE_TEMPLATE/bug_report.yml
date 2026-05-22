@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible bug in LGB
+title: "bug: "
+labels: ["type: bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail for the maintainer to reproduce it.
+        Do not include real PLC IPs, real broker URLs, or production credentials. Replace them with placeholders.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: LGB does X, but I expected Y.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Exact steps to reproduce the issue.
+      placeholder: |
+        1. Start LGB with ...
+        2. Connect to PLC ...
+        3. Subscribe via OPC UA / Sparkplug ...
+        4. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - PLC driver (CIP / gologix)
+        - OPC UA server
+        - Sparkplug B
+        - Tag mapping / ACL
+        - Audit trail
+        - Historian / SQLite
+        - Backups / restic
+        - Auth / users
+        - Frontend / UI
+        - CLI
+        - Deployment / Docker
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker version, PLC family and firmware, deployment mode, browser if UI-related.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Remove secrets, tokens, passwords, real PLC IPs, private URLs, and personal data before posting.
+      render: shell
+    validations:
+      required: false

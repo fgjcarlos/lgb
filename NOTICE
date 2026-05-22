@@ -1,0 +1,21 @@
+Logix Gateway Bridge (LGB)
+Copyright 2026 Carlos Fontán and contributors.
+
+LGB is an open source bidirectional gateway between Rockwell ControlLogix and
+CompactLogix programmable logic controllers and modern IIoT standards
+(OPC UA, MQTT Sparkplug B).
+
+This product includes software developed by the LGB project.
+Project repository: https://github.com/fgjcarlos/lgb
+
+LGB is not affiliated with, endorsed by, or sponsored by Rockwell Automation.
+"Allen-Bradley", "ControlLogix", "CompactLogix", and "Logix" are trademarks of
+Rockwell Automation. LGB uses the EtherNet/IP industrial protocol (Common
+Industrial Protocol, CIP) as published by ODVA. ODVA, EtherNet/IP, and CIP are
+trademarks of ODVA, Inc.
+
+OPC UA is a trademark of the OPC Foundation. LGB is not affiliated with the
+OPC Foundation.
+
+Sparkplug and MQTT are trademarks of their respective owners. LGB is not
+affiliated with the Eclipse Foundation or OASIS.

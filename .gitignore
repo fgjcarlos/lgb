@@ -1,0 +1,46 @@
+# Build outputs
+bin/
+dist/
+frontend/dist/
+frontend/node_modules/
+
+# Go test artifacts
+*.test
+coverage.out
+coverage.html
+
+# Generated binaries
+lgb
+lgb-*
+
+# Local data and backups
+data/
+backups/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+!ca.crt
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Engram / SDD local artifacts that should not be committed
+.engram/
+.atl/cache/

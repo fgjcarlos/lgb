@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a focused feature for LGB
+title: "feat: "
+labels: ["type: feature", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are welcome when they are focused and aligned with LGB's roadmap.
+        For large ideas, expect discussion and possible re-scoping before implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user/operator problem does this solve?
+      placeholder: As a plant integrator, I need ... so that ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version of the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Include workarounds or simpler approaches.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - PLC driver (CIP / gologix)
+        - OPC UA server
+        - Sparkplug B
+        - Tag mapping / ACL
+        - Audit trail
+        - Historian / SQLite
+        - Backups / restic
+        - Auth / users
+        - Frontend / UI
+        - CLI
+        - Deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How would we know this is done?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true

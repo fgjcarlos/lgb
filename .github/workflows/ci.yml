@@ -18,9 +18,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Check for Go source files
+        id: gocheck
+        run: |
+          if find . -name '*.go' -not -path './vendor/*' -not -path './node_modules/*' -print -quit | grep -q .; then
+            echo "has_go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_go=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Go source files yet — skipping vet and test."
+          fi
       - name: go vet
+        if: steps.gocheck.outputs.has_go == 'true'
         run: go vet ./...
       - name: go test
+        if: steps.gocheck.outputs.has_go == 'true'
         run: go test ./... -race -count=1
 
   backend-build:

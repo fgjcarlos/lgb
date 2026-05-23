@@ -181,14 +181,14 @@ Doctor `plc-reachable` check, `server.New` signature update, and `cmd/lgb/cmd/se
 
 ### Group A — Doctor plc-reachable check
 
-- [ ] **T-4.01** `test` — **[RED]** Extend `internal/doctor/checks_test.go`: (a) `TestPLCReachableCheck_Pass` — start real TCP listener on random port, config PLC with that address → result status `Pass`, message contains address; (b) `TestPLCReachableCheck_Fail` — config PLC with `127.0.0.1:19999` (not listening) → status `Fail`, message contains address; (c) `TestPLCReachableCheck_NoPort_DefaultsTo44818` — config PLC address `192.168.1.10` (no port) → check dials `192.168.1.10:44818` (verify via `net.Listen` spy or address assertion); (d) `TestPLCReachableCheck_Timeout` — config `socketTimeout: "50ms"`, address is a black-hole → result within ~200 ms, status `Fail`; (e) `TestDefault_WithPLCs_RegistersCheck` — `Default(cfg)` with one PLC → `r.Checks()` length 6, sixth check name is `"plc-reachable/<name>"`; (f) `TestDefault_NoPLCs_NoCheckRegistered` — `Default(cfg)` with empty PLCs → length 5.
+- [x] **T-4.01** `test` — **[RED]** Extend `internal/doctor/checks_test.go`: (a) `TestPLCReachableCheck_Pass` — start real TCP listener on random port, config PLC with that address → result status `Pass`, message contains address; (b) `TestPLCReachableCheck_Fail` — config PLC with `127.0.0.1:19999` (not listening) → status `Fail`, message contains address; (c) `TestPLCReachableCheck_NoPort_DefaultsTo44818` — config PLC address `192.168.1.10` (no port) → check dials `192.168.1.10:44818` (verify via `net.Listen` spy or address assertion); (d) `TestPLCReachableCheck_Timeout` — config `socketTimeout: "50ms"`, address is a black-hole → result within ~200 ms, status `Fail`; (e) `TestDefault_WithPLCs_RegistersCheck` — `Default(cfg)` with one PLC → `r.Checks()` length 6, sixth check name is `"plc-reachable/<name>"`; (f) `TestDefault_NoPLCs_NoCheckRegistered` — `Default(cfg)` with empty PLCs → length 5.
   - **Files**: `internal/doctor/checks_test.go`
   - **Reqs**: PLC-DOC-1.1, PLC-DOC-1.2, PLC-DOC-1.3, PLC-DOC-1.4, PLC-DOC-1.5
   - **Design**: §9 (doctor integration)
   - **Deps**: T-1.04
   - **DoD**: `go test ./internal/doctor/...` FAILS (plcReachableCheck not implemented).
 
-- [ ] **T-4.02** `impl` — **[GREEN]** Add `plcReachableCheck` to `internal/doctor/checks.go`: struct with `plc config.PLC`; `Name()` returns `"plc-reachable/<name-or-address>"`; `Run(ctx)` calls `net.DialTimeout("tcp", addr, timeout)` where addr defaults port to `:44818` if no port present, timeout from `time.ParseDuration(plc.SocketTimeout)` defaulting to 5 s; closes conn on success; returns `StatusPass` or `StatusFail`. Update `Default(cfg *config.Config)` in `internal/doctor/doctor.go` to iterate `cfg.PLCs` and register one `plcReachableCheck` per entry after the existing five checks.
+- [x] **T-4.02** `impl` — **[GREEN]** Add `plcReachableCheck` to `internal/doctor/checks.go`: struct with `plc config.PLC`; `Name()` returns `"plc-reachable/<name-or-address>"`; `Run(ctx)` calls `net.DialTimeout("tcp", addr, timeout)` where addr defaults port to `:44818` if no port present, timeout from `time.ParseDuration(plc.SocketTimeout)` defaulting to 5 s; closes conn on success; returns `StatusPass` or `StatusFail`. Update `Default(cfg *config.Config)` in `internal/doctor/doctor.go` to iterate `cfg.PLCs` and register one `plcReachableCheck` per entry after the existing five checks.
   - **Files**: `internal/doctor/checks.go`, `internal/doctor/doctor.go`
   - **Reqs**: PLC-DOC-1.1, PLC-DOC-1.2, PLC-DOC-1.4, PLC-DOC-1.5
   - **Design**: §9
@@ -197,14 +197,14 @@ Doctor `plc-reachable` check, `server.New` signature update, and `cmd/lgb/cmd/se
 
 ### Group B — Server wiring
 
-- [ ] **T-4.03** `test` — **[RED]** Extend `internal/server/server_test.go`: (a) `TestServer_WithPLCManager_StartStop` — create `MockPLCManager` (unexported interface with `Start(ctx) error` and `Stop() error`); pass to `server.New`; `Run(ctx)` calls `Start` before serving, `Stop` after ctx cancel; (b) `TestServer_NilPLCManager_NoOp` — nil manager → Run still works (backward compatible).
+- [x] **T-4.03** `test` — **[RED]** Extend `internal/server/server_test.go`: (a) `TestServer_WithPLCManager_StartStop` — create `MockPLCManager` (unexported interface with `Start(ctx) error` and `Stop() error`); pass to `server.New`; `Run(ctx)` calls `Start` before serving, `Stop` after ctx cancel; (b) `TestServer_NilPLCManager_NoOp` — nil manager → Run still works (backward compatible).
   - **Files**: `internal/server/server_test.go`
   - **Reqs**: PLC-DRV-2.1 (manager lifecycle via server)
   - **Design**: §10 (server wiring)
   - **Deps**: T-3.02
   - **DoD**: `go test ./internal/server/...` FAILS (server.New does not accept manager yet).
 
-- [ ] **T-4.04** `impl` — **[GREEN]** Update `internal/server/server.go`: change `New` signature to `New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager) *Server` where `PLCManager` is a local unexported interface `{ Start(context.Context) error; Stop() error }`. In `Run(ctx)`: if `plcMgr != nil`, call `plcMgr.Start(ctx)` before `srv.Serve`; on ctx cancel call `plcMgr.Stop()` before `httpx.Shutdown`. Accepting `nil` is valid (no-op path).
+- [x] **T-4.04** `impl` — **[GREEN]** Update `internal/server/server.go`: change `New` signature to `New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager) *Server` where `PLCManager` is a local unexported interface `{ Start(context.Context) error; Stop() error }`. In `Run(ctx)`: if `plcMgr != nil`, call `plcMgr.Start(ctx)` before `srv.Serve`; on ctx cancel call `plcMgr.Stop()` before `httpx.Shutdown`. Accepting `nil` is valid (no-op path).
   - **Files**: `internal/server/server.go`
   - **Reqs**: PLC-DRV-2.1
   - **Design**: §10
@@ -213,14 +213,14 @@ Doctor `plc-reachable` check, `server.New` signature update, and `cmd/lgb/cmd/se
 
 ### Group C — cmd/lgb wiring
 
-- [ ] **T-4.05** `test` — **[RED]** Extend `cmd/lgb/cmd/server_test.go`: (a) valid config with one PLC entry → `NewServerCmd` creates a `plc.Manager`, passes it to `server.New`; spy via injectable factory in `Deps.PLCManagerFactory func(cfg) PLCManager`; (b) config with no PLCs → `plcMgr` passed as nil (no crash).
+- [x] **T-4.05** `test` — **[RED]** Extend `cmd/lgb/cmd/server_test.go`: (a) valid config with one PLC entry → `NewServerCmd` creates a `plc.Manager`, passes it to `server.New`; spy via injectable factory in `Deps.PLCManagerFactory func(cfg) PLCManager`; (b) config with no PLCs → `plcMgr` passed as nil (no crash).
   - **Files**: `cmd/lgb/cmd/server_test.go`
   - **Reqs**: PLC-DRV-2.1
   - **Design**: §10
   - **Deps**: T-4.04
   - **DoD**: `go test ./cmd/lgb/cmd/...` FAILS (server cmd does not create Manager yet).
 
-- [ ] **T-4.06** `impl` — **[GREEN]** Update `cmd/lgb/cmd/server.go`: create `plc.NewManager(d.Config, d.Logger)` when `len(d.Config.PLCs) > 0`, otherwise nil; pass manager to `server.New(d.Config, d.Logger, doctor.Default(d.Config).Checks(), plcMgr)`. Update all call-sites of `server.New` that now need the fourth parameter (add nil for non-server-cmd callers). Log INFO `component="plc-manager"` when manager is created.
+- [x] **T-4.06** `impl` — **[GREEN]** Update `cmd/lgb/cmd/server.go`: create `plc.NewManager(d.Config, d.Logger)` when `len(d.Config.PLCs) > 0`, otherwise nil; pass manager to `server.New(d.Config, d.Logger, doctor.Default(d.Config).Checks(), plcMgr)`. Update all call-sites of `server.New` that now need the fourth parameter (add nil for non-server-cmd callers). Log INFO `component="plc-manager"` when manager is created.
   - **Files**: `cmd/lgb/cmd/server.go`, `internal/server/server.go` (nil-safe callsite if any), `cmd/lgb/cmd/server_test.go` (Deps extension)
   - **Reqs**: PLC-DRV-2.1
   - **Design**: §10

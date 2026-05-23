@@ -27,6 +27,12 @@ Every `internal/` package that produces domain-specific errors MUST export named
 | `internal/datadir` | `ErrDataDirPermission` | Path not writable by running user |
 | `internal/doctor` | `ErrCheckFailed` | A doctor check returned FAIL status |
 | `internal/retry` | `ErrMaxAttempts` | Retry exhausted max attempts |
+| `internal/errors` | `ErrPLCConnect` | TCP/CIP connection to PLC cannot be established |
+| `internal/errors` | `ErrPLCRead` | Tag read operation failed |
+| `internal/errors` | `ErrPLCWrite` | Tag write operation failed |
+| `internal/errors` | `ErrPLCTimeout` | PLC operation exceeded SocketTimeout deadline |
+
+PLC sentinels are re-exported in `internal/plc` for ergonomic use (`plc.ErrPLCRead`).
 
 Future packages MUST add sentinels to this list in their own specs before apply.
 

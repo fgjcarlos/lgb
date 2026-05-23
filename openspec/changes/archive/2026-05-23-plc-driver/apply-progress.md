@@ -1,13 +1,13 @@
 ---
 change: plc-driver
 phase: apply-progress
-slice: 3
+slice: 4
 date: 2026-05-23
-status: slice-3-complete
+status: all-slices-complete
 mode: Strict TDD
 ---
 
-# Apply Progress: plc-driver — Slices 1, 2 & 3
+# Apply Progress: plc-driver — Slices 1, 2, 3 & 4
 
 ## Completed Tasks
 
@@ -61,6 +61,47 @@ mode: Strict TDD
   - All tests run with -race
   - Compile-verified: `go test -tags "no_embed integration" -c ./internal/plc/... -o /dev/null` exit 0
 
+### Slice 4 (feat/plc-driver-wiring)
+
+- [x] **T-4.01** `test` — [RED] Extended `internal/doctor/checks_test.go` with 6 new test functions:
+  - TestPLCReachableCheck_Pass: real TCP listener on random port → StatusPass, message contains address
+  - TestPLCReachableCheck_Fail: 127.0.0.1:19999 (not listening) → StatusFail, message contains address
+  - TestPLCReachableCheck_NoPort_DefaultsTo44818: address without port → dials :44818; skips if port unavailable
+  - TestPLCReachableCheck_Timeout: socketTimeout=50ms, TEST-NET-1 black-hole → StatusFail within 200ms
+  - TestDefault_WithPLCs_RegistersCheck: Default(cfg) with 1 PLC → 6 checks, last is "plc-reachable/plc-a"
+  - TestDefault_NoPLCs_NoCheckRegistered: Default(cfg) no PLCs → 5 checks
+  - DoD confirmed: `go test ./internal/doctor/...` FAIL — undefined: plcReachableCheck
+- [x] **T-4.02** `impl` — [GREEN] Added `plcReachableCheck` to `internal/doctor/checks.go`:
+  - struct with `plc config.PLC`; Name() = "plc-reachable/<name-or-address>"
+  - Run(ctx): resolvedAddr() appends :44818 if no port; resolvedTimeout() defaults to 5s
+  - net.DialTimeout probe; StatusPass on success (conn.Close()), StatusFail on error
+  - Updated Default() in doctor.go to iterate cfg.PLCs and register one check per entry
+  - DoD confirmed: `go test -race ./internal/doctor/...` PASS
+- [x] **T-4.03** `test` — [RED] Extended `internal/server/server_test.go` with:
+  - mockPLCManager struct with sync.Mutex-protected StartWasCalled/StopWasCalled accessors
+  - TestServer_WithPLCManager_StartStop: Start called before serving, Stop called after cancel
+  - TestServer_NilPLCManager_NoOp: nil manager → Run still works
+  - Updated all existing New(cfg, logger, nil) calls to New(cfg, logger, nil, nil)
+  - DoD confirmed: `go test ./internal/server/...` FAIL — too many arguments in call to New
+- [x] **T-4.04** `impl` — [GREEN] Updated `internal/server/server.go`:
+  - Added exported PLCManager interface: `{ Start(context.Context) error; Stop() error }`
+  - Changed New signature to `New(cfg, log, checks, plcMgr PLCManager) *Server`
+  - Run(ctx): calls plcMgr.Start(ctx) before Serve (if non-nil); calls plcMgr.Stop() after ctx.Done() before httpx.Shutdown
+  - nil manager handled safely (no-op path)
+  - DoD confirmed: `go test -race ./internal/server/...` PASS
+- [x] **T-4.05** `test` — [RED] Extended `cmd/lgb/cmd/server_test.go` with:
+  - mockServerPLCManager implementing server.PLCManager for cmd-level tests
+  - TestServerCmd_WithPLCs_CreatesPLCManager: PLCManagerFactory called when PLCs configured
+  - TestServerCmd_NoPLCs_NilManager: PLCManagerFactory NOT called when no PLCs
+  - Added `config` and `server` imports
+  - DoD confirmed: `go test ./cmd/lgb/cmd/...` FAIL — unknown field PLCManagerFactory
+- [x] **T-4.06** `impl` — [GREEN] Updated `cmd/lgb/cmd/server.go` and `root.go`:
+  - Added PLCManagerFactory `func(*config.Config) server.PLCManager` field to Deps
+  - runServerTo: creates plcMgr via factory when len(cfg.PLCs)>0; passes to server.New
+  - defaultPLCManagerFactory wraps plc.NewManager(cfg, slog.Default(), nil)
+  - Logs INFO "plc manager created" with component="plc-manager" and plc_count
+  - DoD confirmed: `go test -race ./cmd/lgb/cmd/...` PASS; CGO_ENABLED=0 go build ./... exit 0
+
 ## Files Changed
 
 ### Slice 1
@@ -93,7 +134,20 @@ mode: Strict TDD
 | `internal/plc/manager_test.go` | Created | trackingMockDriver, 6 Manager lifecycle unit tests |
 | `internal/plc/gologix_integration_test.go` | Created | 5 integration tests for gologixDriver (//go:build integration) |
 | `internal/plc/manager_integration_test.go` | Created | 3 integration tests for Manager lifecycle (//go:build integration) |
-| `openspec/changes/plc-driver/tasks.md` | Modified | T-3.01 through T-3.04 marked [x] |
+
+### Slice 4
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `internal/doctor/checks.go` | Modified | Added `plcReachableCheck`, `resolvedAddr`, `resolvedTimeout` helpers |
+| `internal/doctor/doctor.go` | Modified | Updated Default() to register plcReachableCheck per PLC |
+| `internal/doctor/checks_test.go` | Modified | Added 6 new plc-reachable check tests |
+| `internal/server/server.go` | Modified | Exported PLCManager interface; updated New() signature (4th param); Start/Stop in Run() |
+| `internal/server/server_test.go` | Modified | Updated all New() calls (3→4 params); added mockPLCManager with sync.Mutex; 2 new tests |
+| `cmd/lgb/cmd/root.go` | Modified | Added PLCManagerFactory field to Deps |
+| `cmd/lgb/cmd/server.go` | Modified | Creates PLCManager when PLCs configured; passes to server.New; defaultPLCManagerFactory |
+| `cmd/lgb/cmd/server_test.go` | Modified | Added mockServerPLCManager; 2 new cmd wiring tests; config+server imports |
+| `openspec/changes/plc-driver/tasks.md` | Modified | T-4.01 through T-4.06 marked [x] |
 
 ## TDD Cycle Evidence
 
@@ -127,38 +181,53 @@ mode: Strict TDD
 | T-3.03 | `gologix_integration_test.go` | Integration | N/A (new file) | Written (//go:build integration; compile-verified) | Compiles clean | 5 scenarios: scalar read, write, multi, retry, concurrent | startRealCIPSim with port-unavailable skip guard |
 | T-3.04 | `manager_integration_test.go` | Integration | N/A (new file) | Written (//go:build integration; compile-verified) | Compiles clean | 3 scenarios: start/stop, reload, PLC removal | 2s Stop deadline; shared startRealCIPSim |
 
+### Slice 4
+
+| Task | Test File | Layer | RED | GREEN | REFACTOR |
+|------|-----------|-------|-----|-------|----------|
+| T-4.01 | `internal/doctor/checks_test.go` | Unit | `undefined: plcReachableCheck` compile fail | N/A (test task) | N/A |
+| T-4.02 | `internal/doctor/checks_test.go` | Unit | N/A (impl task) | `ok .../internal/doctor 1.066s` with -race | `resolvedAddr`/`resolvedTimeout` extracted as helpers |
+| T-4.03 | `internal/server/server_test.go` | Unit | `too many arguments in call to New` compile fail | N/A (test task) | mockPLCManager uses sync.Mutex for race safety |
+| T-4.04 | `internal/server/server_test.go` | Unit | N/A (impl task) | `ok .../internal/server 1.053s` with -race | PLCManager exported interface; nil-safe run path |
+| T-4.05 | `cmd/lgb/cmd/server_test.go` | Unit | `unknown field PLCManagerFactory` compile fail | N/A (test task) | N/A |
+| T-4.06 | `cmd/lgb/cmd/server_test.go` | Unit | N/A (impl task) | `ok .../cmd/lgb/cmd 1.023s` with -race | defaultPLCManagerFactory wraps plc.NewManager |
+
 ## Deviations from Design
 
-### Slice 1-2 (unchanged from previous progress)
+### Slices 1–3 (unchanged from previous progress)
 
 1. Driver interface uses `Close()` (design §4) not `Disconnect()`.
 2. `NewDriverWithClient` is exported for black-box test injection.
 3. `gologixClient` interface is unexported.
 4. `Close()` treats gologix Disconnect errors as non-fatal for idempotency.
+5. **NewManager signature gains DriverFactory parameter**: `NewManager(cfg, log, factory DriverFactory)` — nil uses default. Design §4 shows `NewManager(cfg, log)`. Deliberate test-injection hook consistent with §11.
+6. **Integration test uses startRealCIPSim instead of testutil.StartPLCSim**.
+7. **Reload waits on shared wg**.
 
-### Slice 3
+### Slice 4
 
-1. **NewManager signature gains DriverFactory parameter**: `NewManager(cfg, log, factory DriverFactory)` — nil uses default. Design §4 shows `NewManager(cfg, log)`. This is a deliberate test-injection hook consistent with §11 (unit testing with mock Driver). Slice 4 server wiring will call `NewManager(cfg, log, nil)`.
+1. **PLCManager interface is EXPORTED** (not unexported as the task spec says): The design §10 shows `*plc.Manager` directly but the tasks correctly note a local interface. Making it exported (`server.PLCManager`) allows `cmd/lgb/cmd/root.go` to reference it in the `Deps.PLCManagerFactory` type without creating an import cycle. An unexported interface would not be referenceable by the `cmd` package.
 
-2. **Integration test uses startRealCIPSim instead of testutil.StartPLCSim**: `testutil.StartPLCSim` is a TCP-accept-only stub — it cannot serve CIP protocol. Integration tests use `gologix.Server.Serve()` directly (port 44818) with a skip guard if port is unavailable. Design §11 says "testutil.StartPLCSim" but that helper is insufficient for real CIP I/O.
+2. **`server.New` 4th param uses exported `PLCManager` interface**: The task says "local unexported interface" but `cmd` package needs to reference `server.PLCManager` in the factory type. Exported is the correct choice. Tests in `package server` work identically.
 
-3. **Reload waits on shared wg**: `Reload` calls `wg.Wait()` which blocks until ALL goroutines exit. This is correct for Phase 1 (drained goroutines hold the only wg entries), but would need per-worker tracking in Phase 2 if concurrent Reload calls are needed.
+3. **`defaultPLCManagerFactory` uses `slog.Default()` as logger**: The `runServerTo` function builds `logger` before calling this, but `defaultPLCManagerFactory` is a standalone function. In production the server-cmd's `runServerTo` builds the logger and passes it via `d.Logger`. The factory is only called after logger init in `runServerTo`, so `slog.Default()` picks up the configured logger (set by `slog.SetDefault(logger)` in `persistentPreRun`). Tests inject their own factory so this is only the production path.
 
-## Build Gates Passed
+## Build Gates Passed (Slice 4)
 
-- `go test -tags no_embed -race -count=1 ./internal/plc/...` — PASS (1.115s)
-- `go test -tags no_embed -race -count=1 ./...` — PASS (all 12 packages)
-- `go test -tags "no_embed integration" -c ./internal/plc/... -o /dev/null` — exit 0 (compile-verified)
+- `go test -tags no_embed -race -count=1 ./internal/doctor/...` — PASS
+- `go test -tags no_embed -race -count=1 ./internal/server/...` — PASS
+- `go test -tags no_embed -race -count=1 ./cmd/lgb/cmd/...` — PASS
+- `go test -tags no_embed -race -count=1 ./...` — PASS (all 11 packages)
 - `CGO_ENABLED=0 go build -tags no_embed ./...` — exit 0
 
 ## Remaining Tasks
 
-- [ ] T-4.01 through T-4.06 — Doctor check, server wiring, cmd wiring
+None. All T-1.xx through T-4.xx tasks are complete.
 
 ## Workload / PR Boundary
 
 - Mode: chained PR slice (stacked-to-main)
-- Current work unit: Unit 3 — `internal/plc` Manager
-- Branch: `feat/plc-driver-manager` stacked on `feat/plc-driver-core`
-- Boundary: starts from Slice 2 branch, ends with T-3.04 complete
-- Estimated review budget impact: ~360 lines changed (within budget for this slice)
+- Current work unit: Unit 4 — Doctor check + server wiring + cmd wiring
+- Branch: `feat/plc-driver-wiring` stacked on `feat/plc-driver-manager`
+- Boundary: starts from Slice 3 branch, ends with T-4.06 complete
+- Estimated review budget impact: ~130 lines changed (within budget for this slice)

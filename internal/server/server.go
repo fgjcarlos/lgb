@@ -4,7 +4,7 @@
 // is handled via httpx.Shutdown with a configurable deadline.
 // Signal handling lives in cmd/lgb/cmd/server.go — this package is test-friendly.
 //
-// Requirements: MVP-FND-1.3, MVP-FND-1.8, MVP-FND-1.9. Design: §11, §4.3–4.5.
+// Requirements: MVP-FND-1.3, MVP-FND-1.8, MVP-FND-1.9. Design: §11, §4.3–4.5, §10.
 package server
 
 import (
@@ -22,23 +22,35 @@ import (
 	"github.com/fgjcarlos/lgb/internal/httpx"
 )
 
+// PLCManager is the interface that the PLC manager must satisfy for server
+// lifecycle integration. Using a local interface (rather than *plc.Manager
+// directly) keeps the server package free of the plc package import and makes
+// it trivially testable with a mock. (design §10)
+type PLCManager interface {
+	Start(ctx context.Context) error
+	Stop() error
+}
+
 // Server is the LGB HTTP server stub.
 type Server struct {
 	cfg    *config.Config
 	log    *slog.Logger
 	checks []doctor.Check
+	plcMgr PLCManager // nil when no PLCs are configured
 
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
 }
 
-// New creates a new Server from the given config, logger, and optional checks.
-// checks is currently unused in Phase 0 but wired for future readyz semantics.
-func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check) *Server {
+// New creates a new Server from the given config, logger, optional checks, and
+// optional PLCManager. plcMgr may be nil when no PLCs are configured; Run
+// handles the nil case without panicking. (design §10)
+func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager) *Server {
 	return &Server{
 		cfg:    cfg,
 		log:    log,
 		checks: checks,
+		plcMgr: plcMgr,
 	}
 }
 
@@ -103,6 +115,15 @@ func (s *Server) Run(ctx context.Context) error {
 
 	srv := &http.Server{Handler: mux}
 
+	// Start the PLC manager (if configured) before serving HTTP.
+	// Failure to start the manager is non-fatal per design §10 — the gateway
+	// continues serving HTTP so health probes remain responsive.
+	if s.plcMgr != nil {
+		if err := s.plcMgr.Start(ctx); err != nil {
+			s.log.Warn("plc manager: Start returned error", slog.String("error", err.Error()))
+		}
+	}
+
 	s.log.Info("server listening", "addr", ln.Addr().String())
 
 	// Serve in a goroutine; wait for ctx to cancel then gracefully shut down.
@@ -121,6 +142,15 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.log.Info("shutdown initiated")
+
+	// Stop the PLC manager before shutting down HTTP so in-flight tag
+	// operations complete before the process exits. (design §10)
+	if s.plcMgr != nil {
+		if err := s.plcMgr.Stop(); err != nil {
+			s.log.Warn("plc manager: Stop returned error", slog.String("error", err.Error()))
+		}
+	}
+
 	if err := httpx.Shutdown(ctx, srv, shutdownTimeout); err != nil {
 		return fmt.Errorf("server: shutdown: %w", err)
 	}

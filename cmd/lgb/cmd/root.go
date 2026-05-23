@@ -42,6 +42,12 @@ type Deps struct {
 	// Tests inject a spy to verify the call without real filesystem side-effects.
 	DataDirEnsureFn func(path string) (string, error)
 
+	// PLCManagerFactory creates a PLCManager from config. When nil, the
+	// production plc.NewManager is used (when PLCs are configured).
+	// Tests inject a factory spy to verify the Manager is created and passed
+	// to server.New without touching the real plc package.
+	PLCManagerFactory func(cfg *config.Config) server.PLCManager
+
 	// serverRef is set by runServerTo so test helpers can retrieve the *server.Server.
 	// Unexported — test access is via getServerForTest().
 	serverRef **server.Server

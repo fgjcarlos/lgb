@@ -20,9 +20,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/datadir"
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/log"
+	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/server"
 )
 
@@ -106,8 +108,21 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	// Build doctor checks for the server.
 	checks := doctor.Default(cfg).Checks()
 
+	// Create the PLC Manager when PLCs are configured.
+	// When no PLCs are configured, plcMgr is nil and server.New handles it safely.
+	var plcMgr server.PLCManager
+	if len(cfg.PLCs) > 0 {
+		factory := d.PLCManagerFactory
+		if factory == nil {
+			factory = defaultPLCManagerFactory
+		}
+		plcMgr = factory(cfg)
+		logger.Info("plc manager created", slog.String("component", "plc-manager"),
+			slog.Int("plc_count", len(cfg.PLCs)))
+	}
+
 	// Start the server.
-	srv := server.New(cfg, logger, checks)
+	srv := server.New(cfg, logger, checks, plcMgr)
 
 	// Store server reference for tests.
 	if d.serverRef != nil {
@@ -129,6 +144,12 @@ func (d *Deps) getServerForTest() *server.Server {
 		return nil
 	}
 	return *d.serverRef
+}
+
+// defaultPLCManagerFactory is the production PLCManagerFactory.
+// It wraps plc.NewManager to match the server.PLCManager interface.
+func defaultPLCManagerFactory(cfg *config.Config) server.PLCManager {
+	return plc.NewManager(cfg, slog.Default(), nil)
 }
 
 // probePlCSim performs a TCP dial to addr with a 5-second timeout.

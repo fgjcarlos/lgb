@@ -1,9 +1,9 @@
-// checks.go — Phase-0 diagnostic check implementations.
+// checks.go — Phase-0 and PLC diagnostic check implementations.
 //
 // Each check is an unexported struct implementing the Check interface.
 // Tests register fakes via the same interface for isolation.
 //
-// Requirements: MVP-FND-8.2. Design: §10.
+// Requirements: MVP-FND-8.2, PLC-DOC-1.1–1.5. Design: §10, §9.
 package doctor
 
 import (
@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/datadir"
@@ -131,5 +132,75 @@ func (c *configLoadedCheck) Run(ctx context.Context) Result {
 		Status:  StatusPass,
 		Message: "configuration loaded and valid",
 	}
+}
+
+// plcReachableCheck performs a TCP-only probe against a single PLC address to
+// verify basic network reachability. It does NOT establish a CIP session —
+// this avoids consuming PLC connection slots during diagnostics (design §9,
+// decision #10, PLC-DOC-1.1–1.5).
+type plcReachableCheck struct {
+	plc config.PLC
+}
+
+// Name returns the check identifier in the form "plc-reachable/<plc-name>".
+// If the PLC has no name the address is used instead.
+func (c *plcReachableCheck) Name() string {
+	id := c.plc.Name
+	if id == "" {
+		id = c.plc.Address
+	}
+	return "plc-reachable/" + id
+}
+
+// Run dials the PLC address over TCP with the configured socket timeout.
+//
+// Address handling: if the address has no port (net.SplitHostPort returns an
+// error or an empty port) the EtherNet/IP default port 44818 is appended.
+// Timeout: parsed from plc.SocketTimeout; falls back to 5 s if absent or invalid.
+func (c *plcReachableCheck) Run(ctx context.Context) Result {
+	addr := resolvedAddr(c.plc.Address)
+	timeout := resolvedTimeout(c.plc.SocketTimeout)
+
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return Result{
+			Name:    c.Name(),
+			Status:  StatusFail,
+			Message: fmt.Sprintf("plc %q not reachable at %s: %v", c.plc.Name, addr, err),
+		}
+	}
+	_ = conn.Close()
+	return Result{
+		Name:    c.Name(),
+		Status:  StatusPass,
+		Message: fmt.Sprintf("plc %q reachable at %s", c.plc.Name, addr),
+	}
+}
+
+// resolvedAddr appends the default EtherNet/IP port (44818) when addr has no port.
+func resolvedAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		// addr has no port — use the host part (or the whole string if parsing
+		// failed) and append the EtherNet/IP default port.
+		if host == "" {
+			host = addr
+		}
+		return net.JoinHostPort(host, "44818")
+	}
+	return addr
+}
+
+// resolvedTimeout parses the Go duration string s and returns it.
+// If s is empty, unparseable, or non-positive, 5 s is returned.
+func resolvedTimeout(s string) time.Duration {
+	if s == "" {
+		return 5 * time.Second
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 5 * time.Second
+	}
+	return d
 }
 

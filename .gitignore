@@ -9,9 +9,9 @@ frontend/node_modules/
 coverage.out
 coverage.html
 
-# Generated binaries
-lgb
-lgb-*
+# Generated binaries (root-anchored so cmd/lgb/ source dir is NOT ignored)
+/lgb
+/lgb-*
 
 # Local data and backups
 data/

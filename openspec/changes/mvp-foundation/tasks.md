@@ -190,21 +190,21 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group A — Scaffolding tests
 
-- [ ] **T-2.01** `chore` — Create binary entry-point stubs: `cmd/lgb/main.go` (calls `cmd.NewRoot().Execute()`, sets `slog.SetDefault` after boot); `cmd/lgb/cmd/root.go` (`NewRoot`, `Deps` struct, `PersistentPreRunE` skeleton); `cmd/lgb/cmd/exit.go` (`exitCode(err) int` mapping table). Create `cmd/lgb/testdata/sample.yaml` (copy from `internal/config/testdata/sample.yaml`).
+- [x] **T-2.01** `chore` — Create binary entry-point stubs: `cmd/lgb/main.go` (calls `cmd.NewRoot().Execute()`, sets `slog.SetDefault` after boot); `cmd/lgb/cmd/root.go` (`NewRoot`, `Deps` struct, `PersistentPreRunE` skeleton); `cmd/lgb/cmd/exit.go` (`exitCode(err) int` mapping table). Create `cmd/lgb/testdata/sample.yaml` (copy from `internal/config/testdata/sample.yaml`).
   - **Files**: `cmd/lgb/main.go`, `cmd/lgb/cmd/root.go`, `cmd/lgb/cmd/exit.go`, `cmd/lgb/testdata/sample.yaml`
   - **Reqs**: MVP-FND-1.1, MVP-FND-5.5
   - **Design**: §6.1–6.4, §20.1
   - **Deps**: T-1.15
   - **DoD**: `CGO_ENABLED=0 go build ./cmd/lgb` exits 0.
 
-- [ ] **T-2.02** `test` — **[RED]** Write `cmd/lgb/cmd/version_test.go`: (a) plain output contains `"dev"` for unset build, (b) `--json` output parses as `{"version":…,"commit":…,"date":…}`, (c) exit code is 0.
+- [x] **T-2.02** `test` — **[RED]** Write `cmd/lgb/cmd/version_test.go`: (a) plain output contains `"dev"` for unset build, (b) `--json` output parses as `{"version":…,"commit":…,"date":…}`, (c) exit code is 0.
   - **Files**: `cmd/lgb/cmd/version_test.go`
   - **Reqs**: MVP-FND-1.2
   - **Design**: §6.1, §6.5
   - **Deps**: T-2.01
   - **DoD**: tests fail (command not wired).
 
-- [ ] **T-2.03** `impl` — **[GREEN]** Create `cmd/lgb/cmd/version.go`: `NewVersionCmd(d *Deps)` prints `version.Info()` as plain or `--json`; exits 0.
+- [x] **T-2.03** `impl` — **[GREEN]** Create `cmd/lgb/cmd/version.go`: `NewVersionCmd(d *Deps)` prints `version.Info()` as plain or `--json`; exits 0.
   - **Files**: `cmd/lgb/cmd/version.go`
   - **Reqs**: MVP-FND-1.2, MVP-FND-1.7
   - **Design**: §6.1
@@ -213,14 +213,14 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group B — Config validate command
 
-- [ ] **T-2.04** `test` — **[RED]** Write `cmd/lgb/cmd/config_validate_test.go`: (a) `testdata/sample.yaml` → stdout `config OK`, exit 0; (b) `testdata/invalid.yaml` → exit 1, stderr lists both violations; (c) missing file path → exit 1 referencing file; (d) `--json` valid → `{"valid":true}`; (e) `--json` invalid → `{"valid":false,"errors":[…]}`.
+- [x] **T-2.04** `test` — **[RED]** Write `cmd/lgb/cmd/config_validate_test.go`: (a) `testdata/sample.yaml` → stdout `config OK`, exit 0; (b) `testdata/invalid.yaml` → exit 1, stderr lists both violations; (c) missing file path → exit 1 referencing file; (d) `--json` valid → `{"valid":true}`; (e) `--json` invalid → `{"valid":false,"errors":[…]}`.
   - **Files**: `cmd/lgb/cmd/config_validate_test.go`, `cmd/lgb/testdata/invalid.yaml`
   - **Reqs**: MVP-FND-1.6
   - **Design**: §6.1, §6.5
   - **Deps**: T-2.03
   - **DoD**: tests fail (command not wired).
 
-- [ ] **T-2.05** `impl` — **[GREEN]** Create `cmd/lgb/cmd/config.go` (group) and `cmd/lgb/cmd/config_validate.go`: load & validate; plain/JSON output; no server started; exit 0/1.
+- [x] **T-2.05** `impl` — **[GREEN]** Create `cmd/lgb/cmd/config.go` (group) and `cmd/lgb/cmd/config_validate.go`: load & validate; plain/JSON output; no server started; exit 0/1.
   - **Files**: `cmd/lgb/cmd/config.go`, `cmd/lgb/cmd/config_validate.go`
   - **Reqs**: MVP-FND-1.6
   - **Design**: §6.1
@@ -229,14 +229,14 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group C — Status command
 
-- [ ] **T-2.06** `test` — **[RED]** Write `cmd/lgb/cmd/status_test.go`: stdout is valid JSON containing `"status":"ok"`, exit 0.
+- [x] **T-2.06** `test` — **[RED]** Write `cmd/lgb/cmd/status_test.go`: stdout is valid JSON containing `"status":"ok"`, exit 0.
   - **Files**: `cmd/lgb/cmd/status_test.go`
   - **Reqs**: MVP-FND-1.5
   - **Design**: §6.1
   - **Deps**: T-2.03
   - **DoD**: test fails (command not wired).
 
-- [ ] **T-2.07** `impl` — **[GREEN]** Create `cmd/lgb/cmd/status.go`: prints `{"status":"ok","phase":"0","uptime_seconds":0}`; exits 0.
+- [x] **T-2.07** `impl` — **[GREEN]** Create `cmd/lgb/cmd/status.go`: prints `{"status":"ok","phase":"0","uptime_seconds":0}`; exits 0.
   - **Files**: `cmd/lgb/cmd/status.go`
   - **Reqs**: MVP-FND-1.5
   - **Design**: §6.1
@@ -245,14 +245,14 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group D — HTTP server internals
 
-- [ ] **T-2.08** `test` — **[RED]** Write `internal/health/handler_test.go`: `GET /health` → 200, body `{"status":"ok"}`, `Content-Type: application/json`. Write `internal/server/server_test.go`: (a) `Run(ctx)` binds port from config, `/health` returns 200, `/metrics` returns 200 with correct `Content-Type`; (b) `Run(ctx)` returns nil on context cancel (graceful shutdown within 1 s); (c) `/readyz` returns 200 after bind.
+- [x] **T-2.08** `test` — **[RED]** Write `internal/health/handler_test.go`: `GET /health` → 200, body `{"status":"ok"}`, `Content-Type: application/json`. Write `internal/server/server_test.go`: (a) `Run(ctx)` binds port from config, `/health` returns 200, `/metrics` returns 200 with correct `Content-Type`; (b) `Run(ctx)` returns nil on context cancel (graceful shutdown within 1 s); (c) `/readyz` returns 200 after bind.
   - **Files**: `internal/health/handler_test.go`, `internal/server/server_test.go`
   - **Reqs**: MVP-FND-1.3, MVP-FND-1.8, MVP-FND-1.9
   - **Design**: §11, §4.3, §4.5
   - **Deps**: T-1.15
   - **DoD**: tests fail (missing packages).
 
-- [ ] **T-2.09** `impl` — **[GREEN]** Create `internal/health/handler.go`: `Handler() http.Handler` returning 200 JSON. Create `internal/httpx/shutdown.go`: `Shutdown(ctx, srv, deadline) error`. Create `internal/httpx/mux.go`: shared mux constructor. Create `internal/server/server.go`: `New(cfg, log, checks) *Server`; `(*Server).Run(ctx) error` mounts `/health`, `/metrics` (stub body `"# empty\n"`), `/readyz`; uses `httpx.Shutdown`.
+- [x] **T-2.09** `impl` — **[GREEN]** Create `internal/health/handler.go`: `Handler() http.Handler` returning 200 JSON. Create `internal/httpx/shutdown.go`: `Shutdown(ctx, srv, deadline) error`. Create `internal/httpx/mux.go`: shared mux constructor. Create `internal/server/server.go`: `New(cfg, log, checks) *Server`; `(*Server).Run(ctx) error` mounts `/health`, `/metrics` (stub body `"# empty\n"`), `/readyz`; uses `httpx.Shutdown`.
   - **Files**: `internal/health/handler.go`, `internal/httpx/shutdown.go`, `internal/httpx/mux.go`, `internal/server/server.go`
   - **Reqs**: MVP-FND-1.3, MVP-FND-1.8, MVP-FND-1.9
   - **Design**: §11, §4.3–4.5
@@ -261,14 +261,14 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group E — Doctor internals
 
-- [ ] **T-2.10** `test` — **[RED]** Write `internal/doctor/doctor_test.go`: (a) 3 registered checks → 3 results, (b) parallel execution (goroutine count via test spy), (c) panicking check recovered into FAIL result, other checks unaffected, (d) worst-result exit-code table (all pass → 0, warn only → 0, any fail → 1). Write `internal/doctor/checks_test.go`: (a) `restic-on-path` WARN when binary absent, (b) `data-dir-writable` FAIL when dir unwritable, (c) `http-port-available` FAIL when port bound, (d) `go-runtime-version` returns INFO status, (e) `config-loaded` always PASS.
+- [x] **T-2.10** `test` — **[RED]** Write `internal/doctor/doctor_test.go`: (a) 3 registered checks → 3 results, (b) parallel execution (goroutine count via test spy), (c) panicking check recovered into FAIL result, other checks unaffected, (d) worst-result exit-code table (all pass → 0, warn only → 0, any fail → 1). Write `internal/doctor/checks_test.go`: (a) `restic-on-path` WARN when binary absent, (b) `data-dir-writable` FAIL when dir unwritable, (c) `http-port-available` FAIL when port bound, (d) `go-runtime-version` returns INFO status, (e) `config-loaded` always PASS.
   - **Files**: `internal/doctor/doctor_test.go`, `internal/doctor/checks_test.go`
   - **Reqs**: MVP-FND-8.1–8.6
   - **Design**: §10, §4.3, §20.4
   - **Deps**: T-1.14
   - **DoD**: tests fail (missing package).
 
-- [ ] **T-2.11** `impl` — **[GREEN]** Create `internal/doctor/doctor.go`: `CheckStatus` enum, `Result` struct, `Check` interface, `Registry` struct, `Run(ctx, reg) []Result` (errgroup + recover), `Default(cfg) *Registry`. Create `internal/doctor/checks.go`: five unexported check structs (`dataDirCheck`, `resticCheck`, `goRuntimeCheck`, `portCheck`, `configLoadedCheck`).
+- [x] **T-2.11** `impl` — **[GREEN]** Create `internal/doctor/doctor.go`: `CheckStatus` enum, `Result` struct, `Check` interface, `Registry` struct, `Run(ctx, reg) []Result` (errgroup + recover), `Default(cfg) *Registry`. Create `internal/doctor/checks.go`: five unexported check structs (`dataDirCheck`, `resticCheck`, `goRuntimeCheck`, `portCheck`, `configLoadedCheck`).
   - **Files**: `internal/doctor/doctor.go`, `internal/doctor/checks.go`
   - **Reqs**: MVP-FND-8.1–8.6
   - **Design**: §10, §4.3
@@ -277,28 +277,28 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group F — Doctor and server commands
 
-- [ ] **T-2.12** `test` — **[RED]** Write `cmd/lgb/cmd/doctor_test.go`: (a) all checks pass → exit 0, stdout `[PASS]` entries; (b) injected FAIL check → exit 1; (c) injected WARN only → exit 0; (d) `--json` → valid JSON with `checks` array and `overall` field. Use injectable `Deps.Doctor` registry (fake checks implementing `doctor.Check`).
+- [x] **T-2.12** `test` — **[RED]** Write `cmd/lgb/cmd/doctor_test.go`: (a) all checks pass → exit 0, stdout `[PASS]` entries; (b) injected FAIL check → exit 1; (c) injected WARN only → exit 0; (d) `--json` → valid JSON with `checks` array and `overall` field. Use injectable `Deps.Doctor` registry (fake checks implementing `doctor.Check`).
   - **Files**: `cmd/lgb/cmd/doctor_test.go`
   - **Reqs**: MVP-FND-1.4, MVP-FND-8.3–8.5
   - **Design**: §6.1–6.3, §20.4
   - **Deps**: T-2.11
   - **DoD**: tests fail (command not wired).
 
-- [ ] **T-2.13** `impl` — **[GREEN]** Create `cmd/lgb/cmd/doctor.go`: `NewDoctorCmd(d *Deps)` builds `doctor.Default(d.Config)`, calls `doctor.Run`, formats plain/JSON output, maps exit codes per §8.3.
+- [x] **T-2.13** `impl` — **[GREEN]** Create `cmd/lgb/cmd/doctor.go`: `NewDoctorCmd(d *Deps)` builds `doctor.Default(d.Config)`, calls `doctor.Run`, formats plain/JSON output, maps exit codes per §8.3.
   - **Files**: `cmd/lgb/cmd/doctor.go`
   - **Reqs**: MVP-FND-1.4, MVP-FND-8.3–8.5
   - **Design**: §6.1
   - **Deps**: T-2.12
   - **DoD**: `go test ./cmd/lgb/cmd/...` (doctor tests) passes.
 
-- [ ] **T-2.14** `test` — **[RED]** Write `cmd/lgb/cmd/server_test.go`: (a) `jwtSecret == ""` + no env → exits 1, stderr contains `auth.jwtSecret is required`; (b) valid config + `LGB_AUTH_JWT_SECRET` set → `Run` context-cancelled cleanly → exit 0; (c) dataDir bootstrap called (spy via injectable function); (d) `LGB_GATEWAY_LOGLEVEL` env override respected.
+- [x] **T-2.14** `test` — **[RED]** Write `cmd/lgb/cmd/server_test.go`: (a) `jwtSecret == ""` + no env → exits 1, stderr contains `auth.jwtSecret is required`; (b) valid config + `LGB_AUTH_JWT_SECRET` set → `Run` context-cancelled cleanly → exit 0; (c) dataDir bootstrap called (spy via injectable function); (d) `LGB_GATEWAY_LOGLEVEL` env override respected.
   - **Files**: `cmd/lgb/cmd/server_test.go`
   - **Reqs**: MVP-FND-1.3, MVP-FND-2.4, MVP-FND-3.1, MVP-FND-7.5
   - **Design**: §6.3, §20.1
   - **Deps**: T-2.09, T-2.11
   - **DoD**: tests fail (command not wired).
 
-- [ ] **T-2.15** `impl` — **[GREEN]** Create `cmd/lgb/cmd/server.go`: `NewServerCmd(d *Deps)`: calls `datadir.Ensure`, validates `jwtSecret`, wires `signal.NotifyContext`, calls `server.New(d.Config, d.Logger, doctor.Default(d.Config).Checks()).Run(ctx)`, logs resolved dataDir at INFO (`component="datadir"`).
+- [x] **T-2.15** `impl` — **[GREEN]** Create `cmd/lgb/cmd/server.go`: `NewServerCmd(d *Deps)`: calls `datadir.Ensure`, validates `jwtSecret`, wires `signal.NotifyContext`, calls `server.New(d.Config, d.Logger, doctor.Default(d.Config).Checks()).Run(ctx)`, logs resolved dataDir at INFO (`component="datadir"`).
   - **Files**: `cmd/lgb/cmd/server.go`
   - **Reqs**: MVP-FND-1.3, MVP-FND-1.9, MVP-FND-7.5
   - **Design**: §6.3, §20.1
@@ -307,14 +307,14 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group G — Root wiring + PersistentPreRunE
 
-- [ ] **T-2.16** `test` — **[RED]** Write `cmd/lgb/cmd/root_test.go`: (a) `lgb --help` → exit 0, stdout contains subcommand list; (b) `lgb --unknown-flag` → exit 1, stderr mentions unknown flag; (c) `PersistentPreRunE` populates `Deps.Config` and `Deps.Logger` before subcommand runs (spy via `version` subcommand test).
+- [x] **T-2.16** `test` — **[RED]** Write `cmd/lgb/cmd/root_test.go`: (a) `lgb --help` → exit 0, stdout contains subcommand list; (b) `lgb --unknown-flag` → exit 1, stderr mentions unknown flag; (c) `PersistentPreRunE` populates `Deps.Config` and `Deps.Logger` before subcommand runs (spy via `version` subcommand test).
   - **Files**: `cmd/lgb/cmd/root_test.go`
   - **Reqs**: MVP-FND-1.1
   - **Design**: §6.2–6.3
   - **Deps**: T-2.15
   - **DoD**: tests fail (PersistentPreRunE not fully wired).
 
-- [ ] **T-2.17** `impl` — **[GREEN]** Complete `cmd/lgb/cmd/root.go`: register all flags; `PersistentPreRunE` calls `config.Load`, applies CLI overrides to `*Config`, calls `log.New`, sets `slog.SetDefault`; wire all subcommands. Update `cmd/lgb/main.go` Makefile LDFLAGS target (`-X github.com/fgjcarlos/lgb/internal/version.Version=…`).
+- [x] **T-2.17** `impl` — **[GREEN]** Complete `cmd/lgb/cmd/root.go`: register all flags; `PersistentPreRunE` calls `config.Load`, applies CLI overrides to `*Config`, calls `log.New`, sets `slog.SetDefault`; wire all subcommands. Update `cmd/lgb/main.go` Makefile LDFLAGS target (`-X github.com/fgjcarlos/lgb/internal/version.Version=…`).
   - **Files**: `cmd/lgb/cmd/root.go`, `cmd/lgb/main.go`, `Makefile`
   - **Reqs**: MVP-FND-1.1, MVP-FND-1.7, MVP-FND-4.2, MVP-FND-4.3
   - **Design**: §6.2–6.4
@@ -323,7 +323,7 @@ Cobra command tree, HTTP server stub, doctor checks, dataDir bootstrap. After me
 
 ### Group H — Integration smoke test
 
-- [ ] **T-2.18** `test` — **[RED/integration]** Write `cmd/lgb/e2e/server_e2e_test.go` (`//go:build e2e`): spawn built binary, `lgb server --config testdata/sample.yaml`, poll `GET /health`, assert 200; send SIGTERM, assert exit 0. Write `cmd/lgb/e2e/smoke_test.go` (`//go:build e2e`): `lgb version --json` → valid JSON, exit 0; `lgb status` → JSON with `status:"ok"`, exit 0; `lgb config validate --config testdata/sample.yaml` → exit 0.
+- [x] **T-2.18** `test` — **[RED/integration]** Write `cmd/lgb/e2e/server_e2e_test.go` (`//go:build e2e`): spawn built binary, `lgb server --config testdata/sample.yaml`, poll `GET /health`, assert 200; send SIGTERM, assert exit 0. Write `cmd/lgb/e2e/smoke_test.go` (`//go:build e2e`): `lgb version --json` → valid JSON, exit 0; `lgb status` → JSON with `status:"ok"`, exit 0; `lgb config validate --config testdata/sample.yaml` → exit 0.
   - **Files**: `cmd/lgb/e2e/server_e2e_test.go`, `cmd/lgb/e2e/smoke_test.go`
   - **Reqs**: MVP-FND-1.2–1.6
   - **Design**: §17 (e2e layer)

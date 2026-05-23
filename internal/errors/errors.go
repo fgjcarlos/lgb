@@ -40,6 +40,21 @@ var (
 	ErrCheckFailed = errors.New("check failed")
 )
 
+// PLC-domain sentinels (PLC-DRV-1.*).
+var (
+	// ErrPLCConnect is returned when a TCP/CIP connection to the PLC cannot be established.
+	ErrPLCConnect = errors.New("plc connect failed")
+
+	// ErrPLCRead is returned when a tag read operation fails.
+	ErrPLCRead = errors.New("plc read failed")
+
+	// ErrPLCWrite is returned when a tag write operation fails.
+	ErrPLCWrite = errors.New("plc write failed")
+
+	// ErrPLCTimeout is returned when a PLC operation exceeds its configured deadline.
+	ErrPLCTimeout = errors.New("plc operation timeout")
+)
+
 // Retry-domain sentinels (MVP-FND-5.1).
 var (
 	// ErrMaxAttempts is returned when retry.Do exhausts MaxAttempts.

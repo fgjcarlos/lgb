@@ -42,14 +42,14 @@ Additive changes to `internal/errors` and `internal/config`. No new packages. Al
 
 ### Group A — PLC error sentinels
 
-- [ ] **T-1.01** `test` — **[RED]** Extend `internal/errors/errors_test.go`: add assertions that `ErrPLCConnect`, `ErrPLCRead`, `ErrPLCWrite`, and `ErrPLCTimeout` are distinct non-nil errors; assert each is identifiable via `errors.Is` when wrapped with `fmt.Errorf("%w: %w", sentinel, underlying)`; assert none is equal to any existing sentinel.
+- [x] **T-1.01** `test` — **[RED]** Extend `internal/errors/errors_test.go`: add assertions that `ErrPLCConnect`, `ErrPLCRead`, `ErrPLCWrite`, and `ErrPLCTimeout` are distinct non-nil errors; assert each is identifiable via `errors.Is` when wrapped with `fmt.Errorf("%w: %w", sentinel, underlying)`; assert none is equal to any existing sentinel.
   - **Files**: `internal/errors/errors_test.go`
   - **Reqs**: PLC-ERR-1.1
   - **Design**: §8 (error model)
   - **Deps**: none
   - **DoD**: `go test ./internal/errors/...` FAILS (sentinels do not exist yet).
 
-- [ ] **T-1.02** `impl` — **[GREEN]** Add PLC-domain sentinels to `internal/errors/errors.go` in a labeled block `// PLC-domain sentinels (PLC-DRV-1.*)`: `ErrPLCConnect = errors.New("plc connect failed")`, `ErrPLCRead = errors.New("plc read failed")`, `ErrPLCWrite = errors.New("plc write failed")`, `ErrPLCTimeout = errors.New("plc operation timeout")`.
+- [x] **T-1.02** `impl` — **[GREEN]** Add PLC-domain sentinels to `internal/errors/errors.go` in a labeled block `// PLC-domain sentinels (PLC-DRV-1.*)`: `ErrPLCConnect = errors.New("plc connect failed")`, `ErrPLCRead = errors.New("plc read failed")`, `ErrPLCWrite = errors.New("plc write failed")`, `ErrPLCTimeout = errors.New("plc operation timeout")`.
   - **Files**: `internal/errors/errors.go`
   - **Reqs**: PLC-ERR-1.1
   - **Design**: §8
@@ -58,14 +58,14 @@ Additive changes to `internal/errors` and `internal/config`. No new packages. Al
 
 ### Group B — Config PLC struct extensions
 
-- [ ] **T-1.03** `test` — **[RED]** Extend `internal/config/config_test.go`: add table-driven cases covering (a) YAML with only `name`+`address` → `Slot=0`, `SocketTimeout="5s"`, `ScanRate="1s"`, `KeepAlive=true`, `Path=""`; (b) explicit `slot: 2`, `socketTimeout: "10s"`, `scanRate: "500ms"`, `keepAlive: false`, `path: "1,0"` → all five fields match; (c) `address: ""` → `Validate()` returns error wrapping `ErrConfigInvalid` with message `plcs[0].address: must not be empty`; (d) `socketTimeout: "not-a-duration"` → `Validate()` error wrapping `ErrConfigInvalid`; (e) `socketTimeout: "-1s"` → error containing `must be positive`; (f) `scanRate: "0s"` → error containing `scanRate: must be positive`; (g) `slot: 16` → error containing `slot: must be between 0 and 15`; (h) two PLC entries each with two violations → four-error aggregate, `errors.Is(err, ErrConfigInvalid)` true. Update `internal/config/testdata/sample.yaml` to include a PLC entry with `name`, `address`, `slot`, `socketTimeout`, `scanRate`, `keepAlive`, `path`.
+- [x] **T-1.03** `test` — **[RED]** Extend `internal/config/config_test.go`: add table-driven cases covering (a) YAML with only `name`+`address` → `Slot=0`, `SocketTimeout="5s"`, `ScanRate="1s"`, `KeepAlive=true`, `Path=""`; (b) explicit `slot: 2`, `socketTimeout: "10s"`, `scanRate: "500ms"`, `keepAlive: false`, `path: "1,0"` → all five fields match; (c) `address: ""` → `Validate()` returns error wrapping `ErrConfigInvalid` with message `plcs[0].address: must not be empty`; (d) `socketTimeout: "not-a-duration"` → `Validate()` error wrapping `ErrConfigInvalid`; (e) `socketTimeout: "-1s"` → error containing `must be positive`; (f) `scanRate: "0s"` → error containing `scanRate: must be positive`; (g) `slot: 16` → error containing `slot: must be between 0 and 15`; (h) two PLC entries each with two violations → four-error aggregate, `errors.Is(err, ErrConfigInvalid)` true. Update `internal/config/testdata/sample.yaml` to include a PLC entry with `name`, `address`, `slot`, `socketTimeout`, `scanRate`, `keepAlive`, `path`.
   - **Files**: `internal/config/config_test.go`, `internal/config/testdata/sample.yaml`
   - **Reqs**: PLC-CFG-1.1–PLC-CFG-1.7
   - **Design**: §7 (config schema)
   - **Deps**: T-1.02
   - **DoD**: `go test ./internal/config/...` FAILS (new fields absent from struct).
 
-- [ ] **T-1.04** `impl` — **[GREEN]** Extend `PLC` struct in `internal/config/config.go` with five new fields: `Slot int \`koanf:"slot"\``, `SocketTimeout string \`koanf:"socketTimeout"\``, `ScanRate string \`koanf:"scanRate"\``, `KeepAlive bool \`koanf:"keepAlive"\``, `Path string \`koanf:"path"\``. Extend `(*Config).Validate()` to iterate `cfg.PLCs` with index `i` and accumulate violations: (a) address empty → `plcs[i].address: must not be empty: %w`; (b) socketTimeout non-empty and parse fails or ≤ 0 → `plcs[i].socketTimeout: ...: %w`; (c) scanRate non-empty and parse fails or ≤ 0 → `plcs[i].scanRate: must be positive: %w`; (d) slot < 0 or > 15 → `plcs[i].slot: must be between 0 and 15: %w`. Extend `internal/config/loader.go` defaults confmap to set `SocketTimeout: "5s"`, `ScanRate: "1s"`, `KeepAlive: true`, `Slot: 0` for each PLC entry (use koanf confmap defaults or post-load defaulting loop).
+- [x] **T-1.04** `impl` — **[GREEN]** Extend `PLC` struct in `internal/config/config.go` with five new fields: `Slot int \`koanf:"slot"\``, `SocketTimeout string \`koanf:"socketTimeout"\``, `ScanRate string \`koanf:"scanRate"\``, `KeepAlive bool \`koanf:"keepAlive"\``, `Path string \`koanf:"path"\``. Extend `(*Config).Validate()` to iterate `cfg.PLCs` with index `i` and accumulate violations: (a) address empty → `plcs[i].address: must not be empty: %w`; (b) socketTimeout non-empty and parse fails or ≤ 0 → `plcs[i].socketTimeout: ...: %w`; (c) scanRate non-empty and parse fails or ≤ 0 → `plcs[i].scanRate: must be positive: %w`; (d) slot < 0 or > 15 → `plcs[i].slot: must be between 0 and 15: %w`. Extend `internal/config/loader.go` defaults confmap to set `SocketTimeout: "5s"`, `ScanRate: "1s"`, `KeepAlive: true`, `Slot: 0` for each PLC entry (use koanf confmap defaults or post-load defaulting loop).
   - **Files**: `internal/config/config.go`, `internal/config/loader.go`
   - **Reqs**: PLC-CFG-1.1–PLC-CFG-1.7
   - **Design**: §7

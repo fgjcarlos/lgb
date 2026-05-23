@@ -36,6 +36,8 @@ For Phase 0, `lgb doctor` MUST run the following checks:
 | `restic-on-path` | `restic` binary found on `$PATH` | WARN (not FAIL — backup may be unused) |
 | `go-runtime-version` | `runtime.Version()` returns Go 1.24+ | INFO (informational only) |
 | `http-port-available` | `server.httpAddr` port is not already bound | FAIL |
+| `config-loaded` | Configuration file loaded and valid | PASS (always, when reached) |
+| `plc-reachable/<name>` | TCP dial to PLC address succeeds within timeout | FAIL (one per configured PLC) |
 
 Platform note: the TCP probe for `http-port-available` MUST use `net.Listen("tcp", addr)` followed by immediate close. On Windows, the same `net.Listen` API is available without platform-specific code.
 
@@ -136,3 +138,38 @@ Doctor checks MUST be run concurrently (e.g. via goroutines with a `sync.WaitGro
 - WHEN `lgb doctor` runs
 - THEN the panicking check result has status `Fail` with the panic message
 - AND all other checks complete normally
+
+---
+
+### [PLC-DOC-1.1] plc-reachable check — one result per configured PLC
+
+The `internal/doctor` package MUST register a `plc-reachable` check for each entry in `config.PLCs`. Each check instance MUST produce a `Result` with:
+
+- `Name`: `"plc-reachable/<plc-name>"` (kebab-case; uses the PLC's `name` field, or the address if `name` is empty)
+- `Status`: `StatusPass` if TCP dial succeeds within the timeout; `StatusFail` otherwise
+- `Message`: human-readable description including the address and the outcome or error
+
+If `config.PLCs` is empty, no `plc-reachable` check is registered and the doctor output is unaffected.
+
+---
+
+### [PLC-DOC-1.2] TCP dial — EtherNet/IP port, configurable timeout
+
+The check MUST use `net.DialTimeout("tcp", address, timeout)` where:
+
+- `address` is `config.PLC.Address` (default to `:44818` if no port is specified)
+- `timeout` is derived from `config.PLC.SocketTimeout` (defaulting to `5s`)
+
+The check MUST NOT establish a CIP session — TCP reachability only.
+
+---
+
+### [PLC-DOC-1.4] Registration in doctor.Default()
+
+The `doctor.Default(cfg)` function MUST iterate over `cfg.PLCs` and register one `plcReachableCheck` instance per PLC after the existing Phase-0 checks.
+
+---
+
+### [PLC-DOC-1.5] Check result status is FAIL — not WARN
+
+A PLC that is unreachable MUST produce a `StatusFail` result (not `StatusWarn`). PLC connectivity is not optional for the gateway's primary function.

@@ -183,3 +183,55 @@ The logger MUST NOT print any value of a secret field. The config struct MUST im
 - WHEN the loaded config is logged at DEBUG level
 - THEN the log output does not contain `"my-secret"`
 - AND it contains `"[redacted]"` in place of the secret
+
+---
+
+### [PLC-CFG-1.1] Extended PLC struct fields
+
+The `PLC` struct in `internal/config/config.go` MUST include the following fields in addition to the existing `Name` and `Address` fields:
+
+| Field (Go) | YAML key | Type | Default | Description |
+|------------|----------|------|---------|-------------|
+| `Slot` | `slot` | `int` | `0` | CIP backplane slot number (ControlLogix: 0–15) |
+| `SocketTimeout` | `socketTimeout` | `string` | `"5s"` | Per-operation deadline; valid Go duration string |
+| `ScanRate` | `scanRate` | `string` | `"1s"` | Tag scan interval; valid Go duration string |
+| `KeepAlive` | `keepAlive` | `bool` | `true` | Enable TCP keep-alive on the CIP connection |
+| `Path` | `path` | `string` | `""` | Optional CIP path override (e.g. `"1,0"`); empty means use gologix default |
+
+All new fields MUST use camelCase YAML keys consistent with the project's case-preservation convention (MVP-FND-2.1).
+
+---
+
+### [PLC-CFG-1.2] Validation — address is required
+
+Each entry in `plcs[]` MUST have a non-empty `address`. Violation wraps `ErrConfigInvalid`.
+
+---
+
+### [PLC-CFG-1.3] Validation — socketTimeout is a valid duration
+
+If `socketTimeout` is non-empty, it MUST parse with `time.ParseDuration`. MUST be > 0. Violation wraps `ErrConfigInvalid`.
+
+---
+
+### [PLC-CFG-1.4] Validation — scanRate is a valid duration
+
+If `scanRate` is non-empty, it MUST parse with `time.ParseDuration` and MUST be > 0. Violation wraps `ErrConfigInvalid`.
+
+---
+
+### [PLC-CFG-1.5] Validation — slot is within CIP range
+
+`slot` MUST be in the range 0–15 inclusive. Violation wraps `ErrConfigInvalid`.
+
+---
+
+### [PLC-CFG-1.6] Validation — all PLC violations aggregated
+
+Violations across multiple PLC entries and across multiple fields within a single entry MUST all be included in the single `errors.Join` aggregate returned by `Validate()`.
+
+---
+
+### [PLC-CFG-1.7] Backward compatibility
+
+Existing YAML configs that define `plcs[]` entries with only `name` and `address` MUST load and validate without error. No existing field is removed or renamed.

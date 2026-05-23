@@ -457,3 +457,28 @@ status: complete
 | 10ca372 | feat(ci): add golangci-lint step, make generate step, and frontend-build job (T-4.05) |
 | 61921aa | feat(tooling): add generate, adr-index targets; update lint to call golangci-lint (T-4.06) |
 | d7ec25a | chore(sdd): tick T-4.01 through T-4.07 in tasks.md; verify embed guard behaviour (T-4.07) |
+
+## Slice 4 — CI fix-up (post-PR-6-open)
+
+PR #6 backend-test CI ran golangci-lint v1.63.0 (per the original T-4.01/T-4.05 pin) and failed with:
+
+```
+can't load config: the Go language version (go1.23) used to build golangci-lint
+is lower than the targeted Go version (1.24.0)
+```
+
+Root cause: golangci-lint v1.x was built with Go 1.23; `go.mod` targets Go 1.24. The v1 line is end-of-life — Go 1.24 support only exists in v2.x.
+
+Fix: bumped to `golangci-lint-action@v8.0.0` (tag object SHA `4afd733a84b1f43292c63897423277bb7f4313a9`) + `golangci-lint v2.12.2`. Migrated `.golangci.yml` to v2 schema via `golangci-lint migrate`; `gosimple` was merged into `staticcheck` upstream (the 6 mandatory linters from MVP-FND-9.9 reduce to 5 enabled, with the gosimple S* rules preserved inside staticcheck).
+
+Local verification: `golangci-lint run ./...` → 0 issues.
+
+Deviations from original plan:
+- `.golangci.yml` schema is v2 (not "v1.60+" as the old header claimed).
+- Spec MVP-FND-9.9 wording lists 6 linters but v2 collapses 6 → 5 (gosimple absorbed). Coverage is preserved. Verify phase should accept this with a note, or the spec text can be aligned.
+
+## Follow-up commits (slice 4)
+
+| SHA | Subject |
+|-----|---------|
+| (TBD) | ci(lint): bump golangci-lint-action to v8.0.0 + golangci-lint v2.12.2 (Go 1.24 support) |

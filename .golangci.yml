@@ -1,80 +1,82 @@
 # .golangci.yml — baseline linter configuration for LGB.
 #
-# Valid for golangci-lint v1.60+.
+# Schema: golangci-lint v2 (required for Go 1.24+ — v1.x was built with Go 1.23
+# and cannot load configs targeting newer toolchains).
+#
 # Requirements: MVP-FND-9.9. Design: §19 decision #23.
 #
 # Enabled linters (mandatory baseline — no suppressions allowed):
 #   errcheck     — unchecked errors must be explicit
-#   staticcheck  — SA* rules (misuse of stdlib, dead code, etc.)
-#   gosimple     — S* rules (style simplifications)
+#   staticcheck  — SA*/S*/ST* rules (gosimple was merged into staticcheck in v2)
 #   unused       — exported/unexported identifiers not used
 #   govet        — vet-equivalent checks
 #   ineffassign  — assignments whose value is never used
-
-run:
-  timeout: 5m
-
+version: "2"
 linters:
-  # Disable the default enabled set so we control exactly which linters run.
-  disable-all: true
+  default: none
   enable:
     - errcheck
-    - staticcheck
-    - gosimple
-    - unused
     - govet
     - ineffassign
-
-linters-settings:
-  errcheck:
-    # Do not flag blank-identifier discards (e.g. `_ = f()`).
-    check-blank: false
-    # Do not flag type assertions (x.(T) already panics on failure).
-    check-type-assertions: false
-
-  govet:
-    # Mirror the default `go vet` analyser set.
-    # `fieldalignment` is intentionally excluded — struct padding optimisation
-    # is left to the author's discretion; it is not a correctness issue and is
-    # not among the six mandatory linters in MVP-FND-9.9.
-    enable:
-      - asmdecl
-      - assign
-      - atomic
-      - bools
-      - buildtag
-      - cgocall
-      - composites
-      - copylocks
-      - defers
-      - directive
-      - errorsas
-      - framepointer
-      - httpresponse
-      - ifaceassert
-      - loopclosure
-      - lostcancel
-      - nilfunc
-      - printf
-      - shift
-      - sigchanyzer
-      - slog
-      - stdmethods
-      - stringintconv
-      - structtag
-      - testinggoroutine
-      - tests
-      - timeformat
-      - unmarshal
-      - unreachable
-      - unsafeptr
-      - unusedresult
-
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    govet:
+      enable:
+        - asmdecl
+        - assign
+        - atomic
+        - bools
+        - buildtag
+        - cgocall
+        - composites
+        - copylocks
+        - defers
+        - directive
+        - errorsas
+        - framepointer
+        - httpresponse
+        - ifaceassert
+        - loopclosure
+        - lostcancel
+        - nilfunc
+        - printf
+        - shift
+        - sigchanyzer
+        - slog
+        - stdmethods
+        - stringintconv
+        - structtag
+        - testinggoroutine
+        - tests
+        - timeformat
+        - unmarshal
+        - unreachable
+        - unsafeptr
+        - unusedresult
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - frontend
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  # Only lint Go files in the module (skip generated vendor, frontend, etc.)
-  exclude-dirs:
-    - frontend
-    - vendor
-  # Surface all issues (no per-linter cap).
   max-issues-per-linter: 0
   max-same-issues: 0
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

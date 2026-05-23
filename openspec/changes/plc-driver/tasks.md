@@ -80,14 +80,14 @@ New `internal/plc` package: Driver interface, gologix adapter, error translation
 
 ### Group A — Package skeleton and error re-exports
 
-- [ ] **T-2.01** `test` — **[RED]** Create `internal/plc/driver_test.go`: define `mockDriver` struct implementing `Driver` interface (Connect, Disconnect, ReadTag, WriteTag, ReadMulti, Connected); write compile-time assertion `var _ Driver = (*mockDriver)(nil)`; write test `TestMockDriverSatisfiesInterface` (always passes once interface exists). Also write `TestErrReExports`: assert `plc.ErrPLCConnect == errs.ErrPLCConnect`, same for Read/Write/Timeout. All tests in `package plc_test`.
+- [x] **T-2.01** `test` — **[RED]** Create `internal/plc/driver_test.go`: define `mockDriver` struct implementing `Driver` interface (Connect, Disconnect, ReadTag, WriteTag, ReadMulti, Connected); write compile-time assertion `var _ Driver = (*mockDriver)(nil)`; write test `TestMockDriverSatisfiesInterface` (always passes once interface exists). Also write `TestErrReExports`: assert `plc.ErrPLCConnect == errs.ErrPLCConnect`, same for Read/Write/Timeout. All tests in `package plc_test`.
   - **Files**: `internal/plc/driver_test.go`
   - **Reqs**: PLC-DRV-1.1, PLC-ERR-1.2
   - **Design**: §4 (interface definitions), §8
   - **Deps**: T-1.02
   - **DoD**: `go test ./internal/plc/...` FAILS (package does not exist).
 
-- [ ] **T-2.02** `impl` — **[GREEN]** Create `internal/plc/doc.go`: package-level godoc including SocketTimeout limitation note and Phase 1 UDT exclusion warning. Create `internal/plc/driver.go`: export `Driver` interface (Connect, Disconnect, ReadTag, WriteTag, ReadMulti, Connected); export `Options` struct (RetryInitial, RetryMax, MaxAttempts time.Duration/int; zero values resolve to defaults 1s/30s/0); re-export four error sentinels from `internal/errors`.
+- [x] **T-2.02** `impl` — **[GREEN]** Create `internal/plc/doc.go`: package-level godoc including SocketTimeout limitation note and Phase 1 UDT exclusion warning. Create `internal/plc/driver.go`: export `Driver` interface (Connect, Disconnect, ReadTag, WriteTag, ReadMulti, Connected); export `Options` struct (RetryInitial, RetryMax, MaxAttempts time.Duration/int; zero values resolve to defaults 1s/30s/0); re-export four error sentinels from `internal/errors`.
   - **Files**: `internal/plc/doc.go`, `internal/plc/driver.go`
   - **Reqs**: PLC-DRV-1.1, PLC-DRV-1.2, PLC-ERR-1.2
   - **Design**: §4, §8
@@ -96,14 +96,14 @@ New `internal/plc` package: Driver interface, gologix adapter, error translation
 
 ### Group B — Error translation helper
 
-- [ ] **T-2.03** `test` — **[RED]** Create `internal/plc/errors_test.go` (package `plc`): table-driven tests for `translateError`: (a) `*gologix.CIPError` on read op → wraps `ErrPLCRead`; (b) `*gologix.CIPError` on write op → wraps `ErrPLCWrite`; (c) `net.OpError` → wraps `ErrPLCConnect`; (d) `io.EOF` → wraps `ErrPLCConnect`; (e) timeout error (implements `net.Error` with `Timeout() == true`) → wraps `ErrPLCTimeout`; (f) `nil` → returns `nil`; (g) unknown error type → wraps `ErrPLCRead` (no panic per PLC-ERR-1.5).
+- [x] **T-2.03** `test` — **[RED]** Create `internal/plc/errors_test.go` (package `plc`): table-driven tests for `translateError`: (a) `*gologix.CIPError` on read op → wraps `ErrPLCRead`; (b) `*gologix.CIPError` on write op → wraps `ErrPLCWrite`; (c) `net.OpError` → wraps `ErrPLCConnect`; (d) `io.EOF` → wraps `ErrPLCConnect`; (e) timeout error (implements `net.Error` with `Timeout() == true`) → wraps `ErrPLCTimeout`; (f) `nil` → returns `nil`; (g) unknown error type → wraps `ErrPLCRead` (no panic per PLC-ERR-1.5).
   - **Files**: `internal/plc/errors_test.go`
   - **Reqs**: PLC-ERR-1.3, PLC-ERR-1.5
   - **Design**: §8 (error model, translation rules)
   - **Deps**: T-2.02
   - **DoD**: `go test ./internal/plc/...` FAILS (translateError not implemented).
 
-- [ ] **T-2.04** `impl` — **[GREEN]** Create `internal/plc/errors.go`: unexported `translateError(err error, op string, tag string) error` that type-switches on `*gologix.CIPError` (→ `ErrPLCRead`/`ErrPLCWrite` per op), `net.Error` with `Timeout()==true` (→ `ErrPLCTimeout`), `net.OpError` / `io.EOF` / "not connected" string (→ `ErrPLCConnect`), nil (→ nil), default (→ `ErrPLCRead`). Use `fmt.Errorf` with double `%w` per PLC-ERR-1.3 convention.
+- [x] **T-2.04** `impl` — **[GREEN]** Create `internal/plc/errors.go`: unexported `translateError(err error, op string, tag string) error` that type-switches on `*gologix.CIPError` (→ `ErrPLCRead`/`ErrPLCWrite` per op), `net.Error` with `Timeout()==true` (→ `ErrPLCTimeout`), `net.OpError` / `io.EOF` / "not connected" string (→ `ErrPLCConnect`), nil (→ nil), default (→ `ErrPLCRead`). Use `fmt.Errorf` with double `%w` per PLC-ERR-1.3 convention.
   - **Files**: `internal/plc/errors.go`
   - **Reqs**: PLC-ERR-1.3, PLC-ERR-1.5
   - **Design**: §8
@@ -112,14 +112,14 @@ New `internal/plc` package: Driver interface, gologix adapter, error translation
 
 ### Group C — gologix adapter
 
-- [ ] **T-2.05** `test` — **[RED]** Extend `internal/plc/driver_test.go` with unit tests for `gologixDriver` using a fake gologix client interface (injected via constructor option or unexported field): (a) `NewDriver` returns value assignable to `Driver`; (b) `Connected()` returns false before Connect, true after successful Connect; (c) `Connect(ctx)` with cancelled context returns `ctx.Err()`, `Connected()` false; (d) `Disconnect()` after Connect → Connected() false; (e) `Disconnect()` twice → no panic, returns nil; (f) `ReadTag` with `[]bool` of length 10 (not multiple of 32) → error wrapping `ErrPLCRead` with message "length must be a multiple of 32" before calling client; (g) `ReadMulti` with len(tags) != len(dests) → error wrapping `ErrPLCRead`; (h) `go test -race` passes (concurrent Connected() calls). Use `mockGologixClient` interface with `Connect/Disconnect/Read/Write` methods.
+- [x] **T-2.05** `test` — **[RED]** Extend `internal/plc/driver_test.go` with unit tests for `gologixDriver` using a fake gologix client interface (injected via constructor option or unexported field): (a) `NewDriver` returns value assignable to `Driver`; (b) `Connected()` returns false before Connect, true after successful Connect; (c) `Connect(ctx)` with cancelled context returns `ctx.Err()`, `Connected()` false; (d) `Disconnect()` after Connect → Connected() false; (e) `Disconnect()` twice → no panic, returns nil; (f) `ReadTag` with `[]bool` of length 10 (not multiple of 32) → error wrapping `ErrPLCRead` with message "length must be a multiple of 32" before calling client; (g) `ReadMulti` with len(tags) != len(dests) → error wrapping `ErrPLCRead`; (h) `go test -race` passes (concurrent Connected() calls). Use `mockGologixClient` interface with `Connect/Disconnect/Read/Write` methods.
   - **Files**: `internal/plc/driver_test.go`
   - **Reqs**: PLC-DRV-1.3, PLC-DRV-1.4, PLC-DRV-1.5, PLC-DRV-1.6, PLC-DRV-1.8, PLC-DRV-1.10
   - **Design**: §4, §5 (decisions 1–7)
   - **Deps**: T-2.04
   - **DoD**: `go test ./internal/plc/...` FAILS (gologixDriver not implemented).
 
-- [ ] **T-2.06** `impl` — **[GREEN]** Create `internal/plc/gologix.go`: unexported `gologixDriver` struct holding `*gologix.Client`, `connected atomic.Bool`, `mu sync.Mutex`, `cfg config.PLC`, `opts Options`. Implement all six `Driver` methods: `Connect` delegates to `internal/retry.Do` with opts; sets `AutoConnect=false` in constructor; `SocketTimeout` set from `cfg.SocketTimeout`; `Disconnect` is idempotent; `ReadTag` validates `[]bool` length before calling client; `WriteTag` calls client write; `ReadMulti` checks length parity then loops `ReadTag`; `Connected` reads atomic. Constructor: `func NewDriver(cfg config.PLC, opts ...Option) Driver`. Apply `translateError` on all client error paths.
+- [x] **T-2.06** `impl` — **[GREEN]** Create `internal/plc/gologix.go`: unexported `gologixDriver` struct holding `*gologix.Client`, `connected atomic.Bool`, `mu sync.Mutex`, `cfg config.PLC`, `opts Options`. Implement all six `Driver` methods: `Connect` delegates to `internal/retry.Do` with opts; sets `AutoConnect=false` in constructor; `SocketTimeout` set from `cfg.SocketTimeout`; `Disconnect` is idempotent; `ReadTag` validates `[]bool` length before calling client; `WriteTag` calls client write; `ReadMulti` checks length parity then loops `ReadTag`; `Connected` reads atomic. Constructor: `func NewDriver(cfg config.PLC, opts ...Option) Driver`. Apply `translateError` on all client error paths.
   - **Files**: `internal/plc/gologix.go`
   - **Reqs**: PLC-DRV-1.1, PLC-DRV-1.3, PLC-DRV-1.4, PLC-DRV-1.5, PLC-DRV-1.6, PLC-DRV-1.7, PLC-DRV-1.8, PLC-DRV-1.9, PLC-DRV-1.10
   - **Design**: §4, §5, §6.1, §6.2
@@ -128,7 +128,7 @@ New `internal/plc` package: Driver interface, gologix adapter, error translation
 
 ### Group D — Cross-platform build check
 
-- [ ] **T-2.07** `chore` — Verify `CGO_ENABLED=0 go build ./internal/plc/...` passes for all four target platforms (`GOOS=linux GOARCH=amd64`, `GOOS=linux GOARCH=arm64`, `GOOS=darwin GOARCH=arm64`, `GOOS=windows GOARCH=amd64`). Record results as a comment in the PR description. No code change expected; this task is a gate.
+- [x] **T-2.07** `chore` — Verify `CGO_ENABLED=0 go build ./internal/plc/...` passes for all four target platforms (`GOOS=linux GOARCH=amd64`, `GOOS=linux GOARCH=arm64`, `GOOS=darwin GOARCH=arm64`, `GOOS=windows GOARCH=amd64`). Record results as a comment in the PR description. No code change expected; this task is a gate.
   - **Files**: (none — verification only)
   - **Reqs**: PLC-DRV-2.4
   - **Design**: §5 decision #7, §13 (non-functional)

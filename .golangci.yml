@@ -1,0 +1,80 @@
+# .golangci.yml — baseline linter configuration for LGB.
+#
+# Valid for golangci-lint v1.60+.
+# Requirements: MVP-FND-9.9. Design: §19 decision #23.
+#
+# Enabled linters (mandatory baseline — no suppressions allowed):
+#   errcheck     — unchecked errors must be explicit
+#   staticcheck  — SA* rules (misuse of stdlib, dead code, etc.)
+#   gosimple     — S* rules (style simplifications)
+#   unused       — exported/unexported identifiers not used
+#   govet        — vet-equivalent checks
+#   ineffassign  — assignments whose value is never used
+
+run:
+  timeout: 5m
+
+linters:
+  # Disable the default enabled set so we control exactly which linters run.
+  disable-all: true
+  enable:
+    - errcheck
+    - staticcheck
+    - gosimple
+    - unused
+    - govet
+    - ineffassign
+
+linters-settings:
+  errcheck:
+    # Do not flag blank-identifier discards (e.g. `_ = f()`).
+    check-blank: false
+    # Do not flag type assertions (x.(T) already panics on failure).
+    check-type-assertions: false
+
+  govet:
+    # Mirror the default `go vet` analyser set.
+    # `fieldalignment` is intentionally excluded — struct padding optimisation
+    # is left to the author's discretion; it is not a correctness issue and is
+    # not among the six mandatory linters in MVP-FND-9.9.
+    enable:
+      - asmdecl
+      - assign
+      - atomic
+      - bools
+      - buildtag
+      - cgocall
+      - composites
+      - copylocks
+      - defers
+      - directive
+      - errorsas
+      - framepointer
+      - httpresponse
+      - ifaceassert
+      - loopclosure
+      - lostcancel
+      - nilfunc
+      - printf
+      - shift
+      - sigchanyzer
+      - slog
+      - stdmethods
+      - stringintconv
+      - structtag
+      - testinggoroutine
+      - tests
+      - timeformat
+      - unmarshal
+      - unreachable
+      - unsafeptr
+      - unusedresult
+
+issues:
+  # Only lint Go files in the module (skip generated vendor, frontend, etc.)
+  exclude-dirs:
+    - frontend
+    - vendor
+  # Surface all issues (no per-linter cap).
+  max-issues-per-linter: 0
+  max-same-issues: 0

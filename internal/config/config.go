@@ -101,8 +101,13 @@ type BackupRepo struct {
 
 // PLC holds CIP/gologix PLC settings.
 type PLC struct {
-	Name    string `koanf:"name"`
-	Address string `koanf:"address"`
+	Name          string `koanf:"name"`
+	Address       string `koanf:"address"`
+	Slot          int    `koanf:"slot"`
+	SocketTimeout string `koanf:"socketTimeout"`
+	ScanRate      string `koanf:"scanRate"`
+	KeepAlive     bool   `koanf:"keepAlive"`
+	Path          string `koanf:"path"`
 }
 
 // Validate checks the loaded config against schema constraints.
@@ -143,6 +148,39 @@ func (c *Config) Validate() error {
 	// historian.retentionDays must be positive when non-zero.
 	if c.Historian.RetentionDays < 0 {
 		violations = append(violations, errorf("historian.retentionDays: must be a positive integer, got %d: %w", c.Historian.RetentionDays, ErrConfigInvalid))
+	}
+
+	// Validate each PLC entry (PLC-CFG-1.2 through PLC-CFG-1.6).
+	for i, plc := range c.PLCs {
+		// address must not be empty.
+		if plc.Address == "" {
+			violations = append(violations, errorf("plcs[%d].address: must not be empty: %w", i, ErrConfigInvalid))
+		}
+
+		// socketTimeout must be a valid positive duration when non-empty.
+		if plc.SocketTimeout != "" {
+			d, err := time.ParseDuration(plc.SocketTimeout)
+			if err != nil {
+				violations = append(violations, errorf("plcs[%d].socketTimeout: %q is not a valid Go duration: %w", i, plc.SocketTimeout, ErrConfigInvalid))
+			} else if d <= 0 {
+				violations = append(violations, errorf("plcs[%d].socketTimeout: must be positive, got %q: %w", i, plc.SocketTimeout, ErrConfigInvalid))
+			}
+		}
+
+		// scanRate must be a valid positive duration when non-empty.
+		if plc.ScanRate != "" {
+			d, err := time.ParseDuration(plc.ScanRate)
+			if err != nil {
+				violations = append(violations, errorf("plcs[%d].scanRate: %q is not a valid Go duration: %w", i, plc.ScanRate, ErrConfigInvalid))
+			} else if d <= 0 {
+				violations = append(violations, errorf("plcs[%d].scanRate: must be positive, got %q: %w", i, plc.ScanRate, ErrConfigInvalid))
+			}
+		}
+
+		// slot must be in range [0, 15].
+		if plc.Slot < 0 || plc.Slot > 15 {
+			violations = append(violations, errorf("plcs[%d].slot: must be between 0 and 15, got %d: %w", i, plc.Slot, ErrConfigInvalid))
+		}
 	}
 
 	return errs.Join(violations...)

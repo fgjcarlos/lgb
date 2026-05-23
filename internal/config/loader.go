@@ -137,5 +137,77 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: unmarshalling: %w", err)
 	}
 
+	// Apply per-PLC defaults for fields that koanf confmap cannot set on slice elements.
+	// Per design §7 and tasks risk note: koanf confmap defaults do not propagate into
+	// slice entries, so we apply them post-unmarshal.
+	//
+	// We pass the raw koanf instance so applyPLCDefaults can inspect which keys were
+	// explicitly set by the user vs. left absent (important for bool fields where the
+	// Go zero value and the "absent" state are indistinguishable from the struct alone).
+	applyPLCDefaults(&cfg, k)
+
 	return &cfg, nil
+}
+
+// applyPLCDefaults sets compiled-in default values on PLC slice entries for
+// optional fields that were not explicitly set in YAML or env vars. This is
+// necessary because koanf confmap providers operate on top-level dot-notation
+// keys and cannot seed per-element slice defaults (PLC-CFG-1.1).
+//
+// The koanf instance k is used to read the raw plcs slice and detect which
+// fields were explicitly provided (keyed in the raw map) vs. absent. This
+// allows correct defaulting of bool fields like KeepAlive whose Go zero value
+// (false) is different from the desired default (true).
+//
+// Defaults applied:
+//   - SocketTimeout: "5s"  (connect/read deadline)
+//   - ScanRate:      "1s"  (tag polling interval)
+//   - KeepAlive:     true  (TCP keep-alive, only when key is absent from YAML/env)
+//   - Slot:          0     (CompactLogix default backplane slot — zero is valid default)
+func applyPLCDefaults(cfg *Config, k *koanf.Koanf) {
+	// Read the raw PLC slice from koanf so we can inspect which keys were set.
+	// koanf stores the slice as []interface{} where each element is map[string]interface{}.
+	rawPLCs := extractRawPLCMaps(k)
+
+	for i := range cfg.PLCs {
+		if cfg.PLCs[i].SocketTimeout == "" {
+			cfg.PLCs[i].SocketTimeout = "5s"
+		}
+		if cfg.PLCs[i].ScanRate == "" {
+			cfg.PLCs[i].ScanRate = "1s"
+		}
+		// KeepAlive: default to true only when the key was NOT explicitly set in
+		// the YAML/env source. We detect this by checking if "keepAlive" is present
+		// in the raw map for this PLC entry. If absent, the user did not set it
+		// and we apply the default. If present (even as false), we preserve it.
+		if i < len(rawPLCs) {
+			if _, keySet := rawPLCs[i]["keepAlive"]; !keySet {
+				cfg.PLCs[i].KeepAlive = true
+			}
+		} else {
+			// No raw data for this index (should not happen), apply default.
+			cfg.PLCs[i].KeepAlive = true
+		}
+	}
+}
+
+// extractRawPLCMaps reads the raw "plcs" value from koanf and returns it as a
+// slice of string→interface maps, one per PLC entry. Returns nil if the key is
+// absent or has an unexpected type.
+func extractRawPLCMaps(k *koanf.Koanf) []map[string]interface{} {
+	raw := k.Get("plcs")
+	if raw == nil {
+		return nil
+	}
+	slice, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]interface{}, 0, len(slice))
+	for _, item := range slice {
+		if m, ok := item.(map[string]interface{}); ok {
+			result = append(result, m)
+		}
+	}
+	return result
 }

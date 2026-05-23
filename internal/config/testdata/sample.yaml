@@ -27,3 +27,12 @@ historian:
 
 backup:
   repos: []
+
+plcs:
+  - name: "test-plc"
+    address: "192.168.1.10"
+    slot: 1
+    socketTimeout: "5s"
+    scanRate: "1s"
+    keepAlive: true
+    path: "1,0"

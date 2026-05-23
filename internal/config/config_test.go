@@ -181,6 +181,350 @@ func TestRedactedReplacesSecretFields(t *testing.T) {
 	}
 }
 
+// TestPLCFieldsLoadFromSampleYAML asserts PLC-CFG-1.1: the five new PLC
+// fields are loaded correctly from sample.yaml.
+func TestPLCFieldsLoadFromSampleYAML(t *testing.T) {
+	cfg, err := config.Load(testdataPath("sample.yaml"))
+	if err != nil {
+		t.Fatalf("Load(sample.yaml) returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 {
+		t.Fatal("PLCs slice is empty; want at least one PLC entry")
+	}
+	plc := cfg.PLCs[0]
+	if plc.Name != "test-plc" {
+		t.Errorf("PLCs[0].Name = %q; want %q", plc.Name, "test-plc")
+	}
+	if plc.Address != "192.168.1.10" {
+		t.Errorf("PLCs[0].Address = %q; want %q", plc.Address, "192.168.1.10")
+	}
+	if plc.Slot != 1 {
+		t.Errorf("PLCs[0].Slot = %d; want 1", plc.Slot)
+	}
+	if plc.SocketTimeout != "5s" {
+		t.Errorf("PLCs[0].SocketTimeout = %q; want %q", plc.SocketTimeout, "5s")
+	}
+	if plc.ScanRate != "1s" {
+		t.Errorf("PLCs[0].ScanRate = %q; want %q", plc.ScanRate, "1s")
+	}
+	if !plc.KeepAlive {
+		t.Errorf("PLCs[0].KeepAlive = false; want true")
+	}
+	if plc.Path != "1,0" {
+		t.Errorf("PLCs[0].Path = %q; want %q", plc.Path, "1,0")
+	}
+}
+
+// TestPLCDefaultsAppliedWhenOptionalFieldsAbsent asserts PLC-CFG-1.1:
+// a PLC entry with only name+address gets default values for the five new fields.
+func TestPLCDefaultsAppliedWhenOptionalFieldsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	minYAML := filepath.Join(dir, "minimal-plc.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "my-plc"
+    address: "10.0.0.1"
+`
+	if err := os.WriteFile(minYAML, []byte(content), 0600); err != nil {
+		t.Fatalf("writing minimal-plc.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(minYAML)
+	if err != nil {
+		t.Fatalf("Load(minimal-plc.yaml) returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 {
+		t.Fatal("PLCs slice is empty; want one entry")
+	}
+	plc := cfg.PLCs[0]
+	if plc.Slot != 0 {
+		t.Errorf("default Slot = %d; want 0", plc.Slot)
+	}
+	if plc.SocketTimeout != "5s" {
+		t.Errorf("default SocketTimeout = %q; want %q", plc.SocketTimeout, "5s")
+	}
+	if plc.ScanRate != "1s" {
+		t.Errorf("default ScanRate = %q; want %q", plc.ScanRate, "1s")
+	}
+	if !plc.KeepAlive {
+		t.Errorf("default KeepAlive = false; want true")
+	}
+	if plc.Path != "" {
+		t.Errorf("default Path = %q; want empty string", plc.Path)
+	}
+}
+
+// TestPLCExplicitFieldsOverrideDefaults asserts PLC-CFG-1.1: when all five
+// optional fields are explicitly set, those values are preserved.
+func TestPLCExplicitFieldsOverrideDefaults(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "explicit-plc.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "explicit-plc"
+    address: "10.0.0.2"
+    slot: 2
+    socketTimeout: "10s"
+    scanRate: "500ms"
+    keepAlive: false
+    path: "1,0"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing explicit-plc.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 {
+		t.Fatal("PLCs slice is empty; want one entry")
+	}
+	plc := cfg.PLCs[0]
+	if plc.Slot != 2 {
+		t.Errorf("Slot = %d; want 2", plc.Slot)
+	}
+	if plc.SocketTimeout != "10s" {
+		t.Errorf("SocketTimeout = %q; want %q", plc.SocketTimeout, "10s")
+	}
+	if plc.ScanRate != "500ms" {
+		t.Errorf("ScanRate = %q; want %q", plc.ScanRate, "500ms")
+	}
+	if plc.KeepAlive {
+		t.Errorf("KeepAlive = true; want false")
+	}
+	if plc.Path != "1,0" {
+		t.Errorf("Path = %q; want %q", plc.Path, "1,0")
+	}
+}
+
+// TestPLCValidateAddressEmpty asserts PLC-CFG-1.2: empty address is rejected.
+func TestPLCValidateAddressEmpty(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "empty-addr.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "bad-plc"
+    address: ""
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing empty-addr.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	validErr := cfg.Validate()
+	if validErr == nil {
+		t.Fatal("Validate() returned nil on empty PLC address; want error")
+	}
+	if !errors.Is(validErr, errs.ErrConfigInvalid) {
+		t.Errorf("errors.Is(err, ErrConfigInvalid) = false; got %v", validErr)
+	}
+	if msg := validErr.Error(); !strings.Contains(msg, "plcs[0].address") {
+		t.Errorf("error message does not mention plcs[0].address; got %v", msg)
+	}
+}
+
+// TestPLCValidateSocketTimeoutInvalid asserts PLC-CFG-1.3: non-duration socketTimeout is rejected.
+func TestPLCValidateSocketTimeoutInvalid(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "bad-timeout.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "bad-plc"
+    address: "10.0.0.1"
+    socketTimeout: "not-a-duration"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing bad-timeout.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	validErr := cfg.Validate()
+	if validErr == nil {
+		t.Fatal("Validate() returned nil on invalid socketTimeout; want error")
+	}
+	if !errors.Is(validErr, errs.ErrConfigInvalid) {
+		t.Errorf("errors.Is(err, ErrConfigInvalid) = false; got %v", validErr)
+	}
+	if msg := validErr.Error(); !strings.Contains(msg, "socketTimeout") {
+		t.Errorf("error message does not mention socketTimeout; got %v", msg)
+	}
+}
+
+// TestPLCValidateSocketTimeoutNegative asserts PLC-CFG-1.4: negative socketTimeout is rejected.
+func TestPLCValidateSocketTimeoutNegative(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "neg-timeout.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "bad-plc"
+    address: "10.0.0.1"
+    socketTimeout: "-1s"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing neg-timeout.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	validErr := cfg.Validate()
+	if validErr == nil {
+		t.Fatal("Validate() returned nil on negative socketTimeout; want error")
+	}
+	if msg := validErr.Error(); !strings.Contains(msg, "must be positive") {
+		t.Errorf("error message does not mention 'must be positive'; got %v", msg)
+	}
+}
+
+// TestPLCValidateScanRateZero asserts PLC-CFG-1.5: zero scanRate is rejected.
+func TestPLCValidateScanRateZero(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "zero-scan.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "bad-plc"
+    address: "10.0.0.1"
+    scanRate: "0s"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing zero-scan.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	validErr := cfg.Validate()
+	if validErr == nil {
+		t.Fatal("Validate() returned nil on zero scanRate; want error")
+	}
+	if msg := validErr.Error(); !strings.Contains(msg, "scanRate") || !strings.Contains(msg, "must be positive") {
+		t.Errorf("error message missing 'scanRate' or 'must be positive'; got %v", msg)
+	}
+}
+
+// TestPLCValidateSlotOutOfRange asserts PLC-CFG-1.6: slot > 15 is rejected.
+func TestPLCValidateSlotOutOfRange(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "bad-slot.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "bad-plc"
+    address: "10.0.0.1"
+    slot: 16
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing bad-slot.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	validErr := cfg.Validate()
+	if validErr == nil {
+		t.Fatal("Validate() returned nil on slot=16; want error")
+	}
+	if msg := validErr.Error(); !strings.Contains(msg, "slot") || !strings.Contains(msg, "must be between 0 and 15") {
+		t.Errorf("error message missing 'slot' or 'must be between 0 and 15'; got %v", msg)
+	}
+}
+
+// TestPLCValidateMultiplePLCsAggregatesErrors asserts PLC-CFG-1.7: two PLCs
+// each with two violations produces a four-error aggregate, and
+// errors.Is(err, ErrConfigInvalid) is true.
+func TestPLCValidateMultiplePLCsAggregatesErrors(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "multi-plc-errors.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "bad-plc-a"
+    address: ""
+    slot: 16
+  - name: "bad-plc-b"
+    address: "10.0.0.2"
+    socketTimeout: "not-a-duration"
+    scanRate: "0s"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing multi-plc-errors.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	validErr := cfg.Validate()
+	if validErr == nil {
+		t.Fatal("Validate() returned nil on two invalid PLCs; want error")
+	}
+	if !errors.Is(validErr, errs.ErrConfigInvalid) {
+		t.Errorf("errors.Is(err, ErrConfigInvalid) = false; got %v", validErr)
+	}
+	// Verify both PLC indices appear in the error message.
+	msg := validErr.Error()
+	if !strings.Contains(msg, "plcs[0]") {
+		t.Errorf("error message missing plcs[0] violations; got %v", msg)
+	}
+	if !strings.Contains(msg, "plcs[1]") {
+		t.Errorf("error message missing plcs[1] violations; got %v", msg)
+	}
+}
+
 // TestDefaultsAppliedWhenFieldsAbsent asserts MVP-FND-2.2: when optional
 // fields are absent, defaults are applied.
 func TestDefaultsAppliedWhenFieldsAbsent(t *testing.T) {

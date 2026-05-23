@@ -79,6 +79,91 @@ type wrappedErr struct{ inner error }
 func (e *wrappedErr) Error() string { return "wrapped: " + e.inner.Error() }
 func (e *wrappedErr) Unwrap() error { return e.inner }
 
+// TestPLCSentinelsAreDistinctNonNil asserts PLC-ERR-1.1: all four PLC
+// sentinels are distinct, non-nil, and not equal to any existing sentinel.
+func TestPLCSentinelsAreDistinctNonNil(t *testing.T) {
+	plcSentinels := []struct {
+		name string
+		err  error
+	}{
+		{"ErrPLCConnect", errs.ErrPLCConnect},
+		{"ErrPLCRead", errs.ErrPLCRead},
+		{"ErrPLCWrite", errs.ErrPLCWrite},
+		{"ErrPLCTimeout", errs.ErrPLCTimeout},
+	}
+
+	// Each PLC sentinel must be non-nil.
+	for _, s := range plcSentinels {
+		s := s
+		t.Run(s.name+"_not_nil", func(t *testing.T) {
+			if s.err == nil {
+				t.Errorf("%s is nil; want non-nil sentinel", s.name)
+			}
+		})
+	}
+
+	// All PLC sentinels must be distinct from each other.
+	for i, a := range plcSentinels {
+		for j, b := range plcSentinels {
+			if i >= j {
+				continue
+			}
+			if errors.Is(a.err, b.err) {
+				t.Errorf("%s and %s are not distinct (errors.Is returned true)", a.name, b.name)
+			}
+		}
+	}
+
+	// No PLC sentinel may equal any existing (non-PLC) sentinel.
+	existingSentinels := []struct {
+		name string
+		err  error
+	}{
+		{"ErrConfigInvalid", errs.ErrConfigInvalid},
+		{"ErrConfigMissing", errs.ErrConfigMissing},
+		{"ErrConfigPermission", errs.ErrConfigPermission},
+		{"ErrDataDirInvalid", errs.ErrDataDirInvalid},
+		{"ErrDataDirPermission", errs.ErrDataDirPermission},
+		{"ErrCheckFailed", errs.ErrCheckFailed},
+		{"ErrMaxAttempts", errs.ErrMaxAttempts},
+	}
+	for _, plcS := range plcSentinels {
+		for _, existS := range existingSentinels {
+			if errors.Is(plcS.err, existS.err) {
+				t.Errorf("%s equals existing sentinel %s; they must be distinct", plcS.name, existS.name)
+			}
+		}
+	}
+}
+
+// TestPLCSentinelsWrapping asserts PLC-ERR-1.1: errors.Is traversal works
+// for wrapped PLC sentinels, and wrapping one does not match another.
+func TestPLCSentinelsWrapping(t *testing.T) {
+	pairs := []struct {
+		name    string
+		target  error
+		other   error
+	}{
+		{"ErrPLCConnect", errs.ErrPLCConnect, errs.ErrPLCRead},
+		{"ErrPLCRead", errs.ErrPLCRead, errs.ErrPLCWrite},
+		{"ErrPLCWrite", errs.ErrPLCWrite, errs.ErrPLCTimeout},
+		{"ErrPLCTimeout", errs.ErrPLCTimeout, errs.ErrPLCConnect},
+	}
+
+	for _, p := range pairs {
+		p := p
+		t.Run(p.name+"_wrapped_is_detectable", func(t *testing.T) {
+			wrapped := fmt_errorf_helper(p.target)
+			if !errors.Is(wrapped, p.target) {
+				t.Errorf("errors.Is(wrapped, %s) = false; want true", p.name)
+			}
+			if errors.Is(wrapped, p.other) {
+				t.Errorf("errors.Is(wrapped %s, %s) = true; want false (sentinels must differ)", p.name, "other")
+			}
+		})
+	}
+}
+
 // TestJoinPreservesConstituents asserts MVP-FND-5.3: Join preserves each
 // constituent error so that errors.Is works on the joined result.
 func TestJoinPreservesConstituents(t *testing.T) {

@@ -1,9 +1,10 @@
 // server.go — lgb server subcommand.
 //
-// Validates jwtSecret, bootstraps dataDir, and starts the HTTP server.
-// Signal handling via signal.NotifyContext happens here — internal/server
-// is kept signal-free for testability. Design §6.3, §20.1.
-// Requirements: MVP-FND-1.3, MVP-FND-1.9, MVP-FND-7.5.
+// Validates jwtSecret, bootstraps dataDir, probes plcsim reachability, and
+// starts the HTTP server. Signal handling via signal.NotifyContext happens
+// here — internal/server is kept signal-free for testability.
+// Design §6.3, §13.1, §20.1.
+// Requirements: MVP-FND-1.3, MVP-FND-1.9, MVP-FND-7.5, MVP-FND-9.3.
 package cmd
 
 import (
@@ -11,9 +12,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -89,6 +92,14 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 
 	logger.Info("datadir resolved", "component", "datadir", "path", resolvedPath)
 
+	// Probe plcsim reachability (MVP-FND-9.3). This is informational only —
+	// a failed probe does NOT prevent the server from starting.
+	plcsimAddr := cfg.PLCSim.Addr
+	if plcsimAddr == "" {
+		plcsimAddr = "plcsim:44818" // fallback default
+	}
+	probePlCSim(logger, plcsimAddr)
+
 	// Build doctor checks for the server.
 	checks := doctor.Default(cfg).Checks()
 
@@ -115,4 +126,17 @@ func (d *Deps) getServerForTest() *server.Server {
 		return nil
 	}
 	return *d.serverRef
+}
+
+// probePlCSim performs a TCP dial to addr with a 5-second timeout.
+// It logs the outcome at INFO level with component="startup". The probe is
+// informational only — failures do not return an error (MVP-FND-9.3).
+func probePlCSim(logger *slog.Logger, addr string) {
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		logger.Info("plcsim unreachable", "component", "startup", "addr", addr, "error", err.Error())
+		return
+	}
+	conn.Close()
+	logger.Info("plcsim reachable", "component", "startup", "addr", addr)
 }

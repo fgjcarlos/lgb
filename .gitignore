@@ -6,12 +6,14 @@ frontend/node_modules/
 
 # Go test artifacts
 *.test
-coverage.out
-coverage.html
+coverage*.out
+coverage*.html
 
-# Generated binaries (root-anchored so cmd/lgb/ source dir is NOT ignored)
+# Generated binaries (root-anchored so cmd/lgb/ and cmd/plcsim/ source dirs are NOT ignored)
 /lgb
 /lgb-*
+/plcsim
+/plcsim-*
 
 # Local data and backups
 data/
@@ -25,6 +27,7 @@ backups/
 .env
 .env.*
 !.env.example
+!.env.*.example
 *.pem
 *.key
 *.crt

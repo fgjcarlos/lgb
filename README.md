@@ -117,6 +117,46 @@ Non-goals for the MVP:
 
 ---
 
+## Getting started (development stack)
+
+The development stack runs the gateway binary, the PLC simulator, and an MQTT broker locally using Docker Compose.
+
+### Prerequisites
+
+- Docker Engine 24+ with the Compose plugin
+- `LGB_AUTH_JWT_SECRET` set in your shell or in a local `.env` file
+
+### Quick start
+
+```sh
+# 1. Copy the example env file and supply a value for LGB_AUTH_JWT_SECRET.
+#    Do NOT use any placeholder value as a production key.
+#    Do NOT commit the filled-in file.
+cp docker/.env.dev.example docker/.env.dev
+# edit docker/.env.dev and set a real (non-placeholder) value
+
+# 2. Start the stack (gateway + plcsim + mqtt).
+make docker-up
+
+# 3. Verify the gateway is healthy.
+curl http://localhost:8080/health
+
+# 4. Stop the stack and remove volumes.
+make docker-down
+```
+
+### Authentication requirement
+
+The dev stack **requires** `LGB_AUTH_JWT_SECRET` to be set before starting. The gateway refuses to start without it. Export the variable in your shell or fill in `docker/.env.dev` (copied from `docker/.env.dev.example`). The example file ships with the variable name only — you must generate the value yourself and never commit a real one.
+
+Generate a suitable value with:
+
+```sh
+openssl rand -hex 32
+```
+
+---
+
 ## License
 
 Apache License 2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).

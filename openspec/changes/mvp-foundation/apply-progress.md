@@ -255,3 +255,106 @@ No literal values paired with credential-keyword identifiers in t.Setenv() calls
 - `datadir.Resolve()` + `datadir.Ensure()` ready for `cmd/lgb/cmd/server.go`
 - `internal/errors` sentinels cover all domains; `cmd/lgb/cmd/exit.go` exit code table can reference them via `errors.Is`
 - The env key map in `loader.go` uses reflection from the Config struct — adding new fields to Config automatically extends env support (no manual list to maintain)
+
+---
+
+# Apply Progress — Slice 3 (chore/mvp-foundation-dev-stack)
+
+---
+change: mvp-foundation
+phase: apply
+slice: 3
+slice_branch: chore/mvp-foundation-dev-stack
+date: 2026-05-23
+status: complete
+---
+
+## Mode: Strict TDD (RED → GREEN → REFACTOR)
+
+## Completed Tasks
+
+- [x] T-3.01 — RED: cmd/plcsim/main_test.go (//go:build integration) written; fails on missing testutil.StartPLCSim
+- [x] T-3.02 — GREEN: cmd/plcsim/main.go; cmd/plcsim/testdata/tags.json; internal/testutil/plcsim.go (StartPLCSim, NewPLCSimProvider); integration tests pass
+- [x] T-3.03 — IMPL: docker/Dockerfile (3-stage); docker/Dockerfile.dev (air); docker/Dockerfile.plcsim (multi-stage)
+- [x] T-3.04 — IMPL: docker-compose.dev.yml; GitGuardian-safe ${LGB_AUTH_JWT_SECRET:?...} substitution; healthchecks; docker/.env.dev.example
+- [x] T-3.05 — DOCS: README.md Getting Started section; make docker-up reference; no literal credentials
+- [x] T-3.06 — IMPL: frontend/ Vite+React+TS; npm ci && npm run build exits 0; dist/index.html produced
+- [x] T-3.07 — IMPL: embed.go (//go:build !no_embed, package lgb); noassets.go (//go:build no_embed, package lgb); Makefile -tags no_embed; CI -tags no_embed
+- [x] T-3.08 — RED: cmd/lgb/cmd/server_probe_test.go (//go:build integration) written; fails on cfg.PLCSim undefined
+- [x] T-3.09 — GREEN: config.PLCSimSection added; plcsim.addr default; probePlCSim() in server.go; integration tests pass (reachable + unreachable)
+- [x] T-3.10 — IMPL: Makefile docker-up, docker-down, lint (graceful no-op when .golangci.yml absent) targets
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | RED (fails?) | GREEN (passes?) | REFACTOR |
+|------|-----------|-------|--------------|-----------------|----------|
+| T-3.01 | `cmd/plcsim/main_test.go` | Integration | YES — undefined: testutil.StartPLCSim | — | — |
+| T-3.02 | `cmd/plcsim/main_test.go` | Integration | — | PASS (2 tests) | NewPLCSimProvider separated |
+| T-3.03 | N/A (Docker) | N/A | N/A | N/A | N/A |
+| T-3.04 | N/A (YAML) | N/A | N/A | N/A | N/A |
+| T-3.05 | N/A (docs) | N/A | N/A | N/A | N/A |
+| T-3.06 | N/A (frontend) | Smoke | npm ci && npm run build exits 0 | PASS (dist/index.html) | N/A |
+| T-3.07 | N/A (build tags) | Build | go build -tags no_embed ./... | PASS | go build ./... with dist also passes |
+| T-3.08 | `cmd/lgb/cmd/server_probe_test.go` | Integration | YES — cfg.PLCSim undefined | — | — |
+| T-3.09 | `cmd/lgb/cmd/server_probe_test.go` | Integration | — | PASS (reachable + unreachable) | probePlCSim() extracted |
+| T-3.10 | N/A (Makefile) | Build | N/A | make lint exits 0; 4 cross-platform binaries | N/A |
+
+## Files Created
+
+- `cmd/plcsim/main.go` — gologix server; MapTagProvider with SimBool/SimInt/SimFloat; SIGTERM handler; "plcsim listening" log
+- `cmd/plcsim/main_test.go` — 2 integration tests (//go:build integration)
+- `cmd/plcsim/testdata/tags.json` — canonical tag fixture
+- `internal/testutil/plcsim.go` — StartPLCSim(t), NewPLCSimProvider()
+- `docker/Dockerfile` — 3-stage: restic-bin + golang:1.24-alpine + gcr.io/distroless/static-debian12:nonroot
+- `docker/Dockerfile.dev` — golang:1.24-alpine + air
+- `docker/Dockerfile.plcsim` — 2-stage ./cmd/plcsim
+- `docker/.env.dev.example` — LGB_AUTH_JWT_SECRET=change-me-before-running
+- `docker-compose.dev.yml` — gateway+plcsim+mqtt; ${LGB_AUTH_JWT_SECRET:?...}; healthchecks; lgb-data volume; lgb-dev network
+- `embed.go` — //go:build !no_embed; package lgb; //go:embed all:frontend/dist
+- `noassets.go` — //go:build no_embed; package lgb stub
+- `frontend/package.json`, `vite.config.ts`, `tsconfig.json`, `.nvmrc`, `index.html`, `src/main.tsx`, `package-lock.json`
+- `cmd/lgb/cmd/server_probe_test.go` — 2 integration tests
+
+## Files Modified
+
+- `internal/config/config.go` — PLCSimSection + Config.PLCSim
+- `internal/config/loader.go` — plcsim.addr default
+- `internal/testutil/config.go` — PLCSim in MinimalConfig
+- `cmd/lgb/cmd/server.go` — net/time imports; probePlCSim() call and function
+- `Makefile` — -tags no_embed on build/build-all; docker-up, docker-down, lint targets
+- `.github/workflows/ci.yml` — -tags no_embed on go build
+- `README.md` — Getting Started section
+- `openspec/changes/mvp-foundation/tasks.md` — slice 3 [x] marks
+
+## Test Results
+
+- go_vet: PASS
+- go_test_race: PASS
+- go_test_integration: PASS (go test -tags=integration ./... -race -count=1)
+- go_test_e2e: PASS
+- cross_platform_build: PASS (4 targets with -tags no_embed)
+- frontend_build: PASS (npm ci && npm run build; dist/index.html exists)
+- cli_subcommands_smoke: PASS (./bin/lgb version --json exits 0)
+- coverage: 62.3%
+
+## GitGuardian Audit
+
+- docker-compose.dev.yml: ${LGB_AUTH_JWT_SECRET:?...} substitution — NO literal credential value
+- docker/.env.dev.example: "change-me-before-running" — low-resemblance placeholder
+- README.md: no literal credential-looking values
+- server_probe_test.go: const indirection (probeTestJwtValue / probeTestJwtEnvKey)
+
+## Deviations from Design
+
+1. **embed.go / noassets.go use `package lgb` not `package main`** — `package main` without `main()` at the repo root causes `go build ./...` to fail. Using `package lgb` (the module root package) is idiomatic Go (pattern used by Gitea, pgweb). Files are at the repo root as required by the task. The exported `var Assets embed.FS` is accessible by importing `github.com/fgjcarlos/lgb`.
+
+2. **StartPLCSim uses minimal accept-loop** — gologix.Serve() hardcodes port 44818; cannot override. testutil pre-binds `:0` and accepts/drops connections for TCP probe smoke test. Direct tag verification uses NewPLCSimProvider() directly.
+
+## Handoff Notes for Slice 4
+
+- embed.go is `package lgb`; cmd/lgb must import `github.com/fgjcarlos/lgb` to access Assets
+- `!no_embed` guard MUST be removed before archive (spec MVP-FND-1.10)
+- cfg.PLCSim.Addr exists in config (default plcsim:44818)
+- Makefile lint stub exits 0 when .golangci.yml absent; slice 4 adds the real config
+- docker-compose.dev.yml requires LGB_AUTH_JWT_SECRET in env
+- frontend/dist exists after npm run build

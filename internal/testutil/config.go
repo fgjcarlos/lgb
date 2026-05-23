@@ -47,5 +47,8 @@ func MinimalConfig(t *testing.T) *config.Config {
 		Historian: config.HistorianSection{
 			RetentionDays: 90,
 		},
+		PLCSim: config.PLCSimSection{
+			Addr: "127.0.0.1:44818", // default for tests; override per-test as needed
+		},
 	}
 }

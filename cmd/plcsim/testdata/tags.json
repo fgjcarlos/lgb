@@ -1,0 +1,5 @@
+{
+  "SimBool": {"type": "bool", "value": true},
+  "SimInt": {"type": "int16", "value": 42},
+  "SimFloat": {"type": "float32", "value": 3.14}
+}

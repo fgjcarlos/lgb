@@ -29,10 +29,14 @@ jobs:
           fi
       - name: go vet
         if: steps.gocheck.outputs.has_go == 'true'
-        run: go vet ./...
+        # -tags no_embed prevents requiring frontend/dist at CI vet time.
+        # The embed guard will be removed before archive (spec MVP-FND-1.10).
+        run: go vet -tags no_embed ./...
       - name: go test
         if: steps.gocheck.outputs.has_go == 'true'
-        run: go test ./... -race -count=1
+        # -tags no_embed prevents requiring frontend/dist at CI test time.
+        # The embed guard will be removed before archive (spec MVP-FND-1.10).
+        run: go test -tags no_embed ./... -race -count=1
 
   backend-build:
     name: Backend build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -64,4 +68,6 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build ./...
+        # -tags no_embed prevents requiring frontend/dist at CI build time.
+        # The embed guard will be removed before archive (spec MVP-FND-1.10).
+        run: go build -tags no_embed ./...

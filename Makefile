@@ -50,11 +50,13 @@ docker-down:
 lint:
 	golangci-lint run
 
-## generate — run protobuf codegen if .proto files exist, or print a notice.
-## Requirements: MVP-FND-1.13. Design: §21 (Makefile row).
+## generate — run protobuf codegen for Sparkplug B and any other .proto files.
+## Requires: protoc, protoc-gen-go (go install google.golang.org/protobuf/cmd/protoc-gen-go@latest)
+## Requirements: MVP-FND-1.13, SPK-1.1. Design: §2, §5 decision #6.
 generate:
-	@if find . -name '*.proto' -not -path './vendor/*' | grep -q .; then \
-		protoc --go_out=. --go-grpc_out=. $$(find . -name '*.proto' -not -path './vendor/*'); \
+	@if [ -f proto/sparkplug_b.proto ]; then \
+		protoc --go_out=internal/sparkplug/pb --go_opt=paths=source_relative proto/sparkplug_b.proto; \
+		echo "# generated internal/sparkplug/pb/sparkplug_b.pb.go"; \
 	else \
 		echo "# no .proto files — skipping protobuf codegen"; \
 	fi

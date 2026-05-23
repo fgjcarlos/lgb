@@ -75,12 +75,17 @@ type AuthSection struct {
 	SessionTTL string `koanf:"sessionTTL"`
 }
 
-// MQTTSection holds MQTT broker settings.
+// MQTTSection holds MQTT broker and Sparkplug B settings.
 type MQTTSection struct {
 	BrokerURL    string `koanf:"brokerURL"`
 	ClientID     string `koanf:"clientID"`
 	Password     string `koanf:"password"     secret:"true"`
 	PasswordFile string `koanf:"passwordFile" secret:"true"`
+	GroupID      string `koanf:"groupID"`
+	EdgeNodeID   string `koanf:"edgeNodeID"`
+	QoS          int    `koanf:"qos"`
+	KeepAlive    string `koanf:"keepAlive"`
+	CleanSession bool   `koanf:"cleanSession"`
 }
 
 // HistorianSection holds historian/SQLite settings.
@@ -101,13 +106,20 @@ type BackupRepo struct {
 
 // PLC holds CIP/gologix PLC settings.
 type PLC struct {
-	Name          string `koanf:"name"`
-	Address       string `koanf:"address"`
-	Slot          int    `koanf:"slot"`
-	SocketTimeout string `koanf:"socketTimeout"`
-	ScanRate      string `koanf:"scanRate"`
-	KeepAlive     bool   `koanf:"keepAlive"`
-	Path          string `koanf:"path"`
+	Name          string   `koanf:"name"`
+	Address       string   `koanf:"address"`
+	Slot          int      `koanf:"slot"`
+	SocketTimeout string   `koanf:"socketTimeout"`
+	ScanRate      string   `koanf:"scanRate"`
+	KeepAlive     bool     `koanf:"keepAlive"`
+	Path          string   `koanf:"path"`
+	Tags          []TagDef `koanf:"tags"`
+}
+
+// TagDef maps a PLC tag to a Sparkplug B metric.
+type TagDef struct {
+	Name string `koanf:"name"`
+	Type string `koanf:"type"`
 }
 
 // Validate checks the loaded config against schema constraints.
@@ -181,9 +193,51 @@ func (c *Config) Validate() error {
 		if plc.Slot < 0 || plc.Slot > 15 {
 			violations = append(violations, errorf("plcs[%d].slot: must be between 0 and 15, got %d: %w", i, plc.Slot, ErrConfigInvalid))
 		}
+
+		// Validate tags (SPK-CFG-2.6, SPK-CFG-2.7).
+		for j, tag := range plc.Tags {
+			if tag.Name == "" {
+				violations = append(violations, errorf("plcs[%d].tags[%d].name: must not be empty: %w", i, j, ErrConfigInvalid))
+			}
+			if tag.Type == "" {
+				violations = append(violations, errorf("plcs[%d].tags[%d].type: must not be empty: %w", i, j, ErrConfigInvalid))
+			} else if !validSparkplugType(tag.Type) {
+				violations = append(violations, errorf("plcs[%d].tags[%d].type: %q is not a supported Sparkplug B scalar type: %w", i, j, tag.Type, ErrConfigInvalid))
+			}
+		}
+	}
+
+	// MQTT/Sparkplug validation (SPK-CFG-2.2 through SPK-CFG-2.4).
+	if c.MQTT.QoS < 0 || c.MQTT.QoS > 2 {
+		violations = append(violations, errorf("mqtt.qos: must be 0, 1, or 2, got %d: %w", c.MQTT.QoS, ErrConfigInvalid))
+	}
+	if c.MQTT.KeepAlive != "" {
+		if d, err := time.ParseDuration(c.MQTT.KeepAlive); err != nil {
+			violations = append(violations, errorf("mqtt.keepAlive: %q is not a valid Go duration: %w", c.MQTT.KeepAlive, ErrConfigInvalid))
+		} else if d <= 0 {
+			violations = append(violations, errorf("mqtt.keepAlive: must be positive, got %q: %w", c.MQTT.KeepAlive, ErrConfigInvalid))
+		}
+	}
+	if c.MQTT.BrokerURL != "" {
+		if c.MQTT.GroupID == "" {
+			violations = append(violations, errorf("mqtt.groupID: must not be empty when mqtt.brokerURL is set: %w", ErrConfigInvalid))
+		}
+		if c.MQTT.EdgeNodeID == "" {
+			violations = append(violations, errorf("mqtt.edgeNodeID: must not be empty when mqtt.brokerURL is set: %w", ErrConfigInvalid))
+		}
 	}
 
 	return errs.Join(violations...)
+}
+
+var sparkplugScalarTypes = map[string]bool{
+	"Boolean": true, "Int8": true, "Int16": true, "Int32": true, "Int64": true,
+	"UInt8": true, "UInt16": true, "UInt32": true, "UInt64": true,
+	"Float": true, "Double": true, "String": true,
+}
+
+func validSparkplugType(t string) bool {
+	return sparkplugScalarTypes[t]
 }
 
 // Redacted returns a deep copy of the config where every field tagged

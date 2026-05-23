@@ -164,6 +164,93 @@ func TestPLCSentinelsWrapping(t *testing.T) {
 	}
 }
 
+// TestMQTTSparkplugSentinelsAreDistinctNonNil asserts SPK-ERR-4.1: all four
+// MQTT/Sparkplug sentinels are distinct, non-nil, and not equal to any
+// existing sentinel.
+func TestMQTTSparkplugSentinelsAreDistinctNonNil(t *testing.T) {
+	newSentinels := []struct {
+		name string
+		err  error
+	}{
+		{"ErrMQTTConnect", errs.ErrMQTTConnect},
+		{"ErrMQTTPublish", errs.ErrMQTTPublish},
+		{"ErrMQTTSubscribe", errs.ErrMQTTSubscribe},
+		{"ErrSparkplugEncode", errs.ErrSparkplugEncode},
+	}
+
+	for _, s := range newSentinels {
+		s := s
+		t.Run(s.name+"_not_nil", func(t *testing.T) {
+			if s.err == nil {
+				t.Errorf("%s is nil; want non-nil sentinel", s.name)
+			}
+		})
+	}
+
+	for i, a := range newSentinels {
+		for j, b := range newSentinels {
+			if i >= j {
+				continue
+			}
+			if errors.Is(a.err, b.err) {
+				t.Errorf("%s and %s are not distinct (errors.Is returned true)", a.name, b.name)
+			}
+		}
+	}
+
+	existingSentinels := []struct {
+		name string
+		err  error
+	}{
+		{"ErrConfigInvalid", errs.ErrConfigInvalid},
+		{"ErrConfigMissing", errs.ErrConfigMissing},
+		{"ErrConfigPermission", errs.ErrConfigPermission},
+		{"ErrDataDirInvalid", errs.ErrDataDirInvalid},
+		{"ErrDataDirPermission", errs.ErrDataDirPermission},
+		{"ErrCheckFailed", errs.ErrCheckFailed},
+		{"ErrMaxAttempts", errs.ErrMaxAttempts},
+		{"ErrPLCConnect", errs.ErrPLCConnect},
+		{"ErrPLCRead", errs.ErrPLCRead},
+		{"ErrPLCWrite", errs.ErrPLCWrite},
+		{"ErrPLCTimeout", errs.ErrPLCTimeout},
+	}
+	for _, newS := range newSentinels {
+		for _, existS := range existingSentinels {
+			if errors.Is(newS.err, existS.err) {
+				t.Errorf("%s equals existing sentinel %s; they must be distinct", newS.name, existS.name)
+			}
+		}
+	}
+}
+
+// TestMQTTSparkplugSentinelsWrapping asserts SPK-ERR-4.1: errors.Is traversal
+// works for wrapped MQTT/Sparkplug sentinels.
+func TestMQTTSparkplugSentinelsWrapping(t *testing.T) {
+	pairs := []struct {
+		name   string
+		target error
+		other  error
+	}{
+		{"ErrMQTTConnect", errs.ErrMQTTConnect, errs.ErrMQTTPublish},
+		{"ErrMQTTPublish", errs.ErrMQTTPublish, errs.ErrMQTTSubscribe},
+		{"ErrMQTTSubscribe", errs.ErrMQTTSubscribe, errs.ErrSparkplugEncode},
+		{"ErrSparkplugEncode", errs.ErrSparkplugEncode, errs.ErrMQTTConnect},
+	}
+
+	for _, p := range pairs {
+		p := p
+		t.Run(p.name+"_wrapped_is_detectable", func(t *testing.T) {
+			wrapped := fmt_errorf_helper(p.target)
+			if !errors.Is(wrapped, p.target) {
+				t.Errorf("errors.Is(wrapped, %s) = false; want true", p.name)
+			}
+			if errors.Is(wrapped, p.other) {
+				t.Errorf("errors.Is(wrapped %s, other) = true; want false", p.name)
+			}
+		})
+	}
+}
+
 // TestJoinPreservesConstituents asserts MVP-FND-5.3: Join preserves each
 // constituent error so that errors.Is works on the joined result.
 func TestJoinPreservesConstituents(t *testing.T) {

@@ -37,6 +37,10 @@ var defaults = map[string]interface{}{
 	"server.shutdownTimeout":  "10s",
 	"auth.sessionTTL":         "8h",
 	"historian.retentionDays": 90,
+	// MQTT/Sparkplug defaults (SPK-CFG-2.1).
+	"mqtt.qos":          1,
+	"mqtt.keepAlive":    "30s",
+	"mqtt.cleanSession": true,
 	// PLCSim probe defaults: Docker Compose service name + EtherNet/IP port.
 	// Override via LGB_PLCSIM_ADDR or plcsim.addr YAML field.
 	"plcsim.addr": "plcsim:44818",

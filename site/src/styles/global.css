@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-lgb-amber: oklch(0.82 0.14 75);
+  --color-lgb-deep: oklch(0.16 0.03 260);
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
+    Monaco, Consolas, monospace;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-lgb-amber);
+  color: var(--color-lgb-deep);
+}

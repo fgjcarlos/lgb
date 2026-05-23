@@ -1,0 +1,251 @@
+---
+import Layout from "../layouts/Layout.astro";
+import FeatureSection from "../components/FeatureSection.astro";
+
+const repoURL = "https://github.com/fgjcarlos/lgb";
+
+const gatewayFeatures = [
+  {
+    title: "Native CIP communication",
+    body: "EtherNet/IP (CIP) driver via gologix with Multi-Service Packet batching for efficient PLC tag reads and writes.",
+  },
+  {
+    title: "OPC UA server",
+    body: "Bidirectional OPC UA server with namespace per PLC. Read and write PLC tags through the open OPC standard.",
+  },
+  {
+    title: "Sparkplug B Edge Node",
+    body: "MQTT Sparkplug B with NBIRTH/DBIRTH/DDATA/DCMD lifecycle. One Edge Node, multiple Devices — one per PLC.",
+  },
+  {
+    title: "Per-tag write ACLs",
+    body: "Every tag has an explicit writable flag. Writes from OPC UA and Sparkplug DCMD are gated — no accidental control.",
+  },
+  {
+    title: "Hot-reload connections",
+    body: "Add or remove a PLC connection without restarting the gateway. Changes apply immediately to all protocol servers.",
+  },
+  {
+    title: "Audit trail",
+    body: "Every PLC write and admin action persisted in SQLite. Full traceability for compliance and debugging.",
+  },
+];
+
+const uiFeatures = [
+  {
+    title: "Tag mapping editor",
+    body: "Visual editor for mapping PLC tags to OPC UA nodes and Sparkplug metrics, with write ACL per tag.",
+  },
+  {
+    title: "PLC connection management",
+    body: "Add, configure, and monitor ControlLogix/CompactLogix PLCs from the browser. Live connection status.",
+  },
+  {
+    title: "Diagnostics dashboard",
+    body: "Real-time view of gateway health, PLC communication stats, and protocol server status.",
+  },
+];
+
+const opsFeatures = [
+  {
+    title: "Single binary CLI",
+    body: "lgb server / doctor / version — pure Go, no CGo, cross-compiled for Linux/Windows/macOS/ARM.",
+  },
+  {
+    title: "Docker Compose stack",
+    body: "Local dev environment with PLC simulator (plcsim) and MQTT broker — one command to start.",
+  },
+  {
+    title: "Backup & restore",
+    body: "Integrity-checked backups via restic with retention policies, schedules, and multi-repo support.",
+  },
+];
+
+const quickStart = [
+  {
+    label: "Clone",
+    code: "git clone https://github.com/fgjcarlos/lgb.git && cd lgb",
+  },
+  {
+    label: "Configure secrets",
+    code: "cp docker/.env.dev.example docker/.env.dev\n# edit and set LGB_AUTH_JWT_SECRET",
+  },
+  {
+    label: "Start the stack",
+    code: "make docker-up",
+  },
+  {
+    label: "Verify health",
+    code: "curl http://localhost:8080/health",
+  },
+];
+
+const stack = [
+  "Go 1.24",
+  "net/http + slog",
+  "SQLite (pure Go)",
+  "gologix (CIP)",
+  "gopcua (OPC UA)",
+  "paho MQTT",
+  "Sparkplug B",
+  "React 19 + Vite",
+  "Tailwind 4",
+];
+---
+
+<Layout
+  title="LGB — Logix Gateway Bridge"
+  description="Open source bidirectional gateway between Rockwell ControlLogix/CompactLogix PLCs and modern IIoT standards (OPC UA, MQTT Sparkplug B). Visual tag mapping, per-tag write ACLs, audit trail, and Docker-first deployment."
+>
+  <main class="mx-auto w-full max-w-6xl px-6 py-16 sm:py-24">
+    <header class="flex flex-col gap-6">
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-amber-100">Pre-MVP</span>
+        <span class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300">Apache 2.0</span>
+        <a
+          class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+          href={`${repoURL}/actions/workflows/ci.yml`}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          CI on every PR
+        </a>
+      </div>
+
+      <div class="max-w-3xl space-y-5">
+        <p class="text-sm font-semibold uppercase tracking-[0.4em] text-amber-300">Logix Gateway Bridge</p>
+        <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">
+          Bridge Rockwell PLCs to open IIoT standards.
+        </h1>
+        <p class="text-lg leading-relaxed text-slate-300 sm:text-xl">
+          LGB is an open source bidirectional gateway between ControlLogix / CompactLogix PLCs and OPC UA + MQTT
+          Sparkplug B. Visual tag mapping, per-tag write ACLs, audit trail, and Docker-first deployment — no expensive
+          commercial gateway required.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-3">
+        <a
+          class="inline-flex items-center gap-2 rounded-full bg-amber-400 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-amber-300"
+          href={repoURL}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          View on GitHub
+          <span aria-hidden="true">&rarr;</span>
+        </a>
+        <a
+          class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
+          href={`${repoURL}/blob/main/ROADMAP.md`}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          Roadmap
+        </a>
+      </div>
+    </header>
+
+    <section class="mt-20 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      <article class="rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">What LGB is</p>
+        <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">A translator, not a controller.</h2>
+        <p class="mt-5 leading-relaxed text-slate-300">
+          Connecting Rockwell PLCs to modern IIoT systems usually requires expensive commercial gateways (Kepware,
+          Cogent DataHub, Ignition) or fragile Node-RED stacks. LGB fills that gap: a pure Go binary that speaks
+          native CIP to ControlLogix/CompactLogix and exposes tags as OPC UA variables and Sparkplug B metrics.
+        </p>
+        <p class="mt-3 leading-relaxed text-slate-300">
+          The PLC stays in charge of control. LGB is an observability and integration layer — it reads, writes
+          (with explicit ACLs), and translates. No vendor lock-in on the consumer side.
+        </p>
+      </article>
+      <article class="rounded-3xl border border-amber-300/20 bg-amber-400/10 p-8 backdrop-blur">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-100">Stack</p>
+        <ul class="mt-5 flex flex-wrap gap-2">
+          {stack.map((item) => (
+            <li class="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 font-mono text-xs text-amber-100">
+              {item}
+            </li>
+          ))}
+        </ul>
+        <p class="mt-6 text-sm leading-relaxed text-amber-50/80">
+          One static Go binary. Pure-Go SQLite driver and no CGo means cross-compiling to Linux amd64/arm64,
+          macOS arm64, Windows, and ARM (Raspberry Pi) works on every PR.
+        </p>
+      </article>
+    </section>
+
+    <section class="mt-20 space-y-10">
+      <div class="flex flex-col gap-3">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">Planned capabilities</p>
+        <h2 class="text-3xl font-semibold tracking-tight text-white">What the MVP will deliver.</h2>
+        <p class="max-w-2xl text-slate-300">
+          LGB is in active development toward its first usable release. The features below represent the
+          target MVP scope — bridging up to 10 PLCs with full bidirectional support.
+        </p>
+      </div>
+
+      <div class="space-y-8">
+        <FeatureSection label="Gateway" items={gatewayFeatures} />
+        <FeatureSection label="Web UI" items={uiFeatures} />
+        <FeatureSection label="Operations" items={opsFeatures} />
+      </div>
+    </section>
+
+    <section class="mt-20 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
+      <p class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">Quick start</p>
+      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Dev stack in four steps.</h2>
+      <ol class="mt-8 space-y-4">
+        {quickStart.map((step, idx) => (
+          <li class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-300/40 bg-amber-400/10 font-mono text-sm font-semibold text-amber-100">
+              {String(idx + 1).padStart(2, "0")}
+            </span>
+            <div class="flex w-full flex-col gap-1">
+              <span class="text-sm uppercase tracking-[0.22em] text-slate-400">{step.label}</span>
+              <code class="block w-full overflow-x-auto whitespace-pre-wrap rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-sm text-amber-100">
+                {step.code}
+              </code>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p class="mt-6 text-sm text-slate-400">
+        See the
+        <a class="underline-offset-4 hover:underline" href={`${repoURL}#getting-started-development-stack`}>README</a>
+        for full setup details including JWT secret generation.
+      </p>
+    </section>
+
+    <section class="mt-20 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
+      <p class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">Architecture</p>
+      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">How it fits together.</h2>
+      <pre class="mt-8 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/70 px-6 py-5 font-mono text-sm leading-relaxed text-amber-100/80">
+{`         ┌───────────────────────────────────┐
+         │           Web UI (React)          │
+         └───────────────┬───────────────────┘
+                    REST / WebSocket
+         ┌───────────────▼───────────────────┐
+         │           LGB Core (Go)           │
+         │  PLC Manager ↔ Tag Store ↔ APIs   │
+         └──┬──────────┬──────────┬──────┬───┘
+            │          │          │      │
+     ┌──────▼───┐  ┌───▼───┐  ┌──▼──┐  ┌▼──────┐
+     │ Rockwell │  │ OPC   │  │MQTT │  │Restic │
+     │   PLCs   │  │  UA   │  │Spark│  │Backup │
+     │  (CIP)   │  │Server │  │plug │  │       │
+     └──────────┘  └───────┘  └─────┘  └───────┘`}
+      </pre>
+    </section>
+
+    <footer class="mt-20 flex flex-col items-start justify-between gap-4 border-t border-white/10 pt-8 text-sm text-slate-400 sm:flex-row sm:items-center">
+      <p>&copy; {new Date().getFullYear()} LGB contributors &middot; Apache 2.0</p>
+      <div class="flex flex-wrap gap-4">
+        <a class="hover:text-white" href={repoURL} rel="noopener noreferrer" target="_blank">GitHub</a>
+        <a class="hover:text-white" href={`${repoURL}/issues`} rel="noopener noreferrer" target="_blank">Issues</a>
+        <a class="hover:text-white" href={`${repoURL}/blob/main/ROADMAP.md`} rel="noopener noreferrer" target="_blank">Roadmap</a>
+        <a class="hover:text-white" href={`${repoURL}/blob/main/SECURITY.md`} rel="noopener noreferrer" target="_blank">Security</a>
+      </div>
+    </footer>
+  </main>
+</Layout>

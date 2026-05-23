@@ -33,10 +33,8 @@ var _ plc.Driver = (*mockDriver)(nil)
 // This test always passes once the Driver interface exists with the correct methods.
 func TestMockDriverSatisfiesInterface(t *testing.T) {
 	t.Parallel()
-	var d plc.Driver = &mockDriver{}
-	if d == nil {
-		t.Fatal("expected non-nil driver")
-	}
+	d := plc.Driver(&mockDriver{})
+	_ = d
 }
 
 // ─── Error re-export tests ───────────────────────────────────────────────────
@@ -143,7 +141,7 @@ func TestNewDriverReturnsDriver(t *testing.T) {
 		Address:       "127.0.0.1",
 		SocketTimeout: "5s",
 	}
-	var d plc.Driver = plc.NewDriver(cfg)
+	d := plc.NewDriver(cfg)
 	if d == nil {
 		t.Fatal("NewDriver returned nil")
 	}

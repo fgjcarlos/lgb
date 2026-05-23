@@ -161,14 +161,14 @@ New `internal/mqtt/` package: Client interface, pahoClient adapter, reconnect lo
 
 ### Group A — Package skeleton + interface
 
-- [ ] **T-3.01** `test` — **[RED]** Create `internal/mqtt/client_test.go` (package `mqtt_test`): (a) compile-time assertion `var _ Client = (*pahoClient)(nil)`; (b) `NewClient(opts)` with capture-options spy → `SetOrderMatters(false)` called; (c) `SetAutoReconnect(false)` called; (d) Will topic equals `spBv1.0/{group}/{edge_node}/NDEATH`; (e) WillQoS is 1, WillRetain false, WillPayload non-empty; (f) `Connect` on already-cancelled ctx → returns `ErrMQTTConnect`; (g) `Publish` when not connected → returns `ErrMQTTConnect`.
+- [x] **T-3.01** `test` — **[RED]** Create `internal/mqtt/client_test.go` (package `mqtt_test`): (a) compile-time assertion `var _ Client = (*pahoClient)(nil)`; (b) `NewClient(opts)` with capture-options spy → `SetOrderMatters(false)` called; (c) `SetAutoReconnect(false)` called; (d) Will topic equals `spBv1.0/{group}/{edge_node}/NDEATH`; (e) WillQoS is 1, WillRetain false, WillPayload non-empty; (f) `Connect` on already-cancelled ctx → returns `ErrMQTTConnect`; (g) `Publish` when not connected → returns `ErrMQTTConnect`.
   - **Files**: `internal/mqtt/client_test.go`
   - **Reqs**: MQTT-1.1–1.4, MQTT-1.7, SPK-ERR-4.1
   - **Design**: §4 (interface definitions), §5 decisions #1, #2, #5
   - **Deps**: T-1.03, T-2.08
   - **DoD**: `go test ./internal/mqtt/...` FAILS (package absent).
 
-- [ ] **T-3.02** `impl` — **[GREEN]** Add `github.com/eclipse/paho.mqtt.golang v1.5.1` to `go.mod`. Create `internal/mqtt/doc.go`. Create `internal/mqtt/options.go`: `Options` struct with `BrokerURL`, `ClientID`, `Username`, `Password`, `QoS`, `KeepAlive`, `CleanSession`, `WillTopic`, `WillPayload`, `WillQoS`, `WillRetain`. Create `internal/mqtt/client.go`: `Client` interface (`Connect`, `Disconnect`, `Publish`, `IsConnected`, `SetOnConnect`); `pahoClient` struct; `NewClient(opts Options) Client` — builds `paho.ClientOptions` with `SetOrderMatters(false)`, `SetAutoReconnect(false)`, `SetWill(...)`, sets `OnConnect` handler dispatch; re-exports `ErrMQTTConnect`, `ErrMQTTPublish`, `ErrMQTTSubscribe` from `internal/errors`.
+- [x] **T-3.02** `impl` — **[GREEN]** Add `github.com/eclipse/paho.mqtt.golang v1.5.1` to `go.mod`. Create `internal/mqtt/doc.go`. Create `internal/mqtt/options.go`: `Options` struct with `BrokerURL`, `ClientID`, `Username`, `Password`, `QoS`, `KeepAlive`, `CleanSession`, `WillTopic`, `WillPayload`, `WillQoS`, `WillRetain`. Create `internal/mqtt/client.go`: `Client` interface (`Connect`, `Disconnect`, `Publish`, `IsConnected`, `SetOnConnect`); `pahoClient` struct; `NewClient(opts Options) Client` — builds `paho.ClientOptions` with `SetOrderMatters(false)`, `SetAutoReconnect(false)`, `SetWill(...)`, sets `OnConnect` handler dispatch; re-exports `ErrMQTTConnect`, `ErrMQTTPublish`, `ErrMQTTSubscribe` from `internal/errors`.
   - **Files**: `internal/mqtt/doc.go`, `internal/mqtt/options.go`, `internal/mqtt/client.go`, `go.mod`, `go.sum`
   - **Reqs**: MQTT-1.1–1.4, MQTT-1.6–1.8, SPK-ERR-4.1–4.2
   - **Design**: §4, §5 decisions #1, #2, #5, §8
@@ -177,7 +177,7 @@ New `internal/mqtt/` package: Client interface, pahoClient adapter, reconnect lo
 
 ### Group B — Cross-platform build gate
 
-- [ ] **T-3.03** `chore` — Verify `CGO_ENABLED=0 go build ./internal/mqtt/...` on all four targets (`linux/amd64`, `linux/arm64`, `darwin/arm64`, `windows/amd64`). Record results in PR description. No code change expected.
+- [x] **T-3.03** `chore` — Verify `CGO_ENABLED=0 go build ./internal/mqtt/...` on all four targets (`linux/amd64`, `linux/arm64`, `darwin/arm64`, `windows/amd64`). Record results in PR description. No code change expected.
   - **Files**: (none — verification only)
   - **Reqs**: MQTT-1.8
   - **Design**: §12 (non-functional)

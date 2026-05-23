@@ -1,0 +1,71 @@
+# docker-compose.dev.yml — development stack for LGB.
+#
+# Services:
+#   gateway  — LGB binary (live-reload via air on golang:1.24-alpine)
+#   plcsim   — deterministic CIP PLC simulator (gologix, port 44818)
+#   mqtt     — Eclipse Mosquitto MQTT broker (port 1883)
+#
+# Usage:
+#   LGB_AUTH_JWT_SECRET=<your-value> docker compose -f docker-compose.dev.yml up
+#   — or — export LGB_AUTH_JWT_SECRET in your shell, or create docker/.env.dev
+#
+# Requirements: MVP-FND-9.1, MVP-FND-9.3. Design: §13.1.
+
+services:
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    depends_on:
+      plcsim:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    volumes:
+      - ./:/workspace
+      - lgb-data:/var/lib/lgb
+    ports:
+      - "8080:8080"
+    environment:
+      # LGB_AUTH_JWT_SECRET must be set in the shell or via a local .env file.
+      # See docker/.env.dev.example for the required variable names.
+      # Do NOT commit real values. Do NOT use any placeholder as a production key.
+      LGB_AUTH_JWT_SECRET: ${LGB_AUTH_JWT_SECRET:?LGB_AUTH_JWT_SECRET must be set — see docker/.env.dev.example}
+    networks:
+      - lgb-dev
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  plcsim:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.plcsim
+    ports:
+      - "44818:44818"
+    networks:
+      - lgb-dev
+    healthcheck:
+      # TCP probe — verifies the CIP port is accepting connections.
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/44818 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    networks:
+      - lgb-dev
+
+volumes:
+  lgb-data:
+
+networks:
+  lgb-dev:

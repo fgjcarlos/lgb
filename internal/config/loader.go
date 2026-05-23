@@ -37,6 +37,9 @@ var defaults = map[string]interface{}{
 	"server.shutdownTimeout":  "10s",
 	"auth.sessionTTL":         "8h",
 	"historian.retentionDays": 90,
+	// PLCSim probe defaults: Docker Compose service name + EtherNet/IP port.
+	// Override via LGB_PLCSIM_ADDR or plcsim.addr YAML field.
+	"plcsim.addr": "plcsim:44818",
 }
 
 // envKeyMap maps uppercase env var suffixes (after stripping LGB_) to

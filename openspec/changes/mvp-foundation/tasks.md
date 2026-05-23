@@ -338,14 +338,14 @@ plcsim binary, Docker files, docker-compose, frontend scaffold, embed.go stub.
 
 ### Group A — plcsim
 
-- [ ] **T-3.01** `test` — **[RED]** Write `cmd/plcsim/main_test.go` (`//go:build integration`): `testutil.StartPLCSim(t)` starts in-process gologix server; `net.Dial("tcp", addr)` succeeds; three required tags (`SimBool`, `SimInt`, `SimFloat`) are accessible via tag provider (read back from `MapTagProvider`).
+- [x] **T-3.01** `test` — **[RED]** Write `cmd/plcsim/main_test.go` (`//go:build integration`): `testutil.StartPLCSim(t)` starts in-process gologix server; `net.Dial("tcp", addr)` succeeds; three required tags (`SimBool`, `SimInt`, `SimFloat`) are accessible via tag provider (read back from `MapTagProvider`).
   - **Files**: `cmd/plcsim/main_test.go`
   - **Reqs**: MVP-FND-9.2
   - **Design**: §12, §20.5
   - **Deps**: T-1.15
   - **DoD**: test fails (plcsim + testutil.StartPLCSim not implemented).
 
-- [ ] **T-3.02** `impl` — **[GREEN]** Create `cmd/plcsim/main.go`: build `gologix.MapTagProvider` seeded from embedded `testdata/tags.json` (`SimBool=true`, `SimInt=42`, `SimFloat=3.14`); `gologix.Server.Serve(":44818")`; SIGTERM → `Server.Close()`; log `"plcsim listening"` at INFO. Create `cmd/plcsim/testdata/tags.json`. Create `internal/testutil/plcsim.go`: `StartPLCSim(t) (addr string, stop func())` using same provider construction + embedded testdata.
+- [x] **T-3.02** `impl` — **[GREEN]** Create `cmd/plcsim/main.go`: build `gologix.MapTagProvider` seeded from embedded `testdata/tags.json` (`SimBool=true`, `SimInt=42`, `SimFloat=3.14`); `gologix.Server.Serve(":44818")`; SIGTERM → `Server.Close()`; log `"plcsim listening"` at INFO. Create `cmd/plcsim/testdata/tags.json`. Create `internal/testutil/plcsim.go`: `StartPLCSim(t) (addr string, stop func())` using same provider construction + embedded testdata.
   - **Files**: `cmd/plcsim/main.go`, `cmd/plcsim/testdata/tags.json`, `internal/testutil/plcsim.go`
   - **Reqs**: MVP-FND-9.2
   - **Design**: §12
@@ -354,21 +354,21 @@ plcsim binary, Docker files, docker-compose, frontend scaffold, embed.go stub.
 
 ### Group B — Docker files
 
-- [ ] **T-3.03** `impl` — Create `docker/Dockerfile`: three-stage build (`restic-bin` from `restic/restic:0.18.0`, `build` from `golang:1.24-alpine`, `final` from `gcr.io/distroless/static-debian12:nonroot`); copies `lgb` + `restic` to `/usr/local/bin/`; `ENTRYPOINT` + `CMD`. Create `docker/Dockerfile.dev`: single-stage `golang:1.24-alpine` with `air` installed, workspace mount. Create `docker/Dockerfile.plcsim`: multi-stage targeting `./cmd/plcsim`.
+- [x] **T-3.03** `impl` — Create `docker/Dockerfile`: three-stage build (`restic-bin` from `restic/restic:0.18.0`, `build` from `golang:1.24-alpine`, `final` from `gcr.io/distroless/static-debian12:nonroot`); copies `lgb` + `restic` to `/usr/local/bin/`; `ENTRYPOINT` + `CMD`. Create `docker/Dockerfile.dev`: single-stage `golang:1.24-alpine` with `air` installed, workspace mount. Create `docker/Dockerfile.plcsim`: multi-stage targeting `./cmd/plcsim`.
   - **Files**: `docker/Dockerfile`, `docker/Dockerfile.dev`, `docker/Dockerfile.plcsim`
   - **Reqs**: MVP-FND-9.1, MVP-FND-9.4
   - **Design**: §13.2–13.4
   - **Deps**: T-3.02
   - **DoD**: `docker build -f docker/Dockerfile .` exits 0 (CI smoke); final image contains `lgb` and `restic`.
 
-- [ ] **T-3.04** `impl` — Create `docker-compose.dev.yml` with three services (`gateway`, `plcsim`, `mqtt`), healthchecks, `LGB_AUTH_JWT_SECRET=dev-secret-not-for-prod` env on gateway, named volume `lgb-data`, network `lgb-dev`.
+- [x] **T-3.04** `impl` — Create `docker-compose.dev.yml` with three services (`gateway`, `plcsim`, `mqtt`), healthchecks, `LGB_AUTH_JWT_SECRET=dev-secret-not-for-prod` env on gateway, named volume `lgb-data`, network `lgb-dev`.
   - **Files**: `docker-compose.dev.yml`
   - **Reqs**: MVP-FND-9.1, MVP-FND-9.3
   - **Design**: §13.1
   - **Deps**: T-3.03
   - **DoD**: `docker compose -f docker-compose.dev.yml config` exits 0 (YAML valid).
 
-- [ ] **T-3.05** `docs` — Add README section warning that `LGB_AUTH_JWT_SECRET=dev-secret-not-for-prod` in `docker-compose.dev.yml` is NOT production-safe; update `README.md` Getting Started section to reference `make docker-up`.
+- [x] **T-3.05** `docs` — Add README section warning that `LGB_AUTH_JWT_SECRET=dev-secret-not-for-prod` in `docker-compose.dev.yml` is NOT production-safe; update `README.md` Getting Started section to reference `make docker-up`.
   - **Files**: `README.md`
   - **Reqs**: MVP-FND-9.1 (risk mitigation)
   - **Design**: §24 (risk: dev JWT secret)
@@ -377,14 +377,14 @@ plcsim binary, Docker files, docker-compose, frontend scaffold, embed.go stub.
 
 ### Group C — Frontend scaffold
 
-- [ ] **T-3.06** `impl` — Create `frontend/` Vite + React + TS scaffold: `package.json` (react, react-dom, vite, typescript as devDeps), `vite.config.ts`, `tsconfig.json`, `.nvmrc` (content: `20`), `src/main.tsx` (empty placeholder comment only). Running `npm ci && npm run build` in `frontend/` MUST exit 0 and produce `frontend/dist/index.html`.
+- [x] **T-3.06** `impl` — Create `frontend/` Vite + React + TS scaffold: `package.json` (react, react-dom, vite, typescript as devDeps), `vite.config.ts`, `tsconfig.json`, `.nvmrc` (content: `20`), `src/main.tsx` (empty placeholder comment only). Running `npm ci && npm run build` in `frontend/` MUST exit 0 and produce `frontend/dist/index.html`.
   - **Files**: `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`, `frontend/.nvmrc`, `frontend/src/main.tsx`
   - **Reqs**: MVP-FND-9.5
   - **Design**: §21 (file-change summary, frontend row)
   - **Deps**: T-3.04
   - **DoD**: `cd frontend && npm ci && npm run build` exits 0; `frontend/dist/index.html` exists.
 
-- [ ] **T-3.07** `impl` — Create root-level `embed.go` with `//go:build !no_embed` guard and `//go:embed all:frontend/dist` directive. Create root-level `noassets.go` with `//go:build no_embed` (empty package `main` — ensures the build tag works cleanly). Update `Makefile` `build` target to pass `-tags no_embed`; update CI build step to pass `-tags no_embed`. **Note**: the `!no_embed` guard MUST be removed before archive per spec MVP-FND-1.10; this task creates the guard-active version; a future archive-prep task will remove it.
+- [x] **T-3.07** `impl` — Create root-level `embed.go` with `//go:build !no_embed` guard and `//go:embed all:frontend/dist` directive. Create root-level `noassets.go` with `//go:build no_embed` (empty package `main` — ensures the build tag works cleanly). Update `Makefile` `build` target to pass `-tags no_embed`; update CI build step to pass `-tags no_embed`. **Note**: the `!no_embed` guard MUST be removed before archive per spec MVP-FND-1.10; this task creates the guard-active version; a future archive-prep task will remove it.
   - **Files**: `embed.go`, `noassets.go`, `Makefile`
   - **Reqs**: MVP-FND-1.10, MVP-FND-9.6
   - **Design**: §24 (embed guard risk)
@@ -393,21 +393,21 @@ plcsim binary, Docker files, docker-compose, frontend scaffold, embed.go stub.
 
 ### Group D — Gateway plcsim probe + Makefile targets
 
-- [ ] **T-3.08** `test` — **[RED]** Write `cmd/lgb/cmd/server_probe_test.go` (`//go:build integration`): start `testutil.StartPLCSim(t)`, start server, assert log contains `"plcsim reachable"` within 10 s. Write second scenario: plcsim not running → log contains `"plcsim unreachable"`, server still running.
+- [x] **T-3.08** `test` — **[RED]** Write `cmd/lgb/cmd/server_probe_test.go` (`//go:build integration`): start `testutil.StartPLCSim(t)`, start server, assert log contains `"plcsim reachable"` within 10 s. Write second scenario: plcsim not running → log contains `"plcsim unreachable"`, server still running.
   - **Files**: `cmd/lgb/cmd/server_probe_test.go`
   - **Reqs**: MVP-FND-9.3
   - **Design**: §13.1 (gateway probe)
   - **Deps**: T-3.02, T-2.17
   - **DoD**: tests fail (probe not implemented in server command).
 
-- [ ] **T-3.09** `impl` — **[GREEN]** Update `cmd/lgb/cmd/server.go`: after `datadir.Ensure`, attempt `net.DialTimeout("tcp", plcsimAddr, 5s)` where `plcsimAddr` defaults to `plcsim:44818` (configurable via `cfg.PLCSim.Addr` or a const); log INFO `component="startup"` with `"plcsim reachable"` or `"plcsim unreachable"`.
+- [x] **T-3.09** `impl` — **[GREEN]** Update `cmd/lgb/cmd/server.go`: after `datadir.Ensure`, attempt `net.DialTimeout("tcp", plcsimAddr, 5s)` where `plcsimAddr` defaults to `plcsim:44818` (configurable via `cfg.PLCSim.Addr` or a const); log INFO `component="startup"` with `"plcsim reachable"` or `"plcsim unreachable"`.
   - **Files**: `cmd/lgb/cmd/server.go`
   - **Reqs**: MVP-FND-9.3
   - **Design**: §13.1
   - **Deps**: T-3.08
   - **DoD**: `go test -tags=integration ./cmd/lgb/cmd/...` passes (probe tests green).
 
-- [ ] **T-3.10** `impl` — Add `docker-up`, `docker-down` targets to `Makefile`; add `build-all` cross-compile target for four platforms; add `make test`, `make vet`, `make lint` (stubbed — lint binary not present yet, exits 0 gracefully when `.golangci.yml` absent).
+- [x] **T-3.10** `impl` — Add `docker-up`, `docker-down` targets to `Makefile`; add `build-all` cross-compile target for four platforms; add `make test`, `make vet`, `make lint` (stubbed — lint binary not present yet, exits 0 gracefully when `.golangci.yml` absent).
   - **Files**: `Makefile`
   - **Reqs**: MVP-FND-9.7, MVP-FND-9.8
   - **Design**: §21 (Makefile row)

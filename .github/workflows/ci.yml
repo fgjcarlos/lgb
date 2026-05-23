@@ -64,4 +64,6 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build ./...
+        # -tags no_embed prevents requiring frontend/dist at CI build time.
+        # The embed guard will be removed before archive (spec MVP-FND-1.10).
+        run: go build -tags no_embed ./...

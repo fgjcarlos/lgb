@@ -1,0 +1,22 @@
+# docker/Dockerfile.dev — development image with live-reload via air.
+#
+# Single-stage image based on golang:1.24-alpine. The workspace is mounted
+# at /workspace so code changes are reflected immediately. Not shipped to
+# production — only used by docker-compose.dev.yml for the gateway service.
+#
+# Requirements: MVP-FND-9.1. Design: §13.3.
+# Usage: docker compose -f docker-compose.dev.yml up
+
+FROM golang:1.24-alpine
+
+# Install air for live-reload. Pinned via go install to the latest stable
+# release at the time of authoring; update as needed for newer air versions.
+RUN go install github.com/air-verse/air@latest
+
+WORKDIR /workspace
+
+# Use air to watch for Go source changes and rebuild/restart automatically.
+# The air config (if present at .air.toml) overrides these defaults.
+CMD ["air", "-build.cmd", "go build -tags no_embed -o ./bin/lgb ./cmd/lgb", \
+           "-build.bin", "./bin/lgb", \
+           "-build.args_bin", "server --config lgb.yaml"]

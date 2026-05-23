@@ -41,6 +41,17 @@ type Config struct {
 	Historian HistorianSection `koanf:"historian"`
 	Backup    BackupSection    `koanf:"backup"`
 	PLCs      []PLC            `koanf:"plcs"`
+	PLCSim    PLCSimSection    `koanf:"plcsim"`
+}
+
+// PLCSimSection holds configuration for the in-process PLC simulator probe.
+// The gateway performs a TCP dial to Addr on startup and logs the result
+// (informational only — does not fail startup). Requirements: MVP-FND-9.3.
+type PLCSimSection struct {
+	// Addr is the TCP address of the plcsim service to probe.
+	// Default: "plcsim:44818" (the Docker Compose service name + EtherNet/IP port).
+	// Override via LGB_PLCSIM_ADDR or the plcsim.addr YAML field.
+	Addr string `koanf:"addr"`
 }
 
 // GatewaySection holds gateway-level settings.

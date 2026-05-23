@@ -1,0 +1,40 @@
+# docker/Dockerfile.plcsim — multi-stage build for the plcsim binary.
+#
+# Follows the same pattern as docker/Dockerfile but targets ./cmd/plcsim
+# instead of ./cmd/lgb. The final image is distroless for minimal attack
+# surface and image size.
+#
+# Requirements: MVP-FND-9.1, MVP-FND-9.2. Design: §13.4, ADR-0009.
+# Run: docker build -f docker/Dockerfile.plcsim -t lgb-plcsim:latest .
+
+# ----------------------------
+# Stage 1: Go build
+# ----------------------------
+FROM golang:1.24-alpine AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ENV CGO_ENABLED=0
+
+RUN go build \
+      -ldflags "-s -w" \
+      -o /out/plcsim \
+      ./cmd/plcsim
+
+# ----------------------------
+# Stage 2: minimal runtime image
+# ----------------------------
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=build /out/plcsim /usr/local/bin/plcsim
+
+USER nonroot
+
+EXPOSE 44818/tcp
+
+ENTRYPOINT ["/usr/local/bin/plcsim"]

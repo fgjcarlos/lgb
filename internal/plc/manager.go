@@ -10,6 +10,17 @@ import (
 	"github.com/fgjcarlos/lgb/internal/retry"
 )
 
+// TagUpdate represents a single tag read from a PLC scan tick.
+type TagUpdate struct {
+	PLCName   string
+	Tag       string
+	Value     any
+	Timestamp time.Time
+}
+
+// TagCallback is invoked by the scan loop for each successful tag read.
+type TagCallback func(update TagUpdate)
+
 // DriverFactory is a function that creates a Driver for the given PLC configuration.
 // Providing a custom factory allows test code to inject mock drivers without
 // touching the production gologix wiring.
@@ -34,6 +45,7 @@ type plcWorker struct {
 type Manager struct {
 	log     *slog.Logger
 	factory DriverFactory
+	tagCb   TagCallback
 
 	mu      sync.RWMutex
 	workers map[string]*plcWorker // keyed by PLC name
@@ -44,7 +56,7 @@ type Manager struct {
 // in cfg using factory. If factory is nil, NewDriver is used.
 //
 // Start must be called before any tag operations.
-func NewManager(cfg *config.Config, log *slog.Logger, factory DriverFactory) *Manager {
+func NewManager(cfg *config.Config, log *slog.Logger, factory DriverFactory, tagCb TagCallback) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -55,6 +67,7 @@ func NewManager(cfg *config.Config, log *slog.Logger, factory DriverFactory) *Ma
 	m := &Manager{
 		log:     log,
 		factory: factory,
+		tagCb:   tagCb,
 		workers: make(map[string]*plcWorker, len(cfg.PLCs)),
 	}
 
@@ -253,13 +266,27 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Phase 1: no tag store yet — tick is a no-op / heartbeat.
-			// Future phases will read configured tags here and publish to the store.
 			if !d.Connected() {
 				log.Warn("plc manager: not connected, attempting reconnect")
 				if err := reconnect(ctx, d, log); err != nil {
-					// Context cancelled — exit.
 					return
+				}
+			}
+			for _, tag := range plcCfg.Tags {
+				dest := allocDest(tag.Type)
+				if err := d.ReadTag(tag.Name, dest); err != nil {
+					log.Warn("plc manager: ReadTag error",
+						slog.String("tag", tag.Name),
+						slog.String("err", err.Error()))
+					continue
+				}
+				if m.tagCb != nil {
+					m.tagCb(TagUpdate{
+						PLCName:   name,
+						Tag:       tag.Name,
+						Value:     deref(dest),
+						Timestamp: time.Now(),
+					})
 				}
 			}
 		}
@@ -280,4 +307,66 @@ func reconnect(ctx context.Context, d Driver, log *slog.Logger) error {
 	}, func(ctx context.Context) error {
 		return d.Connect(ctx)
 	})
+}
+
+func allocDest(typeName string) any {
+	switch typeName {
+	case "Boolean":
+		return new(bool)
+	case "Int8":
+		return new(int8)
+	case "Int16":
+		return new(int16)
+	case "Int32":
+		return new(int32)
+	case "Int64":
+		return new(int64)
+	case "UInt8":
+		return new(uint8)
+	case "UInt16":
+		return new(uint16)
+	case "UInt32":
+		return new(uint32)
+	case "UInt64":
+		return new(uint64)
+	case "Float":
+		return new(float32)
+	case "Double":
+		return new(float64)
+	case "String":
+		return new(string)
+	default:
+		return new(any)
+	}
+}
+
+func deref(ptr any) any {
+	switch p := ptr.(type) {
+	case *bool:
+		return *p
+	case *int8:
+		return *p
+	case *int16:
+		return *p
+	case *int32:
+		return *p
+	case *int64:
+		return *p
+	case *uint8:
+		return *p
+	case *uint16:
+		return *p
+	case *uint32:
+		return *p
+	case *uint64:
+		return *p
+	case *float32:
+		return *p
+	case *float64:
+		return *p
+	case *string:
+		return *p
+	default:
+		return ptr
+	}
 }

@@ -2,6 +2,7 @@ package plc_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ func TestNewManager_CreatesDriversForEachPLC(t *testing.T) {
 		return &trackingMockDriver{}
 	}
 
-	mgr := plc.NewManager(cfg, nil, factory)
+	mgr := plc.NewManager(cfg, nil, factory, nil)
 	if mgr == nil {
 		t.Fatal("NewManager returned nil")
 	}
@@ -137,7 +138,7 @@ func TestManager_Start_CallsConnectOnAllDrivers(t *testing.T) {
 		return d
 	}
 
-	mgr := plc.NewManager(cfg, nil, factory)
+	mgr := plc.NewManager(cfg, nil, factory, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -180,7 +181,7 @@ func TestManager_Stop_CallsCloseOnAllDrivers(t *testing.T) {
 		return d
 	}
 
-	mgr := plc.NewManager(cfg, nil, factory)
+	mgr := plc.NewManager(cfg, nil, factory, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -215,7 +216,7 @@ func TestManager_Stop_AfterContextCancel_NoDeadlock(t *testing.T) {
 		return &trackingMockDriver{}
 	}
 
-	mgr := plc.NewManager(cfg, nil, factory)
+	mgr := plc.NewManager(cfg, nil, factory, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
@@ -255,7 +256,7 @@ func TestManager_Driver_LookupByName(t *testing.T) {
 		return &trackingMockDriver{}
 	}
 
-	mgr := plc.NewManager(cfg, nil, factory)
+	mgr := plc.NewManager(cfg, nil, factory, nil)
 
 	// Existing driver.
 	d, ok := mgr.Driver("plc-alpha")
@@ -287,7 +288,7 @@ func TestManager_ConcurrentStartStop_RaceSafe(t *testing.T) {
 		return &trackingMockDriver{}
 	}
 
-	mgr := plc.NewManager(cfg, nil, factory)
+	mgr := plc.NewManager(cfg, nil, factory, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -316,5 +317,208 @@ func TestManager_ConcurrentStartStop_RaceSafe(t *testing.T) {
 
 	if err := mgr.Stop(); err != nil {
 		t.Fatalf("Stop() returned error: %v", err)
+	}
+}
+
+// ─── T-5.01: TagCallback tests ──────────────────────────────────────────────
+
+// tagReadMockDriver returns configured values for ReadTag.
+type tagReadMockDriver struct {
+	mu        sync.Mutex
+	connected bool
+	tagValues map[string]any
+	readErr   map[string]error
+}
+
+func (m *tagReadMockDriver) Connect(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.connected = true
+	return nil
+}
+
+func (m *tagReadMockDriver) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.connected = false
+	return nil
+}
+
+func (m *tagReadMockDriver) ReadTag(tag string, dest any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err, ok := m.readErr[tag]; ok && err != nil {
+		return err
+	}
+	if v, ok := m.tagValues[tag]; ok {
+		switch d := dest.(type) {
+		case *float32:
+			*d = v.(float32)
+		case *bool:
+			*d = v.(bool)
+		case *int32:
+			*d = v.(int32)
+		}
+	}
+	return nil
+}
+
+func (m *tagReadMockDriver) WriteTag(_ string, _ any) error       { return nil }
+func (m *tagReadMockDriver) ReadMulti(_ []string, _ []any) error   { return nil }
+func (m *tagReadMockDriver) Connected() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.connected
+}
+
+var _ plc.Driver = (*tagReadMockDriver)(nil)
+
+func TestManager_TagCallback_CalledOnRead(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		PLCs: []config.PLC{
+			{
+				Name: "plc-a", Address: "127.0.0.1:44818",
+				ScanRate: "50ms",
+				Tags: []config.TagDef{
+					{Name: "Motor.Speed", Type: "Float"},
+				},
+			},
+		},
+	}
+
+	mock := &tagReadMockDriver{
+		tagValues: map[string]any{"Motor.Speed": float32(1200.5)},
+	}
+
+	factory := func(c config.PLC) plc.Driver { return mock }
+
+	var mu sync.Mutex
+	var updates []plc.TagUpdate
+	cb := func(u plc.TagUpdate) {
+		mu.Lock()
+		updates = append(updates, u)
+		mu.Unlock()
+	}
+
+	mgr := plc.NewManager(cfg, nil, factory, cb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	_ = mgr.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) == 0 {
+		t.Fatal("expected at least 1 TagUpdate from callback, got 0")
+	}
+	u := updates[0]
+	if u.PLCName != "plc-a" {
+		t.Errorf("PLCName = %q; want %q", u.PLCName, "plc-a")
+	}
+	if u.Tag != "Motor.Speed" {
+		t.Errorf("Tag = %q; want %q", u.Tag, "Motor.Speed")
+	}
+}
+
+func TestManager_NilCallback_NoPanic(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		PLCs: []config.PLC{
+			{
+				Name: "plc-a", Address: "127.0.0.1:44818",
+				ScanRate: "50ms",
+				Tags: []config.TagDef{
+					{Name: "Motor.Speed", Type: "Float"},
+				},
+			},
+		},
+	}
+
+	mock := &tagReadMockDriver{
+		tagValues: map[string]any{"Motor.Speed": float32(100)},
+	}
+	factory := func(c config.PLC) plc.Driver { return mock }
+
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	_ = mgr.Stop()
+}
+
+func TestManager_TagCallback_SkipsFailedReads(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		PLCs: []config.PLC{
+			{
+				Name: "plc-a", Address: "127.0.0.1:44818",
+				ScanRate: "50ms",
+				Tags: []config.TagDef{
+					{Name: "Tag1", Type: "Float"},
+					{Name: "Tag2", Type: "Float"},
+					{Name: "Tag3", Type: "Float"},
+				},
+			},
+		},
+	}
+
+	mock := &tagReadMockDriver{
+		tagValues: map[string]any{
+			"Tag1": float32(1), "Tag2": float32(2), "Tag3": float32(3),
+		},
+		readErr: map[string]error{
+			"Tag2": errors.New("simulated read error"),
+		},
+	}
+	factory := func(c config.PLC) plc.Driver { return mock }
+
+	var mu sync.Mutex
+	var updates []plc.TagUpdate
+	cb := func(u plc.TagUpdate) {
+		mu.Lock()
+		updates = append(updates, u)
+		mu.Unlock()
+	}
+
+	mgr := plc.NewManager(cfg, nil, factory, cb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	_ = mgr.Start(ctx)
+	time.Sleep(150 * time.Millisecond)
+	_ = mgr.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	for _, u := range updates {
+		if u.Tag == "Tag2" {
+			t.Error("callback was called for Tag2 which should have failed")
+		}
+	}
+	hasTag1 := false
+	hasTag3 := false
+	for _, u := range updates {
+		if u.Tag == "Tag1" { hasTag1 = true }
+		if u.Tag == "Tag3" { hasTag3 = true }
+	}
+	if !hasTag1 || !hasTag3 {
+		t.Errorf("expected callbacks for Tag1 and Tag3; got Tag1=%v Tag3=%v", hasTag1, hasTag3)
 	}
 }

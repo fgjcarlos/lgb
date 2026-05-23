@@ -214,14 +214,14 @@ PLC Manager: accept `TagCallback`, replace no-op scan loop with actual tag reads
 
 ### Group A — TagCallback wiring in Manager
 
-- [ ] **T-5.01** `test` — **[RED]** Extend `internal/plc/manager_test.go`: (a) `NewManager` accepts fourth `TagCallback` param; (b) scan tick with one configured tag → callback called once with correct `TagUpdate` (`PLCName`, `Tag`, `Value`, `Timestamp`); (c) nil callback → no panic on tick; (d) read error on tag 2 of 3 → callback called for tags 1 and 3, not tag 2; (e) `go test -race` no data race across concurrent manager start+callback invocation.
+- [x] **T-5.01** `test` — **[RED]** Extend `internal/plc/manager_test.go`: (a) `NewManager` accepts fourth `TagCallback` param; (b) scan tick with one configured tag → callback called once with correct `TagUpdate` (`PLCName`, `Tag`, `Value`, `Timestamp`); (c) nil callback → no panic on tick; (d) read error on tag 2 of 3 → callback called for tags 1 and 3, not tag 2; (e) `go test -race` no data race across concurrent manager start+callback invocation.
   - **Files**: `internal/plc/manager_test.go`
   - **Reqs**: SPK-PLC-3.1–3.3, PLC-DRV-2.1–2.2
   - **Design**: §4 (TagUpdate, TagCallback), §5 decision #4, §6.2
   - **Deps**: T-4.02
   - **DoD**: `go test ./internal/plc/...` FAILS (TagCallback param absent from NewManager).
 
-- [ ] **T-5.02** `impl` — **[GREEN]** Add `TagUpdate` and `TagCallback` types to `internal/plc/manager.go` (or a new `internal/plc/tags.go`). Update `NewManager` signature to accept `tagCb TagCallback` (nil is valid). Store `tagCb` on `Manager`. Update `runWorker`: replace no-op heartbeat with loop over `plcCfg.Tags` — for each tag allocate typed dest from `tag.Type`, call `d.ReadTag(tag.Name, &dest)`, on success call `m.tagCb(TagUpdate{PLCName: name, Tag: tag.Name, Value: dest, Timestamp: time.Now()})`, on error log WARN and continue. Update `defaultDriverFactory` and all callers of `NewManager` (`cmd/lgb/cmd/server.go`) to pass nil callback for now.
+- [x] **T-5.02** `impl` — **[GREEN]** Add `TagUpdate` and `TagCallback` types to `internal/plc/manager.go` (or a new `internal/plc/tags.go`). Update `NewManager` signature to accept `tagCb TagCallback` (nil is valid). Store `tagCb` on `Manager`. Update `runWorker`: replace no-op heartbeat with loop over `plcCfg.Tags` — for each tag allocate typed dest from `tag.Type`, call `d.ReadTag(tag.Name, &dest)`, on success call `m.tagCb(TagUpdate{PLCName: name, Tag: tag.Name, Value: dest, Timestamp: time.Now()})`, on error log WARN and continue. Update `defaultDriverFactory` and all callers of `NewManager` (`cmd/lgb/cmd/server.go`) to pass nil callback for now.
   - **Files**: `internal/plc/manager.go` (or `internal/plc/tags.go`), `cmd/lgb/cmd/server.go`
   - **Reqs**: SPK-PLC-3.1–3.3, PLC-DRV-2.1–2.2
   - **Design**: §4, §6.2

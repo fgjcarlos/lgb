@@ -21,6 +21,8 @@ mqtt:
   clientID: "lgb-test"
   password: ""       # secret field, comes from env
   passwordFile: ""   # secret field, comes from env
+  groupID: "test-group"
+  edgeNodeID: "lgb-test"
 
 historian:
   retentionDays: 90

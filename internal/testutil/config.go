@@ -41,8 +41,13 @@ func MinimalConfig(t *testing.T) *config.Config {
 			SessionTTL: "8h",
 		},
 		MQTT: config.MQTTSection{
-			BrokerURL: "tcp://localhost:1883",
-			ClientID:  "lgb-test",
+			BrokerURL:    "tcp://localhost:1883",
+			ClientID:     "lgb-test",
+			GroupID:      "test-group",
+			EdgeNodeID:   "lgb-test",
+			QoS:          1,
+			KeepAlive:    "30s",
+			CleanSession: true,
 		},
 		Historian: config.HistorianSection{
 			RetentionDays: 90,

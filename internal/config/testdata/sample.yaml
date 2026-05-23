@@ -21,6 +21,11 @@ mqtt:
   clientID: "lgb-test"
   password: ""       # secret field, comes from env
   passwordFile: ""   # secret field, comes from env
+  groupID: "plant-a"
+  edgeNodeID: "lgb-1"
+  qos: 1
+  keepAlive: "30s"
+  cleanSession: true
 
 historian:
   retentionDays: 90
@@ -36,3 +41,8 @@ plcs:
     scanRate: "1s"
     keepAlive: true
     path: "1,0"
+    tags:
+      - name: "Motor.Speed"
+        type: "Float"
+      - name: "Motor.Running"
+        type: "Boolean"

@@ -55,6 +55,24 @@ var (
 	ErrPLCTimeout = errors.New("plc operation timeout")
 )
 
+// MQTT-domain sentinels (SPK-ERR-4.1).
+var (
+	// ErrMQTTConnect is returned when the MQTT broker connection fails.
+	ErrMQTTConnect = errors.New("mqtt connect failed")
+
+	// ErrMQTTPublish is returned when an MQTT publish operation fails.
+	ErrMQTTPublish = errors.New("mqtt publish failed")
+
+	// ErrMQTTSubscribe is returned when an MQTT subscribe operation fails.
+	ErrMQTTSubscribe = errors.New("mqtt subscribe failed")
+)
+
+// Sparkplug-domain sentinels (SPK-ERR-4.1).
+var (
+	// ErrSparkplugEncode is returned when Sparkplug B payload encoding fails.
+	ErrSparkplugEncode = errors.New("sparkplug encode failed")
+)
+
 // Retry-domain sentinels (MVP-FND-5.1).
 var (
 	// ErrMaxAttempts is returned when retry.Do exhausts MaxAttempts.

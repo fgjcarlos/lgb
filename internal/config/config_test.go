@@ -550,3 +550,164 @@ func TestDefaultsAppliedWhenFieldsAbsent(t *testing.T) {
 		t.Errorf("default Historian.RetentionDays = %d; want 90", cfg.Historian.RetentionDays)
 	}
 }
+
+// ─── SPK-CFG-2.x: Sparkplug B config extensions ──────────────────────────
+
+func TestMQTTSparkplugFieldsLoadFromSampleYAML(t *testing.T) {
+	cfg, err := config.Load(testdataPath("sample.yaml"))
+	if err != nil {
+		t.Fatalf("Load(sample.yaml) returned error: %v", err)
+	}
+
+	if cfg.MQTT.GroupID != "plant-a" {
+		t.Errorf("MQTT.GroupID = %q; want %q", cfg.MQTT.GroupID, "plant-a")
+	}
+	if cfg.MQTT.EdgeNodeID != "lgb-1" {
+		t.Errorf("MQTT.EdgeNodeID = %q; want %q", cfg.MQTT.EdgeNodeID, "lgb-1")
+	}
+	if cfg.MQTT.QoS != 1 {
+		t.Errorf("MQTT.QoS = %d; want 1", cfg.MQTT.QoS)
+	}
+	if cfg.MQTT.KeepAlive != "30s" {
+		t.Errorf("MQTT.KeepAlive = %q; want %q", cfg.MQTT.KeepAlive, "30s")
+	}
+	if cfg.MQTT.CleanSession != true {
+		t.Errorf("MQTT.CleanSession = %v; want true", cfg.MQTT.CleanSession)
+	}
+}
+
+func TestMQTTValidateQoSOutOfRange(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.MQTT.QoS = 3
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for QoS=3, got nil")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "mqtt.qos") {
+		t.Errorf("expected error to mention mqtt.qos, got %q", err.Error())
+	}
+}
+
+func TestMQTTValidateKeepAliveInvalid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.MQTT.KeepAlive = "not-a-duration"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid keepAlive, got nil")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestMQTTValidateGroupIDRequiredWhenBrokerSet(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.MQTT.BrokerURL = "tcp://localhost:1883"
+	cfg.MQTT.GroupID = ""
+	cfg.MQTT.EdgeNodeID = "lgb-1"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty groupID when brokerURL is set, got nil")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "mqtt.groupID") {
+		t.Errorf("expected error to mention mqtt.groupID, got %q", err.Error())
+	}
+}
+
+func TestMQTTValidateNoErrorWhenBrokerEmpty(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.MQTT.BrokerURL = ""
+	cfg.MQTT.GroupID = ""
+	err := cfg.Validate()
+	if err != nil {
+		t.Errorf("expected no error when brokerURL is empty, got %v", err)
+	}
+}
+
+func TestPLCTagsLoadFromYAML(t *testing.T) {
+	cfg, err := config.Load(testdataPath("sample.yaml"))
+	if err != nil {
+		t.Fatalf("Load(sample.yaml) returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 {
+		t.Fatal("expected at least one PLC")
+	}
+	tags := cfg.PLCs[0].Tags
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(tags))
+	}
+	if tags[0].Name != "Motor.Speed" {
+		t.Errorf("tags[0].Name = %q; want %q", tags[0].Name, "Motor.Speed")
+	}
+	if tags[0].Type != "Float" {
+		t.Errorf("tags[0].Type = %q; want %q", tags[0].Type, "Float")
+	}
+	if tags[1].Name != "Motor.Running" {
+		t.Errorf("tags[1].Name = %q; want %q", tags[1].Name, "Motor.Running")
+	}
+}
+
+func TestPLCTagsEmptyIsValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.PLCs = []config.PLC{
+		{Name: "plc-a", Address: "192.168.1.10"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error for PLC with no tags, got %v", err)
+	}
+}
+
+func TestPLCTagValidateEmptyName(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.PLCs = []config.PLC{
+		{Name: "plc-a", Address: "192.168.1.10", Tags: []config.TagDef{
+			{Name: "", Type: "Int32"},
+		}},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty tag name, got nil")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestPLCTagValidateUnknownType(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.PLCs = []config.PLC{
+		{Name: "plc-a", Address: "192.168.1.10", Tags: []config.TagDef{
+			{Name: "Motor.Speed", Type: "UDT"},
+		}},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for unknown tag type UDT, got nil")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+// validConfig returns a config that passes Validate().
+func validConfig(t *testing.T) *config.Config {
+	t.Helper()
+	return &config.Config{
+		Gateway: config.GatewaySection{
+			ID: "lgb-test", LogLevel: "info", LogFormat: "text",
+		},
+		Server: config.ServerSection{HTTPAddr: ":8080"},
+		Auth:   config.AuthSection{SessionTTL: "8h"},
+		MQTT: config.MQTTSection{
+			QoS:       1,
+			KeepAlive: "30s",
+		},
+		Historian: config.HistorianSection{RetentionDays: 90},
+	}
+}

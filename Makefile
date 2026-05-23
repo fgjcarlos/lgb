@@ -1,4 +1,4 @@
-.PHONY: build test vet run clean build-all docker-up docker-down lint
+.PHONY: build test vet run clean build-all docker-up docker-down lint generate adr-index
 
 BINARY_NAME ?= lgb
 VERSION ?= dev
@@ -45,11 +45,25 @@ docker-up:
 docker-down:
 	docker compose -f docker-compose.dev.yml down -v
 
-## lint — run golangci-lint if .golangci.yml is present, or skip gracefully.
-## Slice 4 adds the full linter config. Requirements: MVP-FND-9.9 (stub).
+## lint — run golangci-lint with the project configuration.
+## Requirements: MVP-FND-9.9. Design: §19 decision #23.
 lint:
-	@if [ -f .golangci.yml ]; then \
-		golangci-lint run; \
+	golangci-lint run
+
+## generate — run protobuf codegen if .proto files exist, or print a notice.
+## Requirements: MVP-FND-1.13. Design: §21 (Makefile row).
+generate:
+	@if find . -name '*.proto' -not -path './vendor/*' | grep -q .; then \
+		protoc --go_out=. --go-grpc_out=. $$(find . -name '*.proto' -not -path './vendor/*'); \
 	else \
-		echo "# .golangci.yml not found — skipping lint (will be added in slice 4)"; \
+		echo "# no .proto files — skipping protobuf codegen"; \
 	fi
+
+## adr-index — list all ADRs in docs/adr/.
+## Requirements: MVP-FND-1.14.
+adr-index:
+	@echo "Architecture Decision Records:"
+	@ls docs/adr/*.md 2>/dev/null | sort | while read f; do \
+		title=$$(head -1 "$$f" | sed 's/^# //'); \
+		echo "  $$f — $$title"; \
+	done

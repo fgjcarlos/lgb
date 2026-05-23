@@ -1,3 +1,10 @@
+# Pinned action SHAs (resolved 2026-05-23 for supply-chain security):
+#   golangci/golangci-lint-action@v6.5.2
+#     tag object SHA : 8564da7cb3c6866ed1da648ca8f00a258ef0c802
+#     commit SHA     : 55c2c1448f86e01eaae002a5a3a9624417608d84
+#   GitHub Actions `uses:` pins the tag object SHA for annotated tags.
+#   To update: re-resolve via `gh api repos/golangci/golangci-lint-action/git/refs/tags/<ver>`
+#   and update both this comment and the lint step in backend-test.
 name: CI
 
 on:

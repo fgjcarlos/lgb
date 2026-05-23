@@ -422,7 +422,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group A — SHA resolution (blocking prerequisite)
 
-- [ ] **T-4.01** `chore` — Resolve the exact SHA for `golangci/golangci-lint-action@v6` by checking the upstream tag on `github.com/golangci/golangci-lint-action`. Record the SHA (format: `golangci/golangci-lint-action@<40-char-sha>`) in a comment at the top of `.github/workflows/ci.yml` and use it in the lint step. This task MUST complete before T-4.05.
+- [x] **T-4.01** `chore` — Resolve the exact SHA for `golangci/golangci-lint-action@v6` by checking the upstream tag on `github.com/golangci/golangci-lint-action`. Record the SHA (format: `golangci/golangci-lint-action@<40-char-sha>`) in a comment at the top of `.github/workflows/ci.yml` and use it in the lint step. This task MUST complete before T-4.05.
   - **Files**: `.github/workflows/ci.yml` (comment only — full step added in T-4.05)
   - **Reqs**: MVP-FND-1.11
   - **Design**: §14
@@ -431,7 +431,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group B — Linting
 
-- [ ] **T-4.02** `impl` — Create `.golangci.yml`: enable `errcheck`, `staticcheck`, `gosimple`, `unused`, `govet`, `ineffassign`; `run.timeout: 5m`; valid for `golangci-lint` v1.60+. Run `golangci-lint run` locally against all slice 1–3 source and fix any reported issues (no suppressions allowed for the six required linters).
+- [x] **T-4.02** `impl` — Create `.golangci.yml`: enable `errcheck`, `staticcheck`, `gosimple`, `unused`, `govet`, `ineffassign`; `run.timeout: 5m`; valid for `golangci-lint` v1.60+. Run `golangci-lint run` locally against all slice 1–3 source and fix any reported issues (no suppressions allowed for the six required linters).
   - **Files**: `.golangci.yml`, any source files with lint issues
   - **Reqs**: MVP-FND-9.9
   - **Design**: §19 decision #23
@@ -440,7 +440,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group C — Release skeleton
 
-- [ ] **T-4.03** `impl` — Create `.goreleaser.yaml`: `builds[0]` section with `env: [CGO_ENABLED=0]` and all four GOOS/GOARCH pairs; `ldflags` injecting version/commit/date from `internal/version`; `archives`, `checksum`, `changelog` sections as skeleton. File MUST be valid YAML (no CI wiring yet).
+- [x] **T-4.03** `impl` — Create `.goreleaser.yaml`: `builds[0]` section with `env: [CGO_ENABLED=0]` and all four GOOS/GOARCH pairs; `ldflags` injecting version/commit/date from `internal/version`; `archives`, `checksum`, `changelog` sections as skeleton. File MUST be valid YAML (no CI wiring yet).
   - **Files**: `.goreleaser.yaml`
   - **Reqs**: MVP-FND-9.10
   - **Design**: §19 decision #23, §21 (goreleaser row)
@@ -449,7 +449,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group D — ADRs
 
-- [ ] **T-4.04** `docs` — Create `docs/adr/0000-template.md` (canonical ADR template: Status / Decision / Context / Options Considered / Rationale / Consequences / References). Create `docs/adr/README.md` as ADR index listing all 10 files (0000 template + 0001–0009). Create ADRs `0001` through `0009` in `docs/adr/` with status `Proposed`, titles and content per design §15. Each ADR body follows the template and documents the decision, context, options, rationale, and consequences.
+- [x] **T-4.04** `docs` — Create `docs/adr/0000-template.md` (canonical ADR template: Status / Decision / Context / Options Considered / Rationale / Consequences / References). Create `docs/adr/README.md` as ADR index listing all 10 files (0000 template + 0001–0009). Create ADRs `0001` through `0009` in `docs/adr/` with status `Proposed`, titles and content per design §15. Each ADR body follows the template and documents the decision, context, options, rationale, and consequences.
   - **Files**: `docs/adr/0000-template.md`, `docs/adr/README.md`, `docs/adr/0001-cli-framework.md` … `docs/adr/0009-pure-go-no-cgo.md`
   - **Reqs**: MVP-FND-1.14
   - **Design**: §15
@@ -458,7 +458,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group E — CI workflow updates
 
-- [ ] **T-4.05** `config` — Update `.github/workflows/ci.yml`: (a) add `golangci-lint` step inside `has_go == true` guard using the SHA resolved in T-4.01, referencing `.golangci.yml`, running after `go vet`; (b) add `frontend-build` job with `has_frontend` detection step, `actions/setup-node@v4` with `node-version-file: 'frontend/.nvmrc'`, `npm ci && npm run build` step; (c) add `make generate` placeholder step inside `has_go == true` guard.
+- [x] **T-4.05** `config` — Update `.github/workflows/ci.yml`: (a) add `golangci-lint` step inside `has_go == true` guard using the SHA resolved in T-4.01, referencing `.golangci.yml`, running after `go vet`; (b) add `frontend-build` job with `has_frontend` detection step, `actions/setup-node@v4` with `node-version-file: 'frontend/.nvmrc'`, `npm ci && npm run build` step; (c) add `make generate` placeholder step inside `has_go == true` guard.
   - **Files**: `.github/workflows/ci.yml`
   - **Reqs**: MVP-FND-1.11, MVP-FND-1.12, MVP-FND-1.13
   - **Design**: §14
@@ -467,7 +467,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group F — Makefile generate target
 
-- [ ] **T-4.06** `impl` — Add `generate` target to `Makefile`: checks for `.proto` files via `find . -name '*.proto'`; if none found, prints `# no .proto files — skipping protobuf codegen` and exits 0. Add `make adr-index` placeholder target (prints ADR list from `docs/adr/`). Add `make lint` target calling `golangci-lint run` (now that `.golangci.yml` exists).
+- [x] **T-4.06** `impl` — Add `generate` target to `Makefile`: checks for `.proto` files via `find . -name '*.proto'`; if none found, prints `# no .proto files — skipping protobuf codegen` and exits 0. Add `make adr-index` placeholder target (prints ADR list from `docs/adr/`). Add `make lint` target calling `golangci-lint run` (now that `.golangci.yml` exists).
   - **Files**: `Makefile`
   - **Reqs**: MVP-FND-1.13
   - **Design**: §21 (Makefile row)
@@ -476,7 +476,7 @@ Linter config, release skeleton, ADRs, CI workflow updates. After merge, lint ga
 
 ### Group G — Archive-prep guard tracking
 
-- [ ] **T-4.07** `chore` — Add a comment in `embed.go` and a GitHub issue reference (or TODO in `tasks.md`) that the `!no_embed` build-tag guard created in T-3.07 MUST be removed before this change is archived (per spec MVP-FND-1.10). Verify that `go build ./...` (without `-tags no_embed`) fails with `frontend/dist missing` when `frontend/dist` is absent — confirming the guard will catch the requirement at archive time.
+- [x] **T-4.07** `chore` — Add a comment in `embed.go` and a GitHub issue reference (or TODO in `tasks.md`) that the `!no_embed` build-tag guard created in T-3.07 MUST be removed before this change is archived (per spec MVP-FND-1.10). Verify that `go build ./...` (without `-tags no_embed`) fails with `frontend/dist missing` when `frontend/dist` is absent — confirming the guard will catch the requirement at archive time.
   - **Files**: `embed.go` (comment update only)
   - **Reqs**: MVP-FND-1.10
   - **Design**: §24 (embed guard risk)

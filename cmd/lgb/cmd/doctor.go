@@ -63,6 +63,7 @@ func runDoctorTo(d *Deps, stdout, stderr io.Writer) (int, error) {
 	reg := d.DoctorRegistry
 	if reg == nil {
 		if d.Config == nil {
+			fmt.Fprintln(stderr, "error: config not loaded — cannot run doctor checks")
 			return 2, fmt.Errorf("doctor: config not loaded")
 		}
 		reg = doctor.Default(d.Config)

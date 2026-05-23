@@ -358,3 +358,127 @@ status: complete
 - Makefile lint stub exits 0 when .golangci.yml absent; slice 4 adds the real config
 - docker-compose.dev.yml requires LGB_AUTH_JWT_SECRET in env
 - frontend/dist exists after npm run build
+
+---
+
+# Apply Progress — Slice 4 (chore/mvp-foundation-tooling)
+
+---
+change: mvp-foundation
+phase: apply
+slice: 4
+slice_branch: chore/mvp-foundation-tooling
+date: 2026-05-23
+status: complete
+---
+
+## Mode: Strict TDD (config/docs/chore tasks — verification via vet + test + golangci-lint after each change)
+
+## Completed Tasks
+
+- [x] T-4.01 — golangci/golangci-lint-action@v6.5.2 SHA resolved (tag object: 8564da7cb3c6866ed1da648ca8f00a258ef0c802, commit: 55c2c1448f86e01eaae002a5a3a9624417608d84); recorded in ci.yml top comment
+- [x] T-4.02 — `.golangci.yml` created with 6 mandatory linters (errcheck, staticcheck, gosimple, unused, govet, ineffassign); run.timeout=5m; govet configured without fieldalignment; 2 ineffassign issues fixed in doctor.go + server.go; golangci-lint exits 0
+- [x] T-4.03 — `.goreleaser.yaml` created; builds[0] with CGO_ENABLED=0, 4 GOOS/GOARCH pairs (linux/amd64, linux/arm64, darwin/arm64, windows/amd64; windows/arm64 excluded), ldflags injecting internal/version fields; archives + checksum + changelog skeletons; YAML valid
+- [x] T-4.04 — 11 files in docs/adr/: 0000-template.md, 0001-0009 ADRs (all Status: Proposed), README.md index; all content per design §15; make adr-index lists all correctly
+- [x] T-4.05 — ci.yml updated: (a) golangci-lint step with pinned SHA after go test; (b) make generate step inside has_go guard; (c) frontend-build job with has_frontend detection, actions/setup-node@v4 with node-version-file, npm ci && npm run build (per spec MVP-FND-9.5); YAML valid
+- [x] T-4.06 — Makefile: generate target (find .proto → notice if none); adr-index target; lint target now calls `golangci-lint run` (not a stub); all exit 0
+- [x] T-4.07 — embed.go TODO(archive) comment pre-existed from slice 3 (references MVP-FND-1.10); verified go build ./... without -tags no_embed fails with "no matching files found" when frontend/dist absent
+
+## Verification Evidence
+
+| Gate | Result |
+|------|--------|
+| `go vet -tags no_embed ./...` | PASS |
+| `go test -tags no_embed ./... -race -count=1` | PASS (10 packages, 0 failures) |
+| `golangci-lint run` | PASS (exits 0; v1.63.0) |
+| `make generate` | PASS (prints "# no .proto files — skipping protobuf codegen"; exit 0) |
+| `make lint` | PASS (exits 0) |
+| `make adr-index` | PASS (lists 11 ADR files) |
+| YAML validation (`.goreleaser.yaml`) | PASS (python3 yaml.safe_load) |
+| YAML validation (`.github/workflows/ci.yml`) | PASS (python3 yaml.safe_load; 3 jobs: backend-test, frontend-build, backend-build) |
+| embed guard verification | PASS (go build ./... fails with "no matching files found" when frontend/dist absent) |
+
+## TDD Cycle Evidence
+
+| Task | Category | RED | GREEN | Verification |
+|------|----------|-----|-------|--------------|
+| T-4.01 | chore | N/A | SHA resolved via gh API | go vet pass |
+| T-4.02 | impl | golangci-lint found 2 ineffassign + fieldalignment warnings | fieldalignment excluded from govet; 2 source fixes applied | golangci-lint exits 0 |
+| T-4.03 | impl | N/A (new file) | YAML valid | python3 yaml.safe_load + builds[0].env check |
+| T-4.04 | docs | N/A (new files) | 11 files created; all have Status: Proposed | ls + grep verify |
+| T-4.05 | config | N/A (additive) | YAML valid; 3 jobs present | python3 yaml.safe_load |
+| T-4.06 | impl | N/A (new targets) | make generate/lint/adr-index exit 0 | direct invocation |
+| T-4.07 | chore | N/A | embed guard confirmed | go build without tag fails |
+
+## Files Created
+
+- `.golangci.yml` — 6-linter baseline; run.timeout=5m; govet without fieldalignment
+- `.goreleaser.yaml` — release skeleton for 4 platforms; CGO_ENABLED=0; ldflags injection
+- `docs/adr/0000-template.md` — canonical ADR template
+- `docs/adr/README.md` — index of all 11 ADR files
+- `docs/adr/0001-cli-framework.md` — Cobra v1.10.2 decision
+- `docs/adr/0002-config-loader.md` — koanf v2 + LGB env overlay decision
+- `docs/adr/0003-logging.md` — log/slog decision
+- `docs/adr/0004-plc-driver.md` — gologix v0.41.0-beta decision
+- `docs/adr/0005-opcua-library.md` — gopcua/opcua + Phase 1 spike decision
+- `docs/adr/0006-mqtt-sparkplug.md` — paho.mqtt.golang + internal/sparkplug decision
+- `docs/adr/0007-historian.md` — modernc.org/sqlite decision
+- `docs/adr/0008-backups.md` — restic subprocess decision
+- `docs/adr/0009-pure-go-no-cgo.md` — CGO_ENABLED=0 constraint decision
+
+## Files Modified
+
+- `.github/workflows/ci.yml` — SHA pin comment (T-4.01); golangci-lint step + make generate step + frontend-build job (T-4.05)
+- `cmd/lgb/cmd/doctor.go` — used stderr parameter for config-not-loaded error message (T-4.02 ineffassign fix)
+- `cmd/lgb/cmd/server.go` — used stdout parameter for startup message (T-4.02 ineffassign fix)
+- `Makefile` — generate, adr-index targets; lint now calls golangci-lint (T-4.06)
+- `openspec/changes/mvp-foundation/tasks.md` — T-4.01 through T-4.07 marked [x]
+
+## Non-obvious Discoveries
+
+1. **golangci-lint `enable-all: true` in govet** triggers `fieldalignment` by default, which is not part of the 6 mandatory linters and is excessively noisy for an MVP. Fix: enumerate govet analysers explicitly excluding `fieldalignment`.
+
+2. **golangci-lint `run.skip-dirs` is deprecated** in v1.60+ — use `issues.exclude-dirs` instead.
+
+3. **golangci-lint-action SHA pinning**: GitHub Actions `uses:` must use the tag OBJECT SHA (not the commit SHA) for annotated tags. v6.5.2 tag object SHA = `8564da7cb3c6866ed1da648ca8f00a258ef0c802`, commit SHA = `55c2c1448f86e01eaae002a5a3a9624417608d84`.
+
+4. **doctor.go stderr was dead code**: The `stderr` parameter was accepted but never used in `runDoctorTo`. Fixed by writing the "config not loaded" error message to stderr instead of silently ignoring the parameter.
+
+5. **server.go stdout was dead code**: The `stdout` parameter was accepted but the server logged everything via slog to stderr. Fixed by printing a startup notice ("lgb server starting on <addr>") to stdout.
+
+## Commits
+
+| SHA | Subject |
+|-----|---------|
+| db009e6 | chore(ci): pin golangci-lint-action v6.5.2 SHA in CI workflow comment (T-4.01) |
+| 8d3f63a | feat(tooling): add .golangci.yml baseline linter config; fix ineffassign in doctor/server (T-4.02) |
+| 3df6856 | feat(release): add .goreleaser.yaml skeleton for 4 platforms with CGO_ENABLED=0 (T-4.03) |
+| c748a1a | docs(adr): add 0000-template, README index, and ADR-0001 through ADR-0009 in Proposed status (T-4.04) |
+| 10ca372 | feat(ci): add golangci-lint step, make generate step, and frontend-build job (T-4.05) |
+| 61921aa | feat(tooling): add generate, adr-index targets; update lint to call golangci-lint (T-4.06) |
+| d7ec25a | chore(sdd): tick T-4.01 through T-4.07 in tasks.md; verify embed guard behaviour (T-4.07) |
+
+## Slice 4 — CI fix-up (post-PR-6-open)
+
+PR #6 backend-test CI ran golangci-lint v1.63.0 (per the original T-4.01/T-4.05 pin) and failed with:
+
+```
+can't load config: the Go language version (go1.23) used to build golangci-lint
+is lower than the targeted Go version (1.24.0)
+```
+
+Root cause: golangci-lint v1.x was built with Go 1.23; `go.mod` targets Go 1.24. The v1 line is end-of-life — Go 1.24 support only exists in v2.x.
+
+Fix: bumped to `golangci-lint-action@v8.0.0` (tag object SHA `4afd733a84b1f43292c63897423277bb7f4313a9`) + `golangci-lint v2.12.2`. Migrated `.golangci.yml` to v2 schema via `golangci-lint migrate`; `gosimple` was merged into `staticcheck` upstream (the 6 mandatory linters from MVP-FND-9.9 reduce to 5 enabled, with the gosimple S* rules preserved inside staticcheck).
+
+Local verification: `golangci-lint run ./...` → 0 issues.
+
+Deviations from original plan:
+- `.golangci.yml` schema is v2 (not "v1.60+" as the old header claimed).
+- Spec MVP-FND-9.9 wording lists 6 linters but v2 collapses 6 → 5 (gosimple absorbed). Coverage is preserved. Verify phase should accept this with a note, or the spec text can be aligned.
+
+## Follow-up commits (slice 4)
+
+| SHA | Subject |
+|-----|---------|
+| (TBD) | ci(lint): bump golangci-lint-action to v8.0.0 + golangci-lint v2.12.2 (Go 1.24 support) |

@@ -63,6 +63,9 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		return fmt.Errorf("server: auth.jwtSecret is required")
 	}
 
+	// Print the configured listen address to stdout for scripting / health probes.
+	fmt.Fprintf(stdout, "lgb server starting on %s\n", cfg.Server.HTTPAddr)
+
 	// Bootstrap the data directory. (MVP-FND-7.5)
 	ensureFn := d.DataDirEnsureFn
 	if ensureFn == nil {

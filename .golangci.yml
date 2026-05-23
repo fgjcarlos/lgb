@@ -1,0 +1,88 @@
+# .golangci.yml — baseline linter configuration for LGB.
+#
+# Schema: golangci-lint v2 (required for Go 1.24+ — v1.x was built with Go 1.23
+# and cannot load configs targeting newer toolchains).
+#
+# Requirements: MVP-FND-9.9. Design: §19 decision #23.
+#
+# Enabled linters (mandatory baseline — no suppressions allowed):
+#   errcheck     — unchecked errors must be explicit
+#   staticcheck  — SA*/S*/ST* rules (gosimple was merged into staticcheck in v2)
+#   unused       — exported/unexported identifiers not used
+#   govet        — vet-equivalent checks
+#   ineffassign  — assignments whose value is never used
+version: "2"
+run:
+  # Match the build tag used by `go vet`/`go test` in CI so typecheck does not
+  # fail on embed.go (//go:embed all:frontend/dist) when frontend/dist is absent.
+  # The guard will be removed before archive (see MVP-FND-1.10).
+  build-tags:
+    - no_embed
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    govet:
+      enable:
+        - asmdecl
+        - assign
+        - atomic
+        - bools
+        - buildtag
+        - cgocall
+        - composites
+        - copylocks
+        - defers
+        - directive
+        - errorsas
+        - framepointer
+        - httpresponse
+        - ifaceassert
+        - loopclosure
+        - lostcancel
+        - nilfunc
+        - printf
+        - shift
+        - sigchanyzer
+        - slog
+        - stdmethods
+        - stringintconv
+        - structtag
+        - testinggoroutine
+        - tests
+        - timeformat
+        - unmarshal
+        - unreachable
+        - unsafeptr
+        - unusedresult
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - frontend
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

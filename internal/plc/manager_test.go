@@ -44,18 +44,6 @@ func (m *trackingMockDriver) WriteTag(_ string, _ any) error          { return n
 func (m *trackingMockDriver) ReadMulti(_ []string, _ []any) error     { return nil }
 func (m *trackingMockDriver) Connected() bool                         { return true }
 
-func (m *trackingMockDriver) wasConnected() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.connectCalled
-}
-
-func (m *trackingMockDriver) wasClosed() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.closeCalled
-}
-
 // Compile-time assertion: *trackingMockDriver must satisfy Driver.
 var _ plc.Driver = (*trackingMockDriver)(nil)
 

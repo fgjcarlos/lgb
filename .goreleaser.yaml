@@ -1,0 +1,72 @@
+# .goreleaser.yaml — release pipeline skeleton for LGB.
+#
+# This file is NOT wired into CI in Phase 0. It is a documented skeleton for
+# the `release-pipeline` change. See spec MVP-FND-9.10 and design §19 (#23).
+#
+# Usage (when ready):
+#   goreleaser release --clean
+#   goreleaser build --snapshot --clean  (local test)
+
+version: 2
+
+project_name: lgb
+
+before:
+  hooks:
+    # Ensure go.sum is up to date before building.
+    - go mod tidy
+
+builds:
+  - id: lgb
+    main: ./cmd/lgb
+    binary: lgb
+    # CGO_ENABLED=0 is mandatory per ADR-0009 (pure-Go / no CGo constraint).
+    env:
+      - CGO_ENABLED=0
+    # Inject build metadata into internal/version via ldflags.
+    # Mirrors the Makefile LDFLAGS convention (design decision #25).
+    ldflags:
+      - -s -w
+      - -X github.com/fgjcarlos/lgb/internal/version.Version={{.Version}}
+      - -X github.com/fgjcarlos/lgb/internal/version.Commit={{.Commit}}
+      - -X github.com/fgjcarlos/lgb/internal/version.Date={{.Date}}
+    # All four target platforms (ADR-0009, design §16).
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Exclude windows/arm64 — not a target platform in Phase 0.
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    # Archive name format: lgb_<version>_<os>_<arch>
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      # Windows archives use zip; all others use tar.gz.
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  # Changelog skeleton — full configuration deferred to release-pipeline change.
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"

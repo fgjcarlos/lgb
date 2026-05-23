@@ -1,0 +1,29 @@
+# sample.yaml — valid configuration for unit tests.
+# All fields use valid values per MVP-FND-2.2 and MVP-FND-2.3.
+
+gateway:
+  id: "lgb-test"
+  logLevel: "info"
+  logFormat: "json"
+  dataDir: "/tmp/lgb-test"
+
+server:
+  httpAddr: ":8080"
+  tlsEnabled: false
+  shutdownTimeout: "10s"
+
+auth:
+  jwtSecret: ""   # empty — must come from env in production
+  sessionTTL: "8h"
+
+mqtt:
+  brokerURL: "tcp://localhost:1883"
+  clientID: "lgb-test"
+  password: ""       # secret field, comes from env
+  passwordFile: ""   # secret field, comes from env
+
+historian:
+  retentionDays: 90
+
+backup:
+  repos: []

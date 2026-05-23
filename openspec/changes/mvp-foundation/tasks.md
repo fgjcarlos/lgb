@@ -65,21 +65,21 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group A — Shared scaffolding
 
-- [ ] **T-1.01** `chore` — Add direct deps to `go.mod`: `github.com/spf13/cobra@v1.10.2`, `github.com/knadh/koanf/v2@v2.3.4`, `koanf/providers/{file,env,confmap}`, `koanf/parsers/yaml`, `github.com/danomagnum/gologix@v0.41.0-beta`; run `go mod tidy`.
+- [x] **T-1.01** `chore` — Add direct deps to `go.mod`: `github.com/spf13/cobra@v1.10.2`, `github.com/knadh/koanf/v2@v2.3.4`, `koanf/providers/{file,env,confmap}`, `koanf/parsers/yaml`, `github.com/danomagnum/gologix@v0.41.0-beta`; run `go mod tidy`.
   - **Files**: `go.mod`, `go.sum`
   - **Reqs**: MVP-FND-2.1, MVP-FND-6.6, MVP-FND-9.2
   - **Design**: §16 (pure-Go dep verification)
   - **Deps**: none
   - **DoD**: `go mod tidy` exits 0; `CGO_ENABLED=0 go build ./...` exits 0 (only `main` package stubs needed).
 
-- [ ] **T-1.02** `test` — **[RED]** Write `internal/errors/errors_test.go`: assert all seven sentinels (`ErrConfigInvalid`, `ErrConfigMissing`, `ErrConfigPermission`, `ErrDataDirInvalid`, `ErrDataDirPermission`, `ErrCheckFailed`, `ErrMaxAttempts`) are distinct non-nil errors; assert `errors.Is` wrapping works; assert `Join` helper preserves each constituent.
+- [x] **T-1.02** `test` — **[RED]** Write `internal/errors/errors_test.go`: assert all seven sentinels (`ErrConfigInvalid`, `ErrConfigMissing`, `ErrConfigPermission`, `ErrDataDirInvalid`, `ErrDataDirPermission`, `ErrCheckFailed`, `ErrMaxAttempts`) are distinct non-nil errors; assert `errors.Is` wrapping works; assert `Join` helper preserves each constituent.
   - **Files**: `internal/errors/errors_test.go`
   - **Reqs**: MVP-FND-5.1, MVP-FND-5.3
   - **Design**: §8 (error model)
   - **Deps**: T-1.01
   - **DoD**: `go test ./internal/errors/...` FAILS (package does not exist yet).
 
-- [ ] **T-1.03** `impl` — **[GREEN]** Create `internal/errors/errors.go`: export the seven sentinels via `errors.New`; thin `Join(errs ...error) error` wrapper over stdlib `errors.Join`.
+- [x] **T-1.03** `impl` — **[GREEN]** Create `internal/errors/errors.go`: export the seven sentinels via `errors.New`; thin `Join(errs ...error) error` wrapper over stdlib `errors.Join`.
   - **Files**: `internal/errors/errors.go`
   - **Reqs**: MVP-FND-5.1, MVP-FND-5.3, MVP-FND-5.4
   - **Design**: §8
@@ -88,14 +88,14 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group B — Version package
 
-- [ ] **T-1.04** `test` — **[RED]** Write `internal/version/version_test.go`: assert `Version`, `Commit`, `Date` fall back to `"dev"`, `"none"`, `"unknown"` when unset; assert `Info()` returns populated struct.
+- [x] **T-1.04** `test` — **[RED]** Write `internal/version/version_test.go`: assert `Version`, `Commit`, `Date` fall back to `"dev"`, `"none"`, `"unknown"` when unset; assert `Info()` returns populated struct.
   - **Files**: `internal/version/version_test.go`
   - **Reqs**: MVP-FND-1.7
   - **Design**: §3 (version package), decision #25
   - **Deps**: T-1.01
   - **DoD**: test file compiles and fails (missing package).
 
-- [ ] **T-1.05** `impl` — **[GREEN]** Create `internal/version/version.go`: package-level `var Version = "dev"`, `Commit = "none"`, `Date = "unknown"`; `type Info struct{Version, Commit, Date string}`; `func Info() Info`.
+- [x] **T-1.05** `impl` — **[GREEN]** Create `internal/version/version.go`: package-level `var Version = "dev"`, `Commit = "none"`, `Date = "unknown"`; `type Info struct{Version, Commit, Date string}`; `func Info() Info`.
   - **Files**: `internal/version/version.go`
   - **Reqs**: MVP-FND-1.7
   - **Design**: §3
@@ -104,14 +104,14 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group C — Retry
 
-- [ ] **T-1.06** `test` — **[RED]** Write `internal/retry/retry_test.go`: table-driven tests for (a) successful fn on first call returns nil, (b) exponential delay growth with `Jitter=0.0` (mock clock or fake time via injectable sleep), (c) context cancellation returns `ctx.Err()`, (d) `MaxAttempts=3` exhaustion returns `ErrMaxAttempts` with last fn error unwrappable, (e) zero `Options` uses defaults.
+- [x] **T-1.06** `test` — **[RED]** Write `internal/retry/retry_test.go`: table-driven tests for (a) successful fn on first call returns nil, (b) exponential delay growth with `Jitter=0.0` (mock clock or fake time via injectable sleep), (c) context cancellation returns `ctx.Err()`, (d) `MaxAttempts=3` exhaustion returns `ErrMaxAttempts` with last fn error unwrappable, (e) zero `Options` uses defaults.
   - **Files**: `internal/retry/retry_test.go`
   - **Reqs**: MVP-FND-6.1–6.5
   - **Design**: §4.2 (retry.Do contract), §20.3
   - **Deps**: T-1.03
   - **DoD**: tests fail (missing package).
 
-- [ ] **T-1.07** `impl` — **[GREEN]** Create `internal/retry/retry.go`: `type Options struct{Initial, Max time.Duration; MaxAttempts int; Jitter float64}`; `func Do(ctx, opts, fn) error` with exponential backoff, ±jitter, `select{timer|ctx.Done}`, `ErrMaxAttempts` sentinel wrapping (re-exported from `internal/errors`).
+- [x] **T-1.07** `impl` — **[GREEN]** Create `internal/retry/retry.go`: `type Options struct{Initial, Max time.Duration; MaxAttempts int; Jitter float64}`; `func Do(ctx, opts, fn) error` with exponential backoff, ±jitter, `select{timer|ctx.Done}`, `ErrMaxAttempts` sentinel wrapping (re-exported from `internal/errors`).
   - **Files**: `internal/retry/retry.go`
   - **Reqs**: MVP-FND-6.1–6.6
   - **Design**: §4.2
@@ -120,14 +120,14 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group D — Logger
 
-- [ ] **T-1.08** `test` — **[RED]** Write `internal/log/log_test.go`: (a) JSON format emits valid JSON per line, (b) text format emits key=value, (c) invalid level string returns error (not panic), (d) invalid format string returns error, (e) race detector: two goroutines log concurrently → no data race (use `-race`), (f) DEBUG messages suppressed at INFO level.
+- [x] **T-1.08** `test` — **[RED]** Write `internal/log/log_test.go`: (a) JSON format emits valid JSON per line, (b) text format emits key=value, (c) invalid level string returns error (not panic), (d) invalid format string returns error, (e) race detector: two goroutines log concurrently → no data race (use `-race`), (f) DEBUG messages suppressed at INFO level.
   - **Files**: `internal/log/log_test.go`
   - **Reqs**: MVP-FND-4.1–4.3, MVP-FND-4.6
   - **Design**: §7
   - **Deps**: T-1.01
   - **DoD**: tests fail (missing package).
 
-- [ ] **T-1.09** `impl` — **[GREEN]** Create `internal/log/log.go`: `type Options struct{Level, Format string; Out io.Writer}`; `func New(opts Options) (*slog.Logger, error)` selecting `NewTextHandler`/`NewJSONHandler`; `AddSource: lvl == slog.LevelDebug`; error on invalid level/format. Create `internal/log/redact.go`: `redactingHandler` wrapping chosen handler; key set derived from `secret:"true"` tags at init via reflection (receives key set as parameter from `internal/config` — no import cycle).
+- [x] **T-1.09** `impl` — **[GREEN]** Create `internal/log/log.go`: `type Options struct{Level, Format string; Out io.Writer}`; `func New(opts Options) (*slog.Logger, error)` selecting `NewTextHandler`/`NewJSONHandler`; `AddSource: lvl == slog.LevelDebug`; error on invalid level/format. Create `internal/log/redact.go`: `redactingHandler` wrapping chosen handler; key set derived from `secret:"true"` tags at init via reflection (receives key set as parameter from `internal/config` — no import cycle).
   - **Files**: `internal/log/log.go`, `internal/log/redact.go`
   - **Reqs**: MVP-FND-4.1–4.3, MVP-FND-4.5, MVP-FND-4.6
   - **Design**: §7
@@ -136,21 +136,21 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group E — Config
 
-- [ ] **T-1.10** `test` — **[RED]** Write `internal/config/config_test.go` and `testdata/`: (a) load `testdata/sample.yaml` → typed `*Config` with expected field values, (b) missing file → error wrapping `ErrConfigMissing`, (c) camelCase key preserved (`logLevel` not `loglevel`), (d) env var `LGB_GATEWAY_LOGLEVEL` overrides YAML value, (e) `Validate()` with valid config returns nil, (f) `Validate()` with two violations returns joined error containing both, `errors.Is(err, ErrConfigInvalid)` true, (g) `jwtSecret` from env overrides empty YAML field, (h) `Redacted()` replaces secret fields with `"[redacted]"`. Create `testdata/sample.yaml` (valid) and `testdata/invalid.yaml` (two violations).
+- [x] **T-1.10** `test` — **[RED]** Write `internal/config/config_test.go` and `testdata/`: (a) load `testdata/sample.yaml` → typed `*Config` with expected field values, (b) missing file → error wrapping `ErrConfigMissing`, (c) camelCase key preserved (`logLevel` not `loglevel`), (d) env var `LGB_GATEWAY_LOGLEVEL` overrides YAML value, (e) `Validate()` with valid config returns nil, (f) `Validate()` with two violations returns joined error containing both, `errors.Is(err, ErrConfigInvalid)` true, (g) `jwtSecret` from env overrides empty YAML field, (h) `Redacted()` replaces secret fields with `"[redacted]"`. Create `testdata/sample.yaml` (valid) and `testdata/invalid.yaml` (two violations).
   - **Files**: `internal/config/config_test.go`, `internal/config/testdata/sample.yaml`, `internal/config/testdata/invalid.yaml`
   - **Reqs**: MVP-FND-2.1–2.6, MVP-FND-3.1, MVP-FND-3.2
   - **Design**: §4.1, §5.1–5.4
   - **Deps**: T-1.03
   - **DoD**: tests fail (missing package).
 
-- [ ] **T-1.11** `impl` — **[GREEN]** Create `internal/config/config.go`: `type Config struct` with all sections and `secret:"true"` tags on `JwtSecret`, `Password`, `PasswordFile`; `(*Config).Redacted() *Config` via reflection; `(*Config).Validate() error` using `errors.Join`. Create `internal/config/loader.go`: `func Load(path string) (*Config, error)` using koanf provider stack (confmap defaults → file+yaml → env `LGB_` prefix → unmarshal to typed struct); package-level doc comment documenting secret convention. Create `internal/config/watcher.go`: `func Watch(ctx, path string, onChange func(*Config)) error` with 200 ms debounce.
+- [x] **T-1.11** `impl` — **[GREEN]** Create `internal/config/config.go`: `type Config struct` with all sections and `secret:"true"` tags on `JwtSecret`, `Password`, `PasswordFile`; `(*Config).Redacted() *Config` via reflection; `(*Config).Validate() error` using `errors.Join`. Create `internal/config/loader.go`: `func Load(path string) (*Config, error)` using koanf provider stack (confmap defaults → file+yaml → env `LGB_` prefix → unmarshal to typed struct); package-level doc comment documenting secret convention. Create `internal/config/watcher.go`: `func Watch(ctx, path string, onChange func(*Config)) error` with 200 ms debounce.
   - **Files**: `internal/config/config.go`, `internal/config/loader.go`, `internal/config/watcher.go`
   - **Reqs**: MVP-FND-2.1–2.6, MVP-FND-3.1, MVP-FND-3.2
   - **Design**: §4.1, §5.1–5.4
   - **Deps**: T-1.10
   - **DoD**: `go test ./internal/config/...` passes.
 
-- [ ] **T-1.12** `test` — **[RED]** Write `internal/config/watcher_test.go` (build-tagged `//go:build integration`): (a) file change triggers `onChange` within 1 s, (b) five writes within 100 ms trigger exactly one callback, (c) context cancel stops watcher and returns `ctx.Err()`.
+- [x] **T-1.12** `test` — **[RED]** Write `internal/config/watcher_test.go` (build-tagged `//go:build integration`): (a) file change triggers `onChange` within 1 s, (b) five writes within 100 ms trigger exactly one callback, (c) context cancel stops watcher and returns `ctx.Err()`.
   - **Files**: `internal/config/watcher_test.go`
   - **Reqs**: MVP-FND-2.5
   - **Design**: §5.2 (hot-reload), §20.2
@@ -159,14 +159,14 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group F — dataDir
 
-- [ ] **T-1.13** `test` — **[RED]** Write `internal/datadir/datadir_test.go`: (a) `DefaultPath()` returns `/var/lib/lgb` on Linux, (b) `Ensure` creates missing dir with `0700` on POSIX, (c) `Ensure` on existing writable dir returns nil, (d) `Ensure` on existing regular file returns `ErrDataDirInvalid`, (e) `Resolve` with cliOverride wins over cfg value, (f) `Resolve` with empty override uses cfg; (g) write probe returns `ErrDataDirPermission` on unwritable dir (integration tag for fs-side-effects). Use `t.TempDir()` for filesystem tests.
+- [x] **T-1.13** `test` — **[RED]** Write `internal/datadir/datadir_test.go`: (a) `DefaultPath()` returns `/var/lib/lgb` on Linux, (b) `Ensure` creates missing dir with `0700` on POSIX, (c) `Ensure` on existing writable dir returns nil, (d) `Ensure` on existing regular file returns `ErrDataDirInvalid`, (e) `Resolve` with cliOverride wins over cfg value, (f) `Resolve` with empty override uses cfg; (g) write probe returns `ErrDataDirPermission` on unwritable dir (integration tag for fs-side-effects). Use `t.TempDir()` for filesystem tests.
   - **Files**: `internal/datadir/datadir_test.go`
   - **Reqs**: MVP-FND-7.1–7.4
   - **Design**: §9.1–9.4, §4.4
   - **Deps**: T-1.11
   - **DoD**: tests fail (missing package).
 
-- [ ] **T-1.14** `impl` — **[GREEN]** Create `internal/datadir/datadir.go`: `Resolve(cfg, cliOverride string) (string, error)`, `Ensure(path string) (string, error)` (expand `~`, `filepath.Abs`, `MkdirAll 0700`, write probe), `DefaultPath()` delegating to build-tag files. Create `internal/datadir/default_unix.go` (`//go:build !darwin && !windows`), `default_darwin.go`, `default_windows.go`.
+- [x] **T-1.14** `impl` — **[GREEN]** Create `internal/datadir/datadir.go`: `Resolve(cfg, cliOverride string) (string, error)`, `Ensure(path string) (string, error)` (expand `~`, `filepath.Abs`, `MkdirAll 0700`, write probe), `DefaultPath()` delegating to build-tag files. Create `internal/datadir/default_unix.go` (`//go:build !darwin && !windows`), `default_darwin.go`, `default_windows.go`.
   - **Files**: `internal/datadir/datadir.go`, `internal/datadir/default_unix.go`, `internal/datadir/default_darwin.go`, `internal/datadir/default_windows.go`
   - **Reqs**: MVP-FND-7.1–7.5
   - **Design**: §9.1–9.4
@@ -175,7 +175,7 @@ Foundation packages with unit tests. No runnable binary yet. All tasks follow RE
 
 ### Group G — testutil scaffold
 
-- [ ] **T-1.15** `impl` — Create `internal/testutil/config.go`: `MinimalConfig(t *testing.T) *config.Config` returning a minimum-valid config using `t.TempDir()` as dataDir. No test needed (it is itself a test helper; verified by use in later slices).
+- [x] **T-1.15** `impl` — Create `internal/testutil/config.go`: `MinimalConfig(t *testing.T) *config.Config` returning a minimum-valid config using `t.TempDir()` as dataDir. No test needed (it is itself a test helper; verified by use in later slices).
   - **Files**: `internal/testutil/config.go`
   - **Reqs**: MVP-FND-2.6 (test ergonomics)
   - **Design**: §3 (testutil package)

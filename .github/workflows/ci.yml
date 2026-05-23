@@ -44,6 +44,47 @@ jobs:
         # -tags no_embed prevents requiring frontend/dist at CI test time.
         # The embed guard will be removed before archive (spec MVP-FND-1.10).
         run: go test -tags no_embed ./... -race -count=1
+      - name: make generate
+        if: steps.gocheck.outputs.has_go == 'true'
+        # Runs protobuf codegen (if .proto files exist) or prints a notice and exits 0.
+        # Requirements: MVP-FND-1.13. Design: §21.
+        run: make generate
+      - name: golangci-lint
+        if: steps.gocheck.outputs.has_go == 'true'
+        # Pinned by tag object SHA — see comment at the top of this file.
+        # golangci/golangci-lint-action@v6.5.2
+        # SHA: 8564da7cb3c6866ed1da648ca8f00a258ef0c802
+        # Requirements: MVP-FND-1.11, MVP-FND-9.9. Design: §14, decision #23.
+        uses: golangci/golangci-lint-action@8564da7cb3c6866ed1da648ca8f00a258ef0c802
+        with:
+          version: v1.63.0
+          args: --config=.golangci.yml
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for frontend
+        id: fecheck
+        # Emit has_frontend=true only when frontend/package.json exists.
+        # Requirements: MVP-FND-1.12, MVP-FND-9.5. Design: §14, decision #24.
+        run: |
+          if [ -f frontend/package.json ]; then
+            echo "has_frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_frontend=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No frontend/package.json — skipping frontend build."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        with:
+          node-version-file: 'frontend/.nvmrc'
+      - name: npm ci && build
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        working-directory: frontend
+        # spec MVP-FND-9.5 mandates `npm ci && npm run build`
+        run: npm ci && npm run build
 
   backend-build:
     name: Backend build (${{ matrix.goos }}/${{ matrix.goarch }})

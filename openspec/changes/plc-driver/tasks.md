@@ -143,14 +143,14 @@ New `internal/plc` package: Driver interface, gologix adapter, error translation
 
 ### Group A — Manager unit tests
 
-- [ ] **T-3.01** `test` — **[RED]** Create `internal/plc/manager_test.go` (package `plc_test`): use `mockDriver` from driver_test.go (move to `testhelpers_test.go` if needed for sharing); write: (a) `NewManager` with one-PLC config creates one driver; (b) `Manager.Start(ctx)` calls `Connect` on all drivers; (c) `Manager.Stop()` calls `Disconnect` on all drivers and blocks until goroutines exit; (d) `Manager.Stop()` after context cancel does not deadlock (2 s deadline via `t.Deadline()`); (e) `Manager.Driver(name)` returns correct driver or (nil, false); (f) `go test -race` passes (concurrent Start + Stop).
+- [x] **T-3.01** `test` — **[RED]** Create `internal/plc/manager_test.go` (package `plc_test`): use `mockDriver` from driver_test.go (move to `testhelpers_test.go` if needed for sharing); write: (a) `NewManager` with one-PLC config creates one driver; (b) `Manager.Start(ctx)` calls `Connect` on all drivers; (c) `Manager.Stop()` calls `Disconnect` on all drivers and blocks until goroutines exit; (d) `Manager.Stop()` after context cancel does not deadlock (2 s deadline via `t.Deadline()`); (e) `Manager.Driver(name)` returns correct driver or (nil, false); (f) `go test -race` passes (concurrent Start + Stop).
   - **Files**: `internal/plc/manager_test.go`
   - **Reqs**: PLC-DRV-2.1, PLC-DRV-2.3
   - **Design**: §4 (Manager API), §6.3 (hot-reload seq)
   - **Deps**: T-2.06
   - **DoD**: `go test ./internal/plc/...` FAILS (Manager type does not exist).
 
-- [ ] **T-3.02** `impl` — **[GREEN]** Create `internal/plc/manager.go`: `Manager` struct with `drivers map[string]Driver`, `cancels map[string]context.CancelFunc`, `wg sync.WaitGroup`, `mu sync.Mutex`, `log *slog.Logger`. Implement `NewManager(cfg *config.Config, log *slog.Logger) *Manager`; `Start(ctx)` — for each PLC creates driver via `NewDriver`, stores it, starts goroutine calling `driver.Connect(ctx)` via `retry.Do` then enters scan loop at `ScanRate` using `time.NewTicker`; `Stop()` — cancels all per-PLC contexts, waits on WaitGroup; `Driver(name)` lookup; `Reload(cfg)` — drain removed/changed PLCs (Close + cancel + WaitGroup wait), add new PLCs (Start). Scan loop: on ReadTag error log WARN and attempt reconnect via Connect with retry; exit on ctx cancel.
+- [x] **T-3.02** `impl` — **[GREEN]** Create `internal/plc/manager.go`: `Manager` struct with `drivers map[string]Driver`, `cancels map[string]context.CancelFunc`, `wg sync.WaitGroup`, `mu sync.Mutex`, `log *slog.Logger`. Implement `NewManager(cfg *config.Config, log *slog.Logger) *Manager`; `Start(ctx)` — for each PLC creates driver via `NewDriver`, stores it, starts goroutine calling `driver.Connect(ctx)` via `retry.Do` then enters scan loop at `ScanRate` using `time.NewTicker`; `Stop()` — cancels all per-PLC contexts, waits on WaitGroup; `Driver(name)` lookup; `Reload(cfg)` — drain removed/changed PLCs (Close + cancel + WaitGroup wait), add new PLCs (Start). Scan loop: on ReadTag error log WARN and attempt reconnect via Connect with retry; exit on ctx cancel.
   - **Files**: `internal/plc/manager.go`
   - **Reqs**: PLC-DRV-2.1, PLC-DRV-2.2, PLC-DRV-2.3
   - **Design**: §4, §6.3, §6.4
@@ -159,14 +159,14 @@ New `internal/plc` package: Driver interface, gologix adapter, error translation
 
 ### Group B — Integration tests with plcsim
 
-- [ ] **T-3.03** `test` — **[RED/integration]** Create `internal/plc/gologix_integration_test.go` (`//go:build integration`; prefix `TestIntegration_`): (a) `TestIntegration_ReadTagScalar` — `StartPLCSim(t)`, Connect, `ReadTag("SimBool", &b)` → `b == true`; `ReadTag("SimInt", &i)` → `i == int16(42)`; `ReadTag("SimFloat", &f)` → `f == float32(3.14)`; (b) `TestIntegration_WriteTag` — WriteTag("SimFloat", float32(9.9)), ReadTag → float32(9.9); (c) `TestIntegration_ReadMulti` — read SimBool+SimInt+SimFloat in one call → all correct; (d) `TestIntegration_ConnectRetry` — stop plcsim mid-connect, verify retry occurs; (e) `TestIntegration_ConcurrentReads` — 10 goroutines ReadTag concurrently, `go test -race` no data race.
+- [x] **T-3.03** `test` — **[RED/integration]** Create `internal/plc/gologix_integration_test.go` (`//go:build integration`; prefix `TestIntegration_`): (a) `TestIntegration_ReadTagScalar` — `StartPLCSim(t)`, Connect, `ReadTag("SimBool", &b)` → `b == true`; `ReadTag("SimInt", &i)` → `i == int16(42)`; `ReadTag("SimFloat", &f)` → `f == float32(3.14)`; (b) `TestIntegration_WriteTag` — WriteTag("SimFloat", float32(9.9)), ReadTag → float32(9.9); (c) `TestIntegration_ReadMulti` — read SimBool+SimInt+SimFloat in one call → all correct; (d) `TestIntegration_ConnectRetry` — stop plcsim mid-connect, verify retry occurs; (e) `TestIntegration_ConcurrentReads` — 10 goroutines ReadTag concurrently, `go test -race` no data race.
   - **Files**: `internal/plc/gologix_integration_test.go`
   - **Reqs**: PLC-DRV-2.5
   - **Design**: §11 (testing strategy, integration layer)
   - **Deps**: T-3.02
   - **DoD**: `go test -tags=integration -race ./internal/plc/...` passes.
 
-- [ ] **T-3.04** `test` — **[RED/integration]** Create `internal/plc/manager_integration_test.go` (`//go:build integration`): (a) `TestIntegration_ManagerStartStop` — `StartPLCSim(t)`, `NewManager`, `Start`, wait 500 ms, `Stop` returns within 2 s, no goroutine leak; (b) `TestIntegration_ManagerReload` — start with PLC A, Reload with PLC A address changed, old driver disconnected, new driver connects; (c) `TestIntegration_ManagerPLCRemoval` — start with PLCs A+B, Reload removing B, only A goroutine continues; (d) all run with `-race`.
+- [x] **T-3.04** `test` — **[RED/integration]** Create `internal/plc/manager_integration_test.go` (`//go:build integration`): (a) `TestIntegration_ManagerStartStop` — `StartPLCSim(t)`, `NewManager`, `Start`, wait 500 ms, `Stop` returns within 2 s, no goroutine leak; (b) `TestIntegration_ManagerReload` — start with PLC A, Reload with PLC A address changed, old driver disconnected, new driver connects; (c) `TestIntegration_ManagerPLCRemoval` — start with PLCs A+B, Reload removing B, only A goroutine continues; (d) all run with `-race`.
   - **Files**: `internal/plc/manager_integration_test.go`
   - **Reqs**: PLC-DRV-2.1, PLC-DRV-2.2, PLC-DRV-2.3
   - **Design**: §6.3 (hot-reload seq)

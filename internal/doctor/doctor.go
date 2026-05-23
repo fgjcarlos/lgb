@@ -139,7 +139,8 @@ func ExitCodeFromResults(results []Result) int {
 	return 0
 }
 
-// Default returns a *Registry pre-populated with the 5 Phase-0 checks.
+// Default returns a *Registry pre-populated with the 5 Phase-0 checks plus
+// one plcReachableCheck per configured PLC (PLC-DOC-1.5).
 // cfg is used to resolve the server.httpAddr and gateway.dataDir.
 func Default(cfg *config.Config) *Registry {
 	r := &Registry{}
@@ -148,5 +149,12 @@ func Default(cfg *config.Config) *Registry {
 	r.Register(&goRuntimeCheck{})
 	r.Register(&portCheck{cfg: cfg})
 	r.Register(&configLoadedCheck{})
+
+	// Register one TCP-reachability probe per configured PLC.
+	// If no PLCs are configured the count stays at 5 (PLC-DOC-1.5).
+	for _, plc := range cfg.PLCs {
+		r.Register(&plcReachableCheck{plc: plc})
+	}
+
 	return r
 }

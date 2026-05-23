@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fgjcarlos/lgb/internal/config"
+	"github.com/fgjcarlos/lgb/internal/server"
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
 
@@ -114,5 +116,82 @@ func TestServerCmd_DataDirBootstrapped(t *testing.T) {
 
 	if !bootstrapCalled {
 		t.Error("expected datadir.Ensure to be called during server startup")
+	}
+}
+
+// mockServerPLCManager is a minimal PLCManager implementation used in cmd tests.
+type mockServerPLCManager struct {
+	startCalled bool
+}
+
+func (m *mockServerPLCManager) Start(ctx context.Context) error {
+	m.startCalled = true
+	return nil
+}
+
+func (m *mockServerPLCManager) Stop() error { return nil }
+
+// TestServerCmd_WithPLCs_CreatesPLCManager verifies that runServerTo creates a
+// PLCManager when PLCs are configured and passes it to server.New. (PLC-DRV-2.1)
+func TestServerCmd_WithPLCs_CreatesPLCManager(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.PLCs = []config.PLC{
+		{Name: "plc-a", Address: "127.0.0.1:44818", SocketTimeout: "1s"},
+	}
+
+	mgr := &mockServerPLCManager{}
+	var factoryCalled bool
+
+	d := &Deps{
+		Config: cfg,
+		PLCManagerFactory: func(c *config.Config) server.PLCManager {
+			factoryCalled = true
+			return mgr
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	cancel()
+	<-errCh
+
+	if !factoryCalled {
+		t.Error("expected PLCManagerFactory to be called when PLCs are configured")
+	}
+}
+
+// TestServerCmd_NoPLCs_NilManager verifies that runServerTo passes nil for the
+// PLCManager when no PLCs are configured (backward-compatible path). (PLC-DRV-2.1)
+func TestServerCmd_NoPLCs_NilManager(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.PLCs = nil // no PLCs
+
+	var factoryCalled bool
+	d := &Deps{
+		Config: cfg,
+		PLCManagerFactory: func(c *config.Config) server.PLCManager {
+			factoryCalled = true
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	cancel()
+	<-errCh
+
+	// Factory must NOT be called when there are no PLCs.
+	if factoryCalled {
+		t.Error("expected PLCManagerFactory NOT to be called when no PLCs are configured")
 	}
 }

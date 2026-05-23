@@ -23,34 +23,40 @@ import (
 )
 
 // PLCManager is the interface that the PLC manager must satisfy for server
-// lifecycle integration. Using a local interface (rather than *plc.Manager
-// directly) keeps the server package free of the plc package import and makes
-// it trivially testable with a mock. (design §10)
+// lifecycle integration. (design §10)
 type PLCManager interface {
+	Start(ctx context.Context) error
+	Stop() error
+}
+
+// SparkplugNode is the interface the Sparkplug edge node must satisfy
+// for server lifecycle integration. Same pattern as PLCManager. (design §9)
+type SparkplugNode interface {
 	Start(ctx context.Context) error
 	Stop() error
 }
 
 // Server is the LGB HTTP server stub.
 type Server struct {
-	cfg    *config.Config
-	log    *slog.Logger
-	checks []doctor.Check
-	plcMgr PLCManager // nil when no PLCs are configured
+	cfg      *config.Config
+	log      *slog.Logger
+	checks   []doctor.Check
+	plcMgr   PLCManager    // nil when no PLCs are configured
+	spNode   SparkplugNode // nil when MQTT/Sparkplug is not configured
 
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
 }
 
-// New creates a new Server from the given config, logger, optional checks, and
-// optional PLCManager. plcMgr may be nil when no PLCs are configured; Run
-// handles the nil case without panicking. (design §10)
-func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager) *Server {
+// New creates a new Server. plcMgr and spNode may be nil; Run handles
+// the nil cases without panicking. (design §9, §10)
+func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager, spNode SparkplugNode) *Server {
 	return &Server{
 		cfg:    cfg,
 		log:    log,
 		checks: checks,
 		plcMgr: plcMgr,
+		spNode: spNode,
 	}
 }
 
@@ -115,9 +121,14 @@ func (s *Server) Run(ctx context.Context) error {
 
 	srv := &http.Server{Handler: mux}
 
-	// Start the PLC manager (if configured) before serving HTTP.
-	// Failure to start the manager is non-fatal per design §10 — the gateway
-	// continues serving HTTP so health probes remain responsive.
+	// Start Sparkplug node FIRST (connects MQTT, registers Will). (design §9)
+	if s.spNode != nil {
+		if err := s.spNode.Start(ctx); err != nil {
+			s.log.Warn("sparkplug node: Start returned error", slog.String("error", err.Error()))
+		}
+	}
+
+	// Start PLC manager SECOND (scan loop emits TagUpdates to Sparkplug). (design §10)
 	if s.plcMgr != nil {
 		if err := s.plcMgr.Start(ctx); err != nil {
 			s.log.Warn("plc manager: Start returned error", slog.String("error", err.Error()))
@@ -143,11 +154,17 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.log.Info("shutdown initiated")
 
-	// Stop the PLC manager before shutting down HTTP so in-flight tag
-	// operations complete before the process exits. (design §10)
+	// Stop PLC manager FIRST (stops tag reads). (design §9)
 	if s.plcMgr != nil {
 		if err := s.plcMgr.Stop(); err != nil {
 			s.log.Warn("plc manager: Stop returned error", slog.String("error", err.Error()))
+		}
+	}
+
+	// Stop Sparkplug node SECOND (publishes DDEATH, disconnects MQTT). (design §9)
+	if s.spNode != nil {
+		if err := s.spNode.Stop(); err != nil {
+			s.log.Warn("sparkplug node: Stop returned error", slog.String("error", err.Error()))
 		}
 	}
 

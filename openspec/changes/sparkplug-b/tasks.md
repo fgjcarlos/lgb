@@ -91,14 +91,14 @@ New `internal/sparkplug/` package: SeqTracker, StateMachine, metric encoder, pay
 
 ### Group A — Package skeleton + SeqTracker
 
-- [ ] **T-2.01** `test` — **[RED]** Create `internal/sparkplug/seq_test.go` (package `sparkplug_test`): (a) fresh tracker `Next()` returns 0 then 1; (b) at 255 → `Next()` returns 255, next call returns 0; (c) `Reset()` at 42 → next `Next()` returns 0; (d) 50 goroutines each call `Next()` concurrently → `go test -race` no data race.
+- [x] **T-2.01** `test` — **[RED]** Create `internal/sparkplug/seq_test.go` (package `sparkplug_test`): (a) fresh tracker `Next()` returns 0 then 1; (b) at 255 → `Next()` returns 255, next call returns 0; (c) `Reset()` at 42 → next `Next()` returns 0; (d) 50 goroutines each call `Next()` concurrently → `go test -race` no data race.
   - **Files**: `internal/sparkplug/seq_test.go`
   - **Reqs**: SPK-1.2
   - **Design**: §2, §5 decision #7
   - **Deps**: T-1.01
   - **DoD**: `go test ./internal/sparkplug/...` FAILS (package absent).
 
-- [ ] **T-2.02** `impl` — **[GREEN]** Create `internal/sparkplug/doc.go` (package doc). Create `internal/sparkplug/seq.go`: `SeqTracker` with `atomic.Uint64`; `Next() uint64` returns `counter.Add(1) - 1 mod 256` pattern; `Reset()` stores 0; re-export `ErrSparkplugEncode` from `internal/errors`.
+- [x] **T-2.02** `impl` — **[GREEN]** Create `internal/sparkplug/doc.go` (package doc). Create `internal/sparkplug/seq.go`: `SeqTracker` with `atomic.Uint64`; `Next() uint64` returns `counter.Add(1) - 1 mod 256` pattern; `Reset()` stores 0; re-export `ErrSparkplugEncode` from `internal/errors`.
   - **Files**: `internal/sparkplug/doc.go`, `internal/sparkplug/seq.go`
   - **Reqs**: SPK-1.2, SPK-ERR-4.1
   - **Design**: §2, §5 decision #7
@@ -107,14 +107,14 @@ New `internal/sparkplug/` package: SeqTracker, StateMachine, metric encoder, pay
 
 ### Group B — StateMachine
 
-- [ ] **T-2.03** `test` — **[RED]** Create `internal/sparkplug/state_test.go`: (a) OFFLINE → ConnectAttempt → CONNECTING → ConnectSuccess → ONLINE; (b) CONNECTING → ConnectFail → OFFLINE; (c) OFFLINE → ConnectSuccess (invalid) → remains OFFLINE; (d) ONLINE → Disconnect → OFFLINE; (e) concurrent reads of `State()` under `go test -race`.
+- [x] **T-2.03** `test` — **[RED]** Create `internal/sparkplug/state_test.go`: (a) OFFLINE → ConnectAttempt → CONNECTING → ConnectSuccess → ONLINE; (b) CONNECTING → ConnectFail → OFFLINE; (c) OFFLINE → ConnectSuccess (invalid) → remains OFFLINE; (d) ONLINE → Disconnect → OFFLINE; (e) concurrent reads of `State()` under `go test -race`.
   - **Files**: `internal/sparkplug/state_test.go`
   - **Reqs**: SPK-1.3
   - **Design**: §2
   - **Deps**: T-2.02
   - **DoD**: `go test ./internal/sparkplug/...` FAILS (StateMachine absent).
 
-- [ ] **T-2.04** `impl` — **[GREEN]** Create `internal/sparkplug/state.go`: `State` enum (`Offline/Connecting/Online`) backed by `atomic.Int32`; `StateMachine` with `Transition(event)` applying valid transition table (no-op on invalid); `State() State` lock-free read.
+- [x] **T-2.04** `impl` — **[GREEN]** Create `internal/sparkplug/state.go`: `State` enum (`Offline/Connecting/Online`) backed by `atomic.Int32`; `StateMachine` with `Transition(event)` applying valid transition table (no-op on invalid); `State() State` lock-free read.
   - **Files**: `internal/sparkplug/state.go`
   - **Reqs**: SPK-1.3, SPK-1.9
   - **Design**: §2
@@ -123,14 +123,14 @@ New `internal/sparkplug/` package: SeqTracker, StateMachine, metric encoder, pay
 
 ### Group C — Metric encoder
 
-- [ ] **T-2.05** `test` — **[RED]** Create `internal/sparkplug/metric_test.go`: table-driven for all 12 Phase 1 Go → Sparkplug type mappings (bool→Boolean, int8→Int8, …, string→String); `[]byte` value → error wrapping `ErrSparkplugEncode`; encoded metric round-trips through protobuf marshal/unmarshal with correct DataType.
+- [x] **T-2.05** `test` — **[RED]** Create `internal/sparkplug/metric_test.go`: table-driven for all 12 Phase 1 Go → Sparkplug type mappings (bool→Boolean, int8→Int8, …, string→String); `[]byte` value → error wrapping `ErrSparkplugEncode`; encoded metric round-trips through protobuf marshal/unmarshal with correct DataType.
   - **Files**: `internal/sparkplug/metric_test.go`
   - **Reqs**: SPK-1.8, SPK-ERR-4.1
   - **Design**: §2
   - **Deps**: T-2.04
   - **DoD**: `go test ./internal/sparkplug/...` FAILS (metric.go absent).
 
-- [ ] **T-2.06** `impl` — **[GREEN]** Create `internal/sparkplug/metric.go`: `EncodeMetric(name string, value any, ts time.Time) (*pb.Payload_Metric, error)` type-switching on 12 Phase 1 types; sets DataType, value oneof, Name, Timestamp; returns `ErrSparkplugEncode` for unsupported types.
+- [x] **T-2.06** `impl` — **[GREEN]** Create `internal/sparkplug/metric.go`: `EncodeMetric(name string, value any, ts time.Time) (*pb.Payload_Metric, error)` type-switching on 12 Phase 1 types; sets DataType, value oneof, Name, Timestamp; returns `ErrSparkplugEncode` for unsupported types.
   - **Files**: `internal/sparkplug/metric.go`
   - **Reqs**: SPK-1.8
   - **Design**: §2
@@ -139,14 +139,14 @@ New `internal/sparkplug/` package: SeqTracker, StateMachine, metric encoder, pay
 
 ### Group D — Payload builders
 
-- [ ] **T-2.07** `test` — **[RED]** Create `internal/sparkplug/payload_test.go`: (a) `BuildNBIRTH` with non-zero seq tracker → returned payload `seq==0`, tracker reset+advanced; round-trip through protobuf; (b) `BuildNDEATH(bdSeq=3)` → exactly one metric named `bdSeq` with value 3; (c) `BuildDBIRTH(plcName, tagValues, seq)` with 3 tags → 3 metrics; (d) `BuildDDATA([update])` → correct metric name, datatype, value, timestamp; (e) `BuildDDEATH` → empty metrics list with seq set.
+- [x] **T-2.07** `test` — **[RED]** Create `internal/sparkplug/payload_test.go`: (a) `BuildNBIRTH` with non-zero seq tracker → returned payload `seq==0`, tracker reset+advanced; round-trip through protobuf; (b) `BuildNDEATH(bdSeq=3)` → exactly one metric named `bdSeq` with value 3; (c) `BuildDBIRTH(plcName, tagValues, seq)` with 3 tags → 3 metrics; (d) `BuildDDATA([update])` → correct metric name, datatype, value, timestamp; (e) `BuildDDEATH` → empty metrics list with seq set.
   - **Files**: `internal/sparkplug/payload_test.go`
   - **Reqs**: SPK-1.4–1.7
   - **Design**: §2
   - **Deps**: T-2.06
   - **DoD**: `go test ./internal/sparkplug/...` FAILS (payload.go absent).
 
-- [ ] **T-2.08** `impl` — **[GREEN]** Create `internal/sparkplug/payload.go`: `BuildNBIRTH(seq *SeqTracker, devices []DeviceConfig) ([]byte, error)` — calls `seq.Reset()` then `seq.Next()`, sets seq=0, encodes all tag metrics, marshals to proto bytes; `BuildNDEATH(bdSeq uint64) ([]byte, error)`; `BuildDBIRTH(deviceID string, tagValues map[string]any, seq uint64) ([]byte, error)`; `BuildDDATA(updates []TagUpdate, seq uint64) ([]byte, error)`; `BuildDDEATH(deviceID string, seq uint64) ([]byte, error)`. All call `proto.Marshal`.
+- [x] **T-2.08** `impl` — **[GREEN]** Create `internal/sparkplug/payload.go`: `BuildNBIRTH(seq *SeqTracker, devices []DeviceConfig) ([]byte, error)` — calls `seq.Reset()` then `seq.Next()`, sets seq=0, encodes all tag metrics, marshals to proto bytes; `BuildNDEATH(bdSeq uint64) ([]byte, error)`; `BuildDBIRTH(deviceID string, tagValues map[string]any, seq uint64) ([]byte, error)`; `BuildDDATA(updates []TagUpdate, seq uint64) ([]byte, error)`; `BuildDDEATH(deviceID string, seq uint64) ([]byte, error)`. All call `proto.Marshal`.
   - **Files**: `internal/sparkplug/payload.go`
   - **Reqs**: SPK-1.4–1.7
   - **Design**: §2, §6.1

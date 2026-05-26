@@ -6,6 +6,7 @@
 package cmd
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
@@ -13,7 +14,9 @@ import (
 
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/doctor"
+	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/log"
+	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/server"
 )
 
@@ -44,11 +47,15 @@ type Deps struct {
 
 	// PLCManagerFactory creates a PLCManager from config. When nil, the
 	// production plc.NewManager is used (when PLCs are configured).
-	PLCManagerFactory func(cfg *config.Config) server.PLCManager
+	PLCManagerFactory func(cfg *config.Config, tagCb plc.TagCallback) server.PLCManager
 
 	// SparkplugNodeFactory creates a SparkplugNode from config. When nil, the
 	// production sparkplug.NewEdgeNode is used (when GroupID is configured).
 	SparkplugNodeFactory func(cfg *config.Config) server.SparkplugNode
+
+	// HistorianStoreFactory creates a historian Store. When nil, the
+	// production historian.Open is used (when retentionDays > 0).
+	HistorianStoreFactory func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error)
 
 	// serverRef is set by runServerTo so test helpers can retrieve the *server.Server.
 	// Unexported — test access is via getServerForTest().

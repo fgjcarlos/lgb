@@ -36,27 +36,36 @@ type SparkplugNode interface {
 	Stop() error
 }
 
+// HistorianWriter is the interface the historian async writer must satisfy
+// for server lifecycle integration.
+type HistorianWriter interface {
+	Start(ctx context.Context)
+	Stop(ctx context.Context) error
+}
+
 // Server is the LGB HTTP server stub.
 type Server struct {
 	cfg      *config.Config
 	log      *slog.Logger
 	checks   []doctor.Check
-	plcMgr   PLCManager    // nil when no PLCs are configured
-	spNode   SparkplugNode // nil when MQTT/Sparkplug is not configured
+	plcMgr   PLCManager       // nil when no PLCs are configured
+	spNode   SparkplugNode    // nil when MQTT/Sparkplug is not configured
+	histW    HistorianWriter  // nil when historian is not configured
 
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
 }
 
-// New creates a new Server. plcMgr and spNode may be nil; Run handles
-// the nil cases without panicking. (design §9, §10)
-func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager, spNode SparkplugNode) *Server {
+// New creates a new Server. plcMgr, spNode, and histW may be nil; Run handles
+// the nil cases without panicking.
+func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager, spNode SparkplugNode, histW HistorianWriter) *Server {
 	return &Server{
 		cfg:    cfg,
 		log:    log,
 		checks: checks,
 		plcMgr: plcMgr,
 		spNode: spNode,
+		histW:  histW,
 	}
 }
 
@@ -128,7 +137,12 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	// Start PLC manager SECOND (scan loop emits TagUpdates to Sparkplug). (design §10)
+	// Start historian writer SECOND (must be ready before PLC scans produce data).
+	if s.histW != nil {
+		s.histW.Start(ctx)
+	}
+
+	// Start PLC manager THIRD (scan loop emits TagUpdates to Sparkplug + Historian).
 	if s.plcMgr != nil {
 		if err := s.plcMgr.Start(ctx); err != nil {
 			s.log.Warn("plc manager: Start returned error", slog.String("error", err.Error()))
@@ -154,14 +168,21 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.log.Info("shutdown initiated")
 
-	// Stop PLC manager FIRST (stops tag reads). (design §9)
+	// Stop PLC manager FIRST (stops tag reads).
 	if s.plcMgr != nil {
 		if err := s.plcMgr.Stop(); err != nil {
 			s.log.Warn("plc manager: Stop returned error", slog.String("error", err.Error()))
 		}
 	}
 
-	// Stop Sparkplug node SECOND (publishes DDEATH, disconnects MQTT). (design §9)
+	// Stop historian writer SECOND (flushes pending samples).
+	if s.histW != nil {
+		if err := s.histW.Stop(ctx); err != nil {
+			s.log.Warn("historian writer: Stop returned error", slog.String("error", err.Error()))
+		}
+	}
+
+	// Stop Sparkplug node THIRD (publishes DDEATH, disconnects MQTT).
 	if s.spNode != nil {
 		if err := s.spNode.Stop(); err != nil {
 			s.log.Warn("sparkplug node: Stop returned error", slog.String("error", err.Error()))

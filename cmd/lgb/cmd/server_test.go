@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/fgjcarlos/lgb/internal/config"
+	"github.com/fgjcarlos/lgb/internal/historian"
+	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/server"
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
@@ -53,10 +55,8 @@ func TestServerCmd_JwtFromEnv(t *testing.T) {
 	t.Setenv(fixtureJwtEnvKey, fixtureJwtValue) // GitGuardian-safe: const indirection
 
 	cfg := testutil.MinimalConfig(t)
-	// JwtSecret comes from env — config has it empty, loader will overlay it.
-	// But since we're injecting cfg directly here (not going through Load),
-	// we set it directly to simulate the env overlay having run.
 	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -90,6 +90,7 @@ func TestServerCmd_JwtFromEnv(t *testing.T) {
 func TestServerCmd_DataDirBootstrapped(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
 
 	var bootstrapCalled bool
 	d := &Deps{
@@ -136,6 +137,7 @@ func (m *mockServerPLCManager) Stop() error { return nil }
 func TestServerCmd_WithPLCs_CreatesPLCManager(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
 	cfg.PLCs = []config.PLC{
 		{Name: "plc-a", Address: "127.0.0.1:44818", SocketTimeout: "1s"},
 	}
@@ -145,7 +147,7 @@ func TestServerCmd_WithPLCs_CreatesPLCManager(t *testing.T) {
 
 	d := &Deps{
 		Config: cfg,
-		PLCManagerFactory: func(c *config.Config) server.PLCManager {
+		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
 			factoryCalled = true
 			return mgr
 		},
@@ -170,12 +172,13 @@ func TestServerCmd_WithPLCs_CreatesPLCManager(t *testing.T) {
 func TestServerCmd_NoPLCs_NilManager(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
 	cfg.PLCs = nil // no PLCs
 
 	var factoryCalled bool
 	d := &Deps{
 		Config: cfg,
-		PLCManagerFactory: func(c *config.Config) server.PLCManager {
+		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
 			factoryCalled = true
 			return nil
 		},
@@ -211,6 +214,7 @@ func (m *mockCmdSparkplugNode) Stop() error { return nil }
 func TestServerCmd_WithGroupID_CreatesSparkplugNode(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
 	cfg.MQTT.BrokerURL = "tcp://localhost:1883"
 	cfg.MQTT.GroupID = "plant-a"
 	cfg.MQTT.EdgeNodeID = "lgb-1"
@@ -240,9 +244,78 @@ func TestServerCmd_WithGroupID_CreatesSparkplugNode(t *testing.T) {
 	}
 }
 
+func TestServerCmd_WithHistorian_CreatesStoreAndWriter(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 30
+	cfg.MQTT.GroupID = ""
+	cfg.MQTT.BrokerURL = ""
+
+	var storeOpened bool
+	d := &Deps{
+		Config: cfg,
+		HistorianStoreFactory: func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error) {
+			storeOpened = true
+			if opts.RetentionDays != 30 {
+				t.Errorf("expected RetentionDays=30, got %d", opts.RetentionDays)
+			}
+			return historian.Open(ctx, ":memory:", opts)
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	srv := d.getServerForTest()
+	if srv != nil {
+		_ = srv.Addr()
+	}
+
+	cancel()
+	<-errCh
+
+	if !storeOpened {
+		t.Error("expected HistorianStoreFactory to be called when retentionDays > 0")
+	}
+}
+
+func TestServerCmd_NoHistorian_WhenRetentionZero(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
+	cfg.MQTT.GroupID = ""
+	cfg.MQTT.BrokerURL = ""
+
+	var storeOpened bool
+	d := &Deps{
+		Config: cfg,
+		HistorianStoreFactory: func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error) {
+			storeOpened = true
+			return historian.Open(ctx, ":memory:", opts)
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	cancel()
+	<-errCh
+
+	if storeOpened {
+		t.Error("expected HistorianStoreFactory NOT to be called when retentionDays is 0")
+	}
+}
+
 func TestServerCmd_NoGroupID_NilSparkplugNode(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
 	cfg.MQTT.GroupID = ""
 	cfg.MQTT.BrokerURL = ""
 

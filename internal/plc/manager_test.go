@@ -40,10 +40,18 @@ func (m *trackingMockDriver) Close() error {
 	return nil
 }
 
-func (m *trackingMockDriver) ReadTag(_ string, _ any) error           { return nil }
-func (m *trackingMockDriver) WriteTag(_ string, _ any) error          { return nil }
-func (m *trackingMockDriver) ReadMulti(_ []string, _ []any) error     { return nil }
-func (m *trackingMockDriver) Connected() bool                         { return true }
+func (m *trackingMockDriver) ReadTag(_ string, dest any) error {
+	switch p := dest.(type) {
+	case *float32:
+		*p = 21.5
+	case *int32:
+		*p = 7
+	}
+	return nil
+}
+func (m *trackingMockDriver) WriteTag(_ string, _ any) error      { return nil }
+func (m *trackingMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
+func (m *trackingMockDriver) Connected() bool                     { return true }
 
 // Compile-time assertion: *trackingMockDriver must satisfy Driver.
 var _ plc.Driver = (*trackingMockDriver)(nil)
@@ -61,6 +69,10 @@ func managerOnePLCConfig(name string) *config.Config {
 				SocketTimeout: "1s",
 				ScanRate:      "500ms",
 				KeepAlive:     true,
+				Tags: []config.TagDef{
+					{Name: "Temp", Type: "Float"},
+					{Name: "Count", Type: "Int32"},
+				},
 			},
 		},
 	}
@@ -76,6 +88,9 @@ func managerMultiPLCConfig() *config.Config {
 				Slot:          0,
 				SocketTimeout: "1s",
 				ScanRate:      "500ms",
+				Tags: []config.TagDef{
+					{Name: "Temp", Type: "Float"},
+				},
 			},
 			{
 				Name:          "plc-b",
@@ -83,6 +98,9 @@ func managerMultiPLCConfig() *config.Config {
 				Slot:          1,
 				SocketTimeout: "1s",
 				ScanRate:      "500ms",
+				Tags: []config.TagDef{
+					{Name: "Count", Type: "Int32"},
+				},
 			},
 		},
 	}
@@ -363,8 +381,8 @@ func (m *tagReadMockDriver) ReadTag(tag string, dest any) error {
 	return nil
 }
 
-func (m *tagReadMockDriver) WriteTag(_ string, _ any) error       { return nil }
-func (m *tagReadMockDriver) ReadMulti(_ []string, _ []any) error   { return nil }
+func (m *tagReadMockDriver) WriteTag(_ string, _ any) error      { return nil }
+func (m *tagReadMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
 func (m *tagReadMockDriver) Connected() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -515,10 +533,85 @@ func TestManager_TagCallback_SkipsFailedReads(t *testing.T) {
 	hasTag1 := false
 	hasTag3 := false
 	for _, u := range updates {
-		if u.Tag == "Tag1" { hasTag1 = true }
-		if u.Tag == "Tag3" { hasTag3 = true }
+		if u.Tag == "Tag1" {
+			hasTag1 = true
+		}
+		if u.Tag == "Tag3" {
+			hasTag3 = true
+		}
 	}
 	if !hasTag1 || !hasTag3 {
 		t.Errorf("expected callbacks for Tag1 and Tag3; got Tag1=%v Tag3=%v", hasTag1, hasTag3)
+	}
+}
+
+func TestManager_CurrentTagStoresLatestScanValue(t *testing.T) {
+	t.Parallel()
+
+	cfg := managerOnePLCConfig("plc-a")
+	cfg.PLCs[0].ScanRate = "10ms"
+	mgr := plc.NewManager(cfg, nil, func(c config.PLC) plc.Driver { return &trackingMockDriver{} }, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start() returned error: %v", err)
+	}
+	defer func() {
+		if err := mgr.Stop(); err != nil {
+			t.Errorf("Stop() returned error: %v", err)
+		}
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		value, ok := mgr.CurrentTag("plc-a", "Temp")
+		if ok && value.Value == float32(21.5) && value.Quality == "good" {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("CurrentTag never observed Temp=21.5; last=%#v ok=%v", value, ok)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+func TestManager_CurrentSnapshotReturnsDefensiveCopy(t *testing.T) {
+	t.Parallel()
+
+	cfg := managerOnePLCConfig("plc-a")
+	cfg.PLCs[0].ScanRate = "10ms"
+	mgr := plc.NewManager(cfg, nil, func(c config.PLC) plc.Driver { return &trackingMockDriver{} }, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start() returned error: %v", err)
+	}
+	defer func() {
+		if err := mgr.Stop(); err != nil {
+			t.Errorf("Stop() returned error: %v", err)
+		}
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		snapshot := mgr.CurrentSnapshot()
+		if len(snapshot["plc-a"]) > 0 {
+			snapshot["plc-a"]["Temp"] = plc.TagValue{Value: float32(99), Quality: "bad"}
+			value, ok := mgr.CurrentTag("plc-a", "Temp")
+			if !ok || value.Value != float32(21.5) {
+				t.Fatalf("mutating snapshot changed store: value=%#v ok=%v", value, ok)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("CurrentSnapshot never populated")
+		default:
+			time.Sleep(time.Millisecond)
+		}
 	}
 }

@@ -18,6 +18,13 @@ type TagUpdate struct {
 	Timestamp time.Time
 }
 
+// TagValue is the in-memory current value for one PLC tag.
+type TagValue struct {
+	Value     any
+	Timestamp time.Time
+	Quality   string
+}
+
 // TagCallback is invoked by the scan loop for each successful tag read.
 type TagCallback func(update TagUpdate)
 
@@ -49,6 +56,7 @@ type Manager struct {
 
 	mu      sync.RWMutex
 	workers map[string]*plcWorker // keyed by PLC name
+	current map[string]map[string]TagValue
 	wg      sync.WaitGroup
 }
 
@@ -69,6 +77,7 @@ func NewManager(cfg *config.Config, log *slog.Logger, factory DriverFactory, tag
 		factory: factory,
 		tagCb:   tagCb,
 		workers: make(map[string]*plcWorker, len(cfg.PLCs)),
+		current: make(map[string]map[string]TagValue, len(cfg.PLCs)),
 	}
 
 	// Eagerly create drivers so Driver(name) works before Start.
@@ -150,6 +159,34 @@ func (m *Manager) Driver(name string) (Driver, bool) {
 	return w.driver, true
 }
 
+// CurrentTag returns the latest scanned value for a PLC tag.
+func (m *Manager) CurrentTag(plcName, tag string) (TagValue, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	tags, ok := m.current[plcName]
+	if !ok {
+		return TagValue{}, false
+	}
+	value, ok := tags[tag]
+	return value, ok
+}
+
+// CurrentSnapshot returns a defensive copy of the full in-memory tag store.
+func (m *Manager) CurrentSnapshot() map[string]map[string]TagValue {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	snapshot := make(map[string]map[string]TagValue, len(m.current))
+	for plcName, tags := range m.current {
+		tagCopy := make(map[string]TagValue, len(tags))
+		for tag, value := range tags {
+			tagCopy[tag] = value
+		}
+		snapshot[plcName] = tagCopy
+	}
+	return snapshot
+}
+
 // Reload applies a new configuration hot. It stops goroutines for PLCs that
 // were removed or changed, creates drivers for new or changed PLCs, and starts
 // goroutines for the new set. The parent ctx must be the same context passed
@@ -182,6 +219,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		}
 		drainedDrivers = append(drainedDrivers, w.driver)
 		delete(m.workers, name)
+		delete(m.current, name)
 	}
 
 	m.mu.Unlock()
@@ -280,13 +318,16 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 						slog.String("err", err.Error()))
 					continue
 				}
+				value := deref(dest)
+				update := TagUpdate{
+					PLCName:   name,
+					Tag:       tag.Name,
+					Value:     value,
+					Timestamp: time.Now(),
+				}
+				m.storeTag(update)
 				if m.tagCb != nil {
-					m.tagCb(TagUpdate{
-						PLCName:   name,
-						Tag:       tag.Name,
-						Value:     deref(dest),
-						Timestamp: time.Now(),
-					})
+					m.tagCb(update)
 				}
 			}
 		}
@@ -307,6 +348,19 @@ func reconnect(ctx context.Context, d Driver, log *slog.Logger) error {
 	}, func(ctx context.Context) error {
 		return d.Connect(ctx)
 	})
+}
+
+func (m *Manager) storeTag(update TagUpdate) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.current[update.PLCName] == nil {
+		m.current[update.PLCName] = make(map[string]TagValue)
+	}
+	m.current[update.PLCName][update.Tag] = TagValue{
+		Value:     update.Value,
+		Timestamp: update.Timestamp,
+		Quality:   "good",
+	}
 }
 
 func allocDest(typeName string) any {

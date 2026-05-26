@@ -145,7 +145,7 @@ func ExitCodeFromResults(results []Result) int {
 func Default(cfg *config.Config) *Registry {
 	r := &Registry{}
 	r.Register(&dataDirCheck{cfg: cfg})
-	r.Register(&resticCheck{})
+	r.Register(&resticCheck{cfg: cfg})
 	r.Register(&goRuntimeCheck{})
 	r.Register(&portCheck{cfg: cfg})
 	r.Register(&configLoadedCheck{})

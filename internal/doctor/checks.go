@@ -51,16 +51,24 @@ func (c *dataDirCheck) Run(ctx context.Context) Result {
 }
 
 // resticCheck verifies that the restic binary is on PATH.
-type resticCheck struct{}
+type resticCheck struct {
+	cfg *config.Config
+}
 
 func (c *resticCheck) Name() string { return "restic-on-path" }
 
 func (c *resticCheck) Run(ctx context.Context) Result {
 	if _, err := exec.LookPath("restic"); err != nil {
+		status := StatusWarn
+		message := "restic not found on $PATH — backup checks unavailable"
+		if c.cfg != nil && len(c.cfg.Backup.Repos) > 0 {
+			status = StatusFail
+			message = "restic not found on $PATH while backup repositories are configured"
+		}
 		return Result{
 			Name:    c.Name(),
-			Status:  StatusWarn,
-			Message: "restic not found on $PATH — backup checks unavailable",
+			Status:  status,
+			Message: message,
 		}
 	}
 	return Result{
@@ -203,4 +211,3 @@ func resolvedTimeout(s string) time.Duration {
 	}
 	return d
 }
-

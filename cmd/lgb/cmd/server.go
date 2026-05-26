@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/datadir"
 	"github.com/fgjcarlos/lgb/internal/doctor"
@@ -179,7 +180,42 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		histW = histWriter
 	}
 
-	srv := server.New(cfg, logger, checks, plcMgr, spNode, histW)
+	// Create the Backup Scheduler when repos are configured.
+	var bkpSch server.BackupScheduler
+	if len(cfg.Backup.Repos) > 0 {
+		interval, _ := time.ParseDuration(cfg.Backup.Interval)
+		if interval <= 0 {
+			interval = 24 * time.Hour
+		}
+
+		repos := make([]backup.Repository, len(cfg.Backup.Repos))
+		for i, r := range cfg.Backup.Repos {
+			repos[i] = backup.Repository{URL: r.URL, Password: r.Password}
+		}
+		bkpMgr := backup.NewManager(nil, repos)
+		snapshotDir := filepath.Join(resolvedPath, "backup-tmp")
+		sched := backup.NewScheduler(bkpMgr, []string{snapshotDir}, interval)
+
+		if histStore != nil {
+			sched.PreBackup = func(ctx context.Context) error {
+				_, err := histStore.VacuumInto(ctx, snapshotDir)
+				return err
+			}
+		}
+
+		bkpSch = sched
+		logger.Info("backup scheduler created",
+			slog.String("component", "backup"),
+			slog.Int("repo_count", len(repos)),
+			slog.String("interval", interval.String()))
+	}
+
+	srv := server.New(cfg, logger, checks, server.Opts{
+		PLCMgr: plcMgr,
+		SpNode: spNode,
+		HistW:  histW,
+		BkpSch: bkpSch,
+	})
 
 	// Store server reference for tests.
 	if d.serverRef != nil {

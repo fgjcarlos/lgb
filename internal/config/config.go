@@ -95,7 +95,8 @@ type HistorianSection struct {
 
 // BackupSection holds backup/restic settings.
 type BackupSection struct {
-	Repos []BackupRepo `koanf:"repos"`
+	Repos    []BackupRepo `koanf:"repos"`
+	Interval string       `koanf:"interval"`
 }
 
 // BackupRepo holds a single restic repository configuration.
@@ -160,6 +161,22 @@ func (c *Config) Validate() error {
 	// historian.retentionDays must be positive when non-zero.
 	if c.Historian.RetentionDays < 0 {
 		violations = append(violations, errorf("historian.retentionDays: must be a positive integer, got %d: %w", c.Historian.RetentionDays, ErrConfigInvalid))
+	}
+
+	// backup.interval must be a valid positive duration when repos are configured.
+	if c.Backup.Interval != "" {
+		if d, err := time.ParseDuration(c.Backup.Interval); err != nil {
+			violations = append(violations, errorf("backup.interval: %q is not a valid Go duration: %w", c.Backup.Interval, ErrConfigInvalid))
+		} else if d <= 0 {
+			violations = append(violations, errorf("backup.interval: must be positive, got %q: %w", c.Backup.Interval, ErrConfigInvalid))
+		}
+	}
+
+	// backup.repos entries must have non-empty URL.
+	for i, repo := range c.Backup.Repos {
+		if repo.URL == "" {
+			violations = append(violations, errorf("backup.repos[%d].url: must not be empty: %w", i, ErrConfigInvalid))
+		}
 	}
 
 	// Validate each PLC entry (PLC-CFG-1.2 through PLC-CFG-1.6).

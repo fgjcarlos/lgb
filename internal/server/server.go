@@ -43,6 +43,13 @@ type HistorianWriter interface {
 	Stop(ctx context.Context) error
 }
 
+// BackupScheduler is the interface the backup scheduler must satisfy
+// for server lifecycle integration.
+type BackupScheduler interface {
+	Start(ctx context.Context)
+	Stop() error
+}
+
 // Server is the LGB HTTP server stub.
 type Server struct {
 	cfg      *config.Config
@@ -51,21 +58,31 @@ type Server struct {
 	plcMgr   PLCManager       // nil when no PLCs are configured
 	spNode   SparkplugNode    // nil when MQTT/Sparkplug is not configured
 	histW    HistorianWriter  // nil when historian is not configured
+	bkpSch   BackupScheduler  // nil when backup is not configured
 
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
 }
 
-// New creates a new Server. plcMgr, spNode, and histW may be nil; Run handles
-// the nil cases without panicking.
-func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, plcMgr PLCManager, spNode SparkplugNode, histW HistorianWriter) *Server {
+// Opts groups optional server dependencies. All fields may be nil.
+type Opts struct {
+	PLCMgr   PLCManager
+	SpNode   SparkplugNode
+	HistW    HistorianWriter
+	BkpSch   BackupScheduler
+}
+
+// New creates a new Server. All optional dependencies in opts may be nil;
+// Run handles the nil cases without panicking.
+func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts) *Server {
 	return &Server{
 		cfg:    cfg,
 		log:    log,
 		checks: checks,
-		plcMgr: plcMgr,
-		spNode: spNode,
-		histW:  histW,
+		plcMgr: opts.PLCMgr,
+		spNode: opts.SpNode,
+		histW:  opts.HistW,
+		bkpSch: opts.BkpSch,
 	}
 }
 
@@ -149,6 +166,11 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
+	// Start backup scheduler LAST (periodic backups of historian snapshots).
+	if s.bkpSch != nil {
+		s.bkpSch.Start(ctx)
+	}
+
 	s.log.Info("server listening", "addr", ln.Addr().String())
 
 	// Serve in a goroutine; wait for ctx to cancel then gracefully shut down.
@@ -168,21 +190,28 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.log.Info("shutdown initiated")
 
-	// Stop PLC manager FIRST (stops tag reads).
+	// Stop backup scheduler FIRST (no new backup runs).
+	if s.bkpSch != nil {
+		if err := s.bkpSch.Stop(); err != nil {
+			s.log.Warn("backup scheduler: Stop returned error", slog.String("error", err.Error()))
+		}
+	}
+
+	// Stop PLC manager SECOND (stops tag reads).
 	if s.plcMgr != nil {
 		if err := s.plcMgr.Stop(); err != nil {
 			s.log.Warn("plc manager: Stop returned error", slog.String("error", err.Error()))
 		}
 	}
 
-	// Stop historian writer SECOND (flushes pending samples).
+	// Stop historian writer THIRD (flushes pending samples).
 	if s.histW != nil {
 		if err := s.histW.Stop(ctx); err != nil {
 			s.log.Warn("historian writer: Stop returned error", slog.String("error", err.Error()))
 		}
 	}
 
-	// Stop Sparkplug node THIRD (publishes DDEATH, disconnects MQTT).
+	// Stop Sparkplug node LAST (publishes DDEATH, disconnects MQTT).
 	if s.spNode != nil {
 		if err := s.spNode.Stop(); err != nil {
 			s.log.Warn("sparkplug node: Stop returned error", slog.String("error", err.Error()))

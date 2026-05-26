@@ -37,16 +37,34 @@ func (m *Manager) CheckAll(ctx context.Context) error {
 }
 
 type Scheduler struct {
-	manager *Manager
-	paths   []string
-	Every   time.Duration
+	manager   *Manager
+	paths     []string
+	Every     time.Duration
+	PreBackup func(ctx context.Context) error
+
+	done chan struct{}
 }
 
 func NewScheduler(manager *Manager, paths []string, every time.Duration) *Scheduler {
 	return &Scheduler{manager: manager, paths: paths, Every: every}
 }
 
-func (s *Scheduler) Run(ctx context.Context) error {
+func (s *Scheduler) Start(ctx context.Context) {
+	s.done = make(chan struct{})
+	go func() {
+		defer close(s.done)
+		_ = s.run(ctx)
+	}()
+}
+
+func (s *Scheduler) Stop() error {
+	if s.done != nil {
+		<-s.done
+	}
+	return nil
+}
+
+func (s *Scheduler) run(ctx context.Context) error {
 	if s.Every <= 0 {
 		return fmt.Errorf("backup schedule interval must be positive")
 	}
@@ -57,9 +75,21 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := s.manager.BackupAll(ctx, s.paths); err != nil {
-				return err
-			}
+			s.runOnce(ctx)
 		}
 	}
+}
+
+// RunOnce executes a single backup cycle (PreBackup + BackupAll).
+func (s *Scheduler) RunOnce(ctx context.Context) error {
+	return s.runOnce(ctx)
+}
+
+func (s *Scheduler) runOnce(ctx context.Context) error {
+	if s.PreBackup != nil {
+		if err := s.PreBackup(ctx); err != nil {
+			return fmt.Errorf("pre-backup hook: %w", err)
+		}
+	}
+	return s.manager.BackupAll(ctx, s.paths)
 }

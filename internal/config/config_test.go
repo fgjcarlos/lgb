@@ -695,6 +695,39 @@ func TestPLCTagValidateUnknownType(t *testing.T) {
 	}
 }
 
+func TestBackupValidateInvalidInterval(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Backup.Interval = "not-a-duration"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid backup.interval")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestBackupValidateEmptyRepoURL(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Backup.Repos = []config.BackupRepo{{URL: "", Password: "pass"}}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty backup repo URL")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestBackupValidateValidConfig(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Backup.Interval = "12h"
+	cfg.Backup.Repos = []config.BackupRepo{{URL: "/tmp/repo", Password: "pass"}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected valid config, got: %v", err)
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()
@@ -709,5 +742,6 @@ func validConfig(t *testing.T) *config.Config {
 			KeepAlive: "30s",
 		},
 		Historian: config.HistorianSection{RetentionDays: 90},
+		Backup:    config.BackupSection{Interval: "24h"},
 	}
 }

@@ -255,7 +255,7 @@ func (c *Config) Redacted() *Config {
 // with "[redacted]" using reflection.
 func redactStructFields(v reflect.Value) {
 	// Dereference pointers.
-	for v.Kind() == reflect.Ptr {
+	for v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return
 		}

@@ -20,6 +20,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/health"
 	"github.com/fgjcarlos/lgb/internal/httpx"
+	"github.com/fgjcarlos/lgb/internal/plc"
 )
 
 // PLCManager is the interface that the PLC manager must satisfy for server
@@ -27,6 +28,12 @@ import (
 type PLCManager interface {
 	Start(ctx context.Context) error
 	Stop() error
+}
+
+// tagUpdateHook is implemented by PLC managers that can fan out scanned tag
+// updates to additional consumers such as the realtime WebSocket API.
+type tagUpdateHook interface {
+	AddTagCallback(func(plc.TagUpdate))
 }
 
 // SparkplugNode is the interface the Sparkplug edge node must satisfy
@@ -52,13 +59,14 @@ type BackupScheduler interface {
 
 // Server is the LGB HTTP server stub.
 type Server struct {
-	cfg      *config.Config
-	log      *slog.Logger
-	checks   []doctor.Check
-	plcMgr   PLCManager       // nil when no PLCs are configured
-	spNode   SparkplugNode    // nil when MQTT/Sparkplug is not configured
-	histW    HistorianWriter  // nil when historian is not configured
-	bkpSch   BackupScheduler  // nil when backup is not configured
+	cfg    *config.Config
+	log    *slog.Logger
+	checks []doctor.Check
+	plcMgr PLCManager      // nil when no PLCs are configured
+	spNode SparkplugNode   // nil when MQTT/Sparkplug is not configured
+	histW  HistorianWriter // nil when historian is not configured
+	bkpSch BackupScheduler // nil when backup is not configured
+	tagHub *tagHub         // realtime API fanout for PLC tag updates
 
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
@@ -66,10 +74,10 @@ type Server struct {
 
 // Opts groups optional server dependencies. All fields may be nil.
 type Opts struct {
-	PLCMgr   PLCManager
-	SpNode   SparkplugNode
-	HistW    HistorianWriter
-	BkpSch   BackupScheduler
+	PLCMgr PLCManager
+	SpNode SparkplugNode
+	HistW  HistorianWriter
+	BkpSch BackupScheduler
 }
 
 // New creates a new Server. All optional dependencies in opts may be nil;
@@ -83,6 +91,7 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		spNode: opts.SpNode,
 		histW:  opts.HistW,
 		bkpSch: opts.BkpSch,
+		tagHub: newTagHub(),
 	}
 }
 
@@ -138,6 +147,8 @@ func (s *Server) Run(ctx context.Context) error {
 		_, _ = fmt.Fprint(w, `{"status":"ok"}`)
 	})
 
+	s.registerAPIRoutes(mux)
+
 	shutdownTimeout := 10 * time.Second
 	if s.cfg.Server.ShutdownTimeout != "" {
 		if d, err := time.ParseDuration(s.cfg.Server.ShutdownTimeout); err == nil {
@@ -159,8 +170,11 @@ func (s *Server) Run(ctx context.Context) error {
 		s.histW.Start(ctx)
 	}
 
-	// Start PLC manager THIRD (scan loop emits TagUpdates to Sparkplug + Historian).
+	// Start PLC manager THIRD (scan loop emits TagUpdates to Sparkplug, Historian, and API).
 	if s.plcMgr != nil {
+		if hook, ok := s.plcMgr.(tagUpdateHook); ok {
+			hook.AddTagCallback(s.PublishTagUpdate)
+		}
 		if err := s.plcMgr.Start(ctx); err != nil {
 			s.log.Warn("plc manager: Start returned error", slog.String("error", err.Error()))
 		}

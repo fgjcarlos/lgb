@@ -3,6 +3,7 @@ module github.com/fgjcarlos/lgb
 go 1.25.0
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/danomagnum/gologix v0.41.0-beta
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/knadh/koanf/parsers/yaml v1.1.0

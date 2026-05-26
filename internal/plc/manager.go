@@ -50,9 +50,10 @@ type plcWorker struct {
 //
 // Design §4, §6.3, §6.4 — PLC-DRV-2.1, PLC-DRV-2.2, PLC-DRV-2.3.
 type Manager struct {
-	log     *slog.Logger
-	factory DriverFactory
-	tagCb   TagCallback
+	log       *slog.Logger
+	factory   DriverFactory
+	tagCb     TagCallback
+	callbacks []TagCallback
 
 	mu      sync.RWMutex
 	workers map[string]*plcWorker // keyed by PLC name
@@ -325,10 +326,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 					Value:     value,
 					Timestamp: time.Now(),
 				}
-				m.storeTag(update)
-				if m.tagCb != nil {
-					m.tagCb(update)
-				}
+				m.emitTagUpdate(update)
 			}
 		}
 	}
@@ -348,6 +346,33 @@ func reconnect(ctx context.Context, d Driver, log *slog.Logger) error {
 	}, func(ctx context.Context) error {
 		return d.Connect(ctx)
 	})
+}
+
+func (m *Manager) emitTagUpdate(update TagUpdate) {
+	m.storeTag(update)
+
+	m.mu.RLock()
+	callbacks := make([]TagCallback, 0, len(m.callbacks)+1)
+	if m.tagCb != nil {
+		callbacks = append(callbacks, m.tagCb)
+	}
+	callbacks = append(callbacks, m.callbacks...)
+	m.mu.RUnlock()
+
+	for _, cb := range callbacks {
+		cb(update)
+	}
+}
+
+// AddTagCallback registers an additional callback for future scanned tag
+// updates. It is safe to call before or after Start.
+func (m *Manager) AddTagCallback(cb TagCallback) {
+	if cb == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callbacks = append(m.callbacks, cb)
 }
 
 func (m *Manager) storeTag(update TagUpdate) {

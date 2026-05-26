@@ -1,0 +1,102 @@
+openapi: 3.0.3
+info:
+  title: LGB Gateway API
+  version: 0.1.0
+  description: REST and realtime API surface for current PLC tag values.
+paths:
+  /api/tags/current:
+    get:
+      summary: List current PLC tag values
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Current PLC tag values
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TagValue"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          description: Invalid pagination request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/ws/tags:
+    get:
+      summary: WebSocket stream for live PLC tag updates
+      description: |
+        Upgrade to WebSocket and receive JSON tag_update messages.
+        Optional `plc` and `tag` query parameters filter the stream.
+      parameters:
+        - name: plc
+          in: query
+          schema:
+            type: string
+        - name: tag
+          in: query
+          schema:
+            type: string
+      responses:
+        "101":
+          description: WebSocket upgrade accepted
+components:
+  schemas:
+    TagValue:
+      type: object
+      required: [plc, tag, value, quality, timestamp]
+      properties:
+        plc:
+          type: string
+        tag:
+          type: string
+        value:
+          description: Current PLC tag value; scalar type depends on the tag definition.
+        quality:
+          type: string
+          example: good
+        timestamp:
+          type: string
+          format: date-time
+    Pagination:
+      type: object
+      required: [limit, offset, count]
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        count:
+          type: integer
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string

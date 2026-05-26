@@ -11,10 +11,10 @@ import (
 )
 
 type mockMQTTClient struct {
-	mu         sync.Mutex
-	connected  bool
-	published  []publishCall
-	onConnect  func()
+	mu           sync.Mutex
+	connected    bool
+	published    []publishCall
+	onConnect    func()
 	disconnected bool
 }
 
@@ -109,7 +109,11 @@ func TestEdgeNode_Start_PublishesNBIRTHAndDBIRTH(t *testing.T) {
 	if err := en.Start(ctx); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
-	defer en.Stop()
+	defer func() {
+		if err := en.Stop(); err != nil {
+			t.Errorf("Stop returned error: %v", err)
+		}
+	}()
 
 	pubs := mc.getPublished()
 	if len(pubs) < 2 {
@@ -182,7 +186,11 @@ func TestEdgeNode_HandleTagUpdate_WhenOnline(t *testing.T) {
 	if err := en.Start(ctx); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
-	defer en.Stop()
+	defer func() {
+		if err := en.Stop(); err != nil {
+			t.Errorf("Stop returned error: %v", err)
+		}
+	}()
 
 	beforeUpdate := len(mc.getPublished())
 	en.HandleTagUpdate(sparkplug.TagUpdate{
@@ -215,9 +223,9 @@ func TestEdgeNode_HandleTagUpdate_WhenOffline_Dropped(t *testing.T) {
 	})
 
 	en.HandleTagUpdate(sparkplug.TagUpdate{
-		PLCName: "plc-a",
-		Tag:     "Motor.Speed",
-		Value:   float32(100),
+		PLCName:   "plc-a",
+		Tag:       "Motor.Speed",
+		Value:     float32(100),
 		Timestamp: time.Now(),
 	})
 
@@ -243,7 +251,11 @@ func TestEdgeNode_SeqResetsOnStart(t *testing.T) {
 	_ = en.Stop()
 
 	_ = en.Start(ctx)
-	defer en.Stop()
+	defer func() {
+		if err := en.Stop(); err != nil {
+			t.Errorf("Stop returned error: %v", err)
+		}
+	}()
 }
 
 func TestEdgeNode_ConcurrentHandleTagUpdate(t *testing.T) {
@@ -260,7 +272,11 @@ func TestEdgeNode_ConcurrentHandleTagUpdate(t *testing.T) {
 	if err := en.Start(ctx); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
-	defer en.Stop()
+	defer func() {
+		if err := en.Stop(); err != nil {
+			t.Errorf("Stop returned error: %v", err)
+		}
+	}()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {

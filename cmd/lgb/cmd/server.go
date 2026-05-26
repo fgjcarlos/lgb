@@ -15,14 +15,17 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/datadir"
 	"github.com/fgjcarlos/lgb/internal/doctor"
+	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/log"
 	"github.com/fgjcarlos/lgb/internal/mqtt"
 	"github.com/fgjcarlos/lgb/internal/plc"
@@ -124,6 +127,42 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 			slog.String("node", cfg.MQTT.EdgeNodeID))
 	}
 
+	// Create the Historian Store + Writer when retentionDays > 0.
+	var histStore *historian.Store
+	var histWriter *historian.Writer
+	if cfg.Historian.RetentionDays > 0 {
+		dbPath := filepath.Join(resolvedPath, "lgb.db")
+		openFn := d.HistorianStoreFactory
+		if openFn == nil {
+			openFn = historian.Open
+		}
+		var storeErr error
+		histStore, storeErr = openFn(ctx, dbPath, historian.Options{
+			RetentionDays: cfg.Historian.RetentionDays,
+		})
+		if storeErr != nil {
+			return fmt.Errorf("server: open historian: %w", storeErr)
+		}
+		defer histStore.Close()
+		histWriter = historian.NewWriter(histStore, historian.WriterOptions{})
+		logger.Info("historian created",
+			slog.String("component", "historian"),
+			slog.String("db", dbPath),
+			slog.Int("retention_days", cfg.Historian.RetentionDays))
+
+		go runRetentionLoop(ctx, histStore, logger)
+	}
+
+	// Build the fan-out TagCallback that feeds both historian and sparkplug.
+	var tagCb plc.TagCallback
+	if histWriter != nil || spNode != nil {
+		var spHandler func(sparkplug.TagUpdate)
+		if h, ok := spNode.(interface{ HandleTagUpdate(sparkplug.TagUpdate) }); ok {
+			spHandler = h.HandleTagUpdate
+		}
+		tagCb = buildTagCallback(ctx, histWriter, spHandler, logger)
+	}
+
 	// Create the PLC Manager when PLCs are configured.
 	var plcMgr server.PLCManager
 	if len(cfg.PLCs) > 0 {
@@ -131,12 +170,52 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		if factory == nil {
 			factory = defaultPLCManagerFactory
 		}
-		plcMgr = factory(cfg)
+		plcMgr = factory(cfg, tagCb)
 		logger.Info("plc manager created", slog.String("component", "plc-manager"),
 			slog.Int("plc_count", len(cfg.PLCs)))
 	}
 
-	srv := server.New(cfg, logger, checks, plcMgr, spNode)
+	var histW server.HistorianWriter
+	if histWriter != nil {
+		histW = histWriter
+	}
+
+	// Create the Backup Scheduler when repos are configured.
+	var bkpSch server.BackupScheduler
+	if len(cfg.Backup.Repos) > 0 {
+		interval, _ := time.ParseDuration(cfg.Backup.Interval)
+		if interval <= 0 {
+			interval = 24 * time.Hour
+		}
+
+		repos := make([]backup.Repository, len(cfg.Backup.Repos))
+		for i, r := range cfg.Backup.Repos {
+			repos[i] = backup.Repository{URL: r.URL, Password: r.Password}
+		}
+		bkpMgr := backup.NewManager(nil, repos)
+		snapshotDir := filepath.Join(resolvedPath, "backup-tmp")
+		sched := backup.NewScheduler(bkpMgr, []string{snapshotDir}, interval)
+
+		if histStore != nil {
+			sched.PreBackup = func(ctx context.Context) error {
+				_, err := histStore.VacuumInto(ctx, snapshotDir)
+				return err
+			}
+		}
+
+		bkpSch = sched
+		logger.Info("backup scheduler created",
+			slog.String("component", "backup"),
+			slog.Int("repo_count", len(repos)),
+			slog.String("interval", interval.String()))
+	}
+
+	srv := server.New(cfg, logger, checks, server.Opts{
+		PLCMgr: plcMgr,
+		SpNode: spNode,
+		HistW:  histW,
+		BkpSch: bkpSch,
+	})
 
 	// Store server reference for tests.
 	if d.serverRef != nil {
@@ -161,8 +240,8 @@ func (d *Deps) getServerForTest() *server.Server {
 }
 
 // defaultPLCManagerFactory is the production PLCManagerFactory.
-func defaultPLCManagerFactory(cfg *config.Config) server.PLCManager {
-	return plc.NewManager(cfg, slog.Default(), nil, nil)
+func defaultPLCManagerFactory(cfg *config.Config, tagCb plc.TagCallback) server.PLCManager {
+	return plc.NewManager(cfg, slog.Default(), nil, tagCb)
 }
 
 // defaultSparkplugNodeFactory is the production SparkplugNodeFactory.
@@ -192,6 +271,53 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 		Devices: devices,
 		Log:     slog.Default(),
 	})
+}
+
+// buildTagCallback creates a fan-out callback that sends tag updates to both
+// the historian writer and the sparkplug edge node.
+func buildTagCallback(ctx context.Context, hw *historian.Writer, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
+	return func(u plc.TagUpdate) {
+		if hw != nil {
+			if err := hw.Enqueue(ctx, historian.Sample{
+				PLCName:   u.PLCName,
+				Tag:       u.Tag,
+				Value:     u.Value,
+				Timestamp: u.Timestamp,
+				Quality:   "good",
+			}); err != nil {
+				logger.Warn("historian enqueue error",
+					slog.String("component", "historian"),
+					slog.String("tag", u.Tag),
+					slog.String("err", err.Error()))
+			}
+		}
+		if spHandler != nil {
+			spHandler(sparkplug.TagUpdate{
+				PLCName:   u.PLCName,
+				Tag:       u.Tag,
+				Value:     u.Value,
+				Timestamp: u.Timestamp,
+			})
+		}
+	}
+}
+
+// runRetentionLoop runs EnforceRetention every hour until ctx is cancelled.
+func runRetentionLoop(ctx context.Context, store *historian.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := store.EnforceRetention(ctx, time.Now()); err != nil {
+				logger.Warn("historian retention error",
+					slog.String("component", "historian"),
+					slog.String("err", err.Error()))
+			}
+		}
+	}
 }
 
 // probePlCSim performs a TCP dial to addr with a 5-second timeout.

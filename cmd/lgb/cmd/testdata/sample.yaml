@@ -28,4 +28,5 @@ historian:
   retentionDays: 90
 
 backup:
+  interval: "24h"
   repos: []

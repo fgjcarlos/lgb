@@ -22,7 +22,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	cfg.Server.HTTPAddr = "127.0.0.1:0" // OS-assigned port
 
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, nil, nil)
+	srv := New(cfg, logger, nil, Opts{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -68,7 +68,7 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, nil, nil)
+	srv := New(cfg, logger, nil, Opts{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -105,7 +105,7 @@ func TestServer_GracefulShutdown(t *testing.T) {
 	cfg.Server.ShutdownTimeout = "1s"
 
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, nil, nil)
+	srv := New(cfg, logger, nil, Opts{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -142,7 +142,7 @@ func TestServer_ReadyzEndpoint(t *testing.T) {
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, nil, nil)
+	srv := New(cfg, logger, nil, Opts{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -218,7 +218,7 @@ func TestServer_WithPLCManager_StartStop(t *testing.T) {
 
 	logger := testutil.NewLogger(t)
 	mgr := &mockPLCManager{}
-	srv := New(cfg, logger, nil, mgr, nil)
+	srv := New(cfg, logger, nil, Opts{PLCMgr: mgr})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -260,7 +260,7 @@ func TestServer_NilPLCManager_NoOp(t *testing.T) {
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, nil, nil) // nil manager — must not panic
+	srv := New(cfg, logger, nil, Opts{}) // nil manager — must not panic
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -325,7 +325,7 @@ func TestServer_WithSparkplugNode_StartStop(t *testing.T) {
 
 	logger := testutil.NewLogger(t)
 	spNode := &mockSparkplugNode{}
-	srv := New(cfg, logger, nil, nil, spNode)
+	srv := New(cfg, logger, nil, Opts{SpNode: spNode})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -359,12 +359,158 @@ func TestServer_WithSparkplugNode_StartStop(t *testing.T) {
 	}
 }
 
+// ─── HistorianWriter wiring tests ────────────────────────────────────────────
+
+type mockHistorianWriter struct {
+	mu          sync.Mutex
+	startCalled bool
+	stopCalled  bool
+}
+
+func (m *mockHistorianWriter) Start(ctx context.Context) {
+	m.mu.Lock()
+	m.startCalled = true
+	m.mu.Unlock()
+}
+
+func (m *mockHistorianWriter) Stop(ctx context.Context) error {
+	m.mu.Lock()
+	m.stopCalled = true
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *mockHistorianWriter) StartWasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.startCalled
+}
+
+func (m *mockHistorianWriter) StopWasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopCalled
+}
+
+func TestServer_WithHistorianWriter_StartStop(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+
+	logger := testutil.NewLogger(t)
+	hw := &mockHistorianWriter{}
+	srv := New(cfg, logger, nil, Opts{HistW: hw})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Run(ctx)
+	}()
+
+	addr := srv.Addr()
+	if addr == "" {
+		t.Fatal("server did not bind within timeout")
+	}
+
+	if !hw.StartWasCalled() {
+		t.Error("expected HistorianWriter.Start to be called before serving")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("Run returned non-nil error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("server did not shut down within 3s")
+	}
+
+	if !hw.StopWasCalled() {
+		t.Error("expected HistorianWriter.Stop to be called after shutdown")
+	}
+}
+
+// ─── BackupScheduler wiring tests ────────────────────────────────────────────
+
+type mockBackupScheduler struct {
+	mu          sync.Mutex
+	startCalled bool
+	stopCalled  bool
+}
+
+func (m *mockBackupScheduler) Start(ctx context.Context) {
+	m.mu.Lock()
+	m.startCalled = true
+	m.mu.Unlock()
+}
+
+func (m *mockBackupScheduler) Stop() error {
+	m.mu.Lock()
+	m.stopCalled = true
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *mockBackupScheduler) StartWasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.startCalled
+}
+
+func (m *mockBackupScheduler) StopWasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopCalled
+}
+
+func TestServer_WithBackupScheduler_StartStop(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+
+	logger := testutil.NewLogger(t)
+	bs := &mockBackupScheduler{}
+	srv := New(cfg, logger, nil, Opts{BkpSch: bs})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Run(ctx)
+	}()
+
+	addr := srv.Addr()
+	if addr == "" {
+		t.Fatal("server did not bind within timeout")
+	}
+
+	if !bs.StartWasCalled() {
+		t.Error("expected BackupScheduler.Start to be called")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("Run returned non-nil error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("server did not shut down within 3s")
+	}
+
+	if !bs.StopWasCalled() {
+		t.Error("expected BackupScheduler.Stop to be called after shutdown")
+	}
+}
+
 func TestServer_NilSparkplugNode_NoOp(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, nil, nil)
+	srv := New(cfg, logger, nil, Opts{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 

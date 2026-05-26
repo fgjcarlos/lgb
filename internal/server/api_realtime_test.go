@@ -146,7 +146,7 @@ func startAPITestServer(t *testing.T, mgr PLCManager) (*Server, string, func()) 
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 	cfg.PLCs = []config.PLC{{Name: "packaging", Tags: []config.TagDef{{Name: "Speed", Type: "Float"}}}}
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, mgr, nil)
+	srv := New(cfg, logger, nil, Opts{PLCMgr: mgr})
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Run(ctx) }()

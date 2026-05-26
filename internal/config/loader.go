@@ -37,6 +37,7 @@ var defaults = map[string]interface{}{
 	"server.shutdownTimeout":  "10s",
 	"auth.sessionTTL":         "8h",
 	"historian.retentionDays": 90,
+	"backup.interval":        "24h",
 	// MQTT/Sparkplug defaults (SPK-CFG-2.1).
 	"mqtt.qos":          1,
 	"mqtt.keepAlive":    "30s",

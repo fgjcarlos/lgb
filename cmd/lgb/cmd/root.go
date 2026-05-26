@@ -109,6 +109,7 @@ running diagnostics, validating configuration, and reporting version.`,
 	root.AddCommand(NewConfigCmd(d))
 	root.AddCommand(NewDoctorCmd(d))
 	root.AddCommand(NewServerCmd(d))
+	root.AddCommand(NewBackupCmd(d))
 
 	return root, d
 }

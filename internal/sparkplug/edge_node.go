@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 
 	"github.com/fgjcarlos/lgb/internal/mqtt"
 )
@@ -33,9 +32,8 @@ type EdgeNode struct {
 	devices []DeviceConfig
 	log     *slog.Logger
 
-	sm    StateMachine
-	seq   SeqTracker
-	bdSeq atomic.Uint64
+	sm  StateMachine
+	seq SeqTracker
 
 	updates chan TagUpdate
 	done    chan struct{}

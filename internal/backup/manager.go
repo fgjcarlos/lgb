@@ -75,7 +75,7 @@ func (s *Scheduler) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			s.runOnce(ctx)
+			_ = s.runOnce(ctx)
 		}
 	}
 }

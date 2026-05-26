@@ -44,9 +44,11 @@ type Deps struct {
 
 	// PLCManagerFactory creates a PLCManager from config. When nil, the
 	// production plc.NewManager is used (when PLCs are configured).
-	// Tests inject a factory spy to verify the Manager is created and passed
-	// to server.New without touching the real plc package.
 	PLCManagerFactory func(cfg *config.Config) server.PLCManager
+
+	// SparkplugNodeFactory creates a SparkplugNode from config. When nil, the
+	// production sparkplug.NewEdgeNode is used (when GroupID is configured).
+	SparkplugNodeFactory func(cfg *config.Config) server.SparkplugNode
 
 	// serverRef is set by runServerTo so test helpers can retrieve the *server.Server.
 	// Unexported — test access is via getServerForTest().

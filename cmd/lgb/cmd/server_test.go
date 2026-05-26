@@ -195,3 +195,76 @@ func TestServerCmd_NoPLCs_NilManager(t *testing.T) {
 		t.Error("expected PLCManagerFactory NOT to be called when no PLCs are configured")
 	}
 }
+
+// mockCmdSparkplugNode tracks Start/Stop for cmd wiring tests.
+type mockCmdSparkplugNode struct {
+	startCalled bool
+}
+
+func (m *mockCmdSparkplugNode) Start(_ context.Context) error {
+	m.startCalled = true
+	return nil
+}
+
+func (m *mockCmdSparkplugNode) Stop() error { return nil }
+
+func TestServerCmd_WithGroupID_CreatesSparkplugNode(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.MQTT.BrokerURL = "tcp://localhost:1883"
+	cfg.MQTT.GroupID = "plant-a"
+	cfg.MQTT.EdgeNodeID = "lgb-1"
+
+	node := &mockCmdSparkplugNode{}
+	var factoryCalled bool
+
+	d := &Deps{
+		Config: cfg,
+		SparkplugNodeFactory: func(c *config.Config) server.SparkplugNode {
+			factoryCalled = true
+			return node
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	cancel()
+	<-errCh
+
+	if !factoryCalled {
+		t.Error("expected SparkplugNodeFactory to be called when GroupID is set")
+	}
+}
+
+func TestServerCmd_NoGroupID_NilSparkplugNode(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.MQTT.GroupID = ""
+	cfg.MQTT.BrokerURL = ""
+
+	var factoryCalled bool
+	d := &Deps{
+		Config: cfg,
+		SparkplugNodeFactory: func(c *config.Config) server.SparkplugNode {
+			factoryCalled = true
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	cancel()
+	<-errCh
+
+	if factoryCalled {
+		t.Error("expected SparkplugNodeFactory NOT to be called when GroupID is empty")
+	}
+}

@@ -101,8 +101,10 @@ func (e *EdgeNode) Stop() error {
 	}
 
 	e.sm.Transition(EventDisconnect)
-	close(e.done)
-	e.wg.Wait()
+	if e.done != nil {
+		close(e.done)
+		e.wg.Wait()
+	}
 	e.client.Disconnect(250)
 	return nil
 }

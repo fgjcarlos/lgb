@@ -236,14 +236,14 @@ SparkplugNode interface in server, cmd wiring, integration tests against Mosquit
 
 ### Group A — Server wiring
 
-- [ ] **T-6.01** `test` — **[RED]** Extend `internal/server/server_test.go`: (a) `mockSparkplugNode` with `Start`/`Stop`; (b) `server.New` accepts fifth `sparkplugNode SparkplugNode` param; (c) `Run(ctx)` calls `sparkplugNode.Start` BEFORE `plcMgr.Start`; (d) on ctx cancel: `plcMgr.Stop` called BEFORE `sparkplugNode.Stop`; (e) nil `sparkplugNode` → no panic (backward-compat).
+- [x] **T-6.01** `test` — **[RED]** Extend `internal/server/server_test.go`: (a) `mockSparkplugNode` with `Start`/`Stop`; (b) `server.New` accepts fifth `sparkplugNode SparkplugNode` param; (c) `Run(ctx)` calls `sparkplugNode.Start` BEFORE `plcMgr.Start`; (d) on ctx cancel: `plcMgr.Stop` called BEFORE `sparkplugNode.Stop`; (e) nil `sparkplugNode` → no panic (backward-compat).
   - **Files**: `internal/server/server_test.go`
   - **Reqs**: SPK-1.3, MQTT-1.1–1.3
   - **Design**: §9 (server wiring), §6.1
   - **Deps**: T-5.02
   - **DoD**: `go test ./internal/server/...` FAILS (New does not accept sparkplugNode).
 
-- [ ] **T-6.02** `impl` — **[GREEN]** Add `SparkplugNode interface { Start(context.Context) error; Stop() error }` to `internal/server/server.go`. Update `New` to accept `sparkplugNode SparkplugNode` (fifth param, nil-safe). In `Run(ctx)`: start sparkplugNode first, plcMgr second; on shutdown stop plcMgr first, sparkplugNode second. Update all `server.New` call-sites.
+- [x] **T-6.02** `impl` — **[GREEN]** Add `SparkplugNode interface { Start(context.Context) error; Stop() error }` to `internal/server/server.go`. Update `New` to accept `sparkplugNode SparkplugNode` (fifth param, nil-safe). In `Run(ctx)`: start sparkplugNode first, plcMgr second; on shutdown stop plcMgr first, sparkplugNode second. Update all `server.New` call-sites.
   - **Files**: `internal/server/server.go`
   - **Reqs**: SPK-1.3
   - **Design**: §9
@@ -252,14 +252,14 @@ SparkplugNode interface in server, cmd wiring, integration tests against Mosquit
 
 ### Group B — cmd wiring
 
-- [ ] **T-6.03** `test` — **[RED]** Extend `cmd/lgb/cmd/server_test.go`: (a) config with `mqtt.groupID` non-empty → `Deps.SparkplugNodeFactory` called, returned node passed to `server.New`; (b) `mqtt.groupID` empty → sparkplugNode passed as nil; (c) TagCallback wired from EdgeNode to `NewManager`.
+- [x] **T-6.03** `test` — **[RED]** Extend `cmd/lgb/cmd/server_test.go`: (a) config with `mqtt.groupID` non-empty → `Deps.SparkplugNodeFactory` called, returned node passed to `server.New`; (b) `mqtt.groupID` empty → sparkplugNode passed as nil; (c) TagCallback wired from EdgeNode to `NewManager`.
   - **Files**: `cmd/lgb/cmd/server_test.go`
   - **Reqs**: SPK-PLC-3.2, MQTT-1.1, SPK-1.3
   - **Design**: §9
   - **Deps**: T-6.02
   - **DoD**: `go test ./cmd/lgb/cmd/...` FAILS (cmd wiring absent).
 
-- [ ] **T-6.04** `impl` — **[GREEN]** Update `cmd/lgb/cmd/server.go`: when `cfg.MQTT.GroupID != ""` build `mqtt.NewClient(mqtt.Options{...})` and `sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{..., Devices: buildDeviceConfigs(cfg)})`, capture `edgeNode.HandleTagUpdate` as `tagCallback`; else `tagCallback = nil`. Pass `tagCallback` as fourth arg to `plc.NewManager`. Pass `edgeNode` (or nil) as fifth arg to `server.New`. Add `buildDeviceConfigs(cfg *config.Config) []sparkplug.DeviceConfig` helper. Log INFO `component="sparkplug-edge-node"` when node is built.
+- [x] **T-6.04** `impl` — **[GREEN]** Update `cmd/lgb/cmd/server.go`: when `cfg.MQTT.GroupID != ""` build `mqtt.NewClient(mqtt.Options{...})` and `sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{..., Devices: buildDeviceConfigs(cfg)})`, capture `edgeNode.HandleTagUpdate` as `tagCallback`; else `tagCallback = nil`. Pass `tagCallback` as fourth arg to `plc.NewManager`. Pass `edgeNode` (or nil) as fifth arg to `server.New`. Add `buildDeviceConfigs(cfg *config.Config) []sparkplug.DeviceConfig` helper. Log INFO `component="sparkplug-edge-node"` when node is built.
   - **Files**: `cmd/lgb/cmd/server.go`
   - **Reqs**: MQTT-1.1–1.3, SPK-1.3, SPK-PLC-3.2
   - **Design**: §9
@@ -268,14 +268,14 @@ SparkplugNode interface in server, cmd wiring, integration tests against Mosquit
 
 ### Group C — Integration tests
 
-- [ ] **T-6.05** `test` — **[integration]** Create `internal/mqtt/client_integration_test.go` (`//go:build integration`): (a) `TestIntegration_ConnectPublish` — connect to Mosquitto (`localhost:1883`), subscribe to `spBv1.0/#`, publish NBIRTH, verify subscriber receives on correct topic; (b) `TestIntegration_SetOrderMatters` — high-throughput publish (100 messages QoS 1) → no deadlock within 10 s; (c) `TestIntegration_Reconnect` — disconnect broker (pause container), reconnect fires OnConnect, NBIRTH re-published.
+- [x] **T-6.05** `test` — **[integration]** Create `internal/mqtt/client_integration_test.go` (`//go:build integration`): (a) `TestIntegration_ConnectPublish` — connect to Mosquitto (`localhost:1883`), subscribe to `spBv1.0/#`, publish NBIRTH, verify subscriber receives on correct topic; (b) `TestIntegration_SetOrderMatters` — high-throughput publish (100 messages QoS 1) → no deadlock within 10 s; (c) `TestIntegration_Reconnect` — disconnect broker (pause container), reconnect fires OnConnect, NBIRTH re-published.
   - **Files**: `internal/mqtt/client_integration_test.go`
   - **Reqs**: MQTT-1.1–1.3, MQTT-1.7
   - **Design**: §10 (testing strategy, integration layer)
   - **Deps**: T-6.04
   - **DoD**: `go test -tags=integration -race ./internal/mqtt/...` passes with Mosquitto running.
 
-- [ ] **T-6.06** `test` — **[integration]** Create `internal/sparkplug/edge_node_integration_test.go` (`//go:build integration`): subscribe to `spBv1.0/#` on Mosquitto; (a) `TestIntegration_FullLifecycle` — Start EdgeNode → verify NBIRTH received → simulate TagUpdate → verify DDATA topic and payload → Stop → verify DDEATH; (b) `TestIntegration_ReconnectReplaysNBIRTH` — drop connection → verify NBIRTH+DBIRTH replayed on reconnect, seq=0; (c) `go test -race`.
+- [x] **T-6.06** `test` — **[integration]** Create `internal/sparkplug/edge_node_integration_test.go` (`//go:build integration`): subscribe to `spBv1.0/#` on Mosquitto; (a) `TestIntegration_FullLifecycle` — Start EdgeNode → verify NBIRTH received → simulate TagUpdate → verify DDATA topic and payload → Stop → verify DDEATH; (b) `TestIntegration_ReconnectReplaysNBIRTH` — drop connection → verify NBIRTH+DBIRTH replayed on reconnect, seq=0; (c) `go test -race`.
   - **Files**: `internal/sparkplug/edge_node_integration_test.go`
   - **Reqs**: SPK-1.3–1.7, MQTT-1.3, MQTT-1.5
   - **Design**: §10
@@ -284,7 +284,7 @@ SparkplugNode interface in server, cmd wiring, integration tests against Mosquit
 
 ### Group D — Final build gate
 
-- [ ] **T-6.07** `chore` — Verify `CGO_ENABLED=0 go build -tags no_embed ./...` on all four targets. Verify `go test ./... -race -count=1` (non-integration) passes. Record results in PR description.
+- [x] **T-6.07** `chore` — Verify `CGO_ENABLED=0 go build -tags no_embed ./...` on all four targets. Verify `go test ./... -race -count=1` (non-integration) passes. Record results in PR description.
   - **Files**: (none — verification only)
   - **Reqs**: SPK-1.1, MQTT-1.8
   - **Design**: §12

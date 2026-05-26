@@ -24,8 +24,10 @@ import (
 	"github.com/fgjcarlos/lgb/internal/datadir"
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/log"
+	"github.com/fgjcarlos/lgb/internal/mqtt"
 	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/server"
+	"github.com/fgjcarlos/lgb/internal/sparkplug"
 )
 
 // NewServerCmd returns the server subcommand.
@@ -108,8 +110,21 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	// Build doctor checks for the server.
 	checks := doctor.Default(cfg).Checks()
 
+	// Create the Sparkplug Edge Node when MQTT + GroupID are configured.
+	var spNode server.SparkplugNode
+	if cfg.MQTT.GroupID != "" {
+		factory := d.SparkplugNodeFactory
+		if factory == nil {
+			factory = defaultSparkplugNodeFactory
+		}
+		spNode = factory(cfg)
+		logger.Info("sparkplug edge node created",
+			slog.String("component", "sparkplug"),
+			slog.String("group", cfg.MQTT.GroupID),
+			slog.String("node", cfg.MQTT.EdgeNodeID))
+	}
+
 	// Create the PLC Manager when PLCs are configured.
-	// When no PLCs are configured, plcMgr is nil and server.New handles it safely.
 	var plcMgr server.PLCManager
 	if len(cfg.PLCs) > 0 {
 		factory := d.PLCManagerFactory
@@ -121,8 +136,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 			slog.Int("plc_count", len(cfg.PLCs)))
 	}
 
-	// Start the server.
-	srv := server.New(cfg, logger, checks, plcMgr)
+	srv := server.New(cfg, logger, checks, plcMgr, spNode)
 
 	// Store server reference for tests.
 	if d.serverRef != nil {
@@ -147,9 +161,37 @@ func (d *Deps) getServerForTest() *server.Server {
 }
 
 // defaultPLCManagerFactory is the production PLCManagerFactory.
-// It wraps plc.NewManager to match the server.PLCManager interface.
 func defaultPLCManagerFactory(cfg *config.Config) server.PLCManager {
 	return plc.NewManager(cfg, slog.Default(), nil, nil)
+}
+
+// defaultSparkplugNodeFactory is the production SparkplugNodeFactory.
+func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
+	mqttClient := mqtt.NewClient(mqtt.Options{
+		BrokerURL:    cfg.MQTT.BrokerURL,
+		ClientID:     cfg.MQTT.ClientID,
+		Username:     "",
+		Password:     cfg.MQTT.Password,
+		QoS:          byte(cfg.MQTT.QoS),
+		CleanSession: cfg.MQTT.CleanSession,
+	})
+
+	var devices []sparkplug.DeviceConfig
+	for _, p := range cfg.PLCs {
+		var tags []sparkplug.TagDef
+		for _, t := range p.Tags {
+			tags = append(tags, sparkplug.TagDef{Name: t.Name, SparkplugType: t.Type})
+		}
+		devices = append(devices, sparkplug.DeviceConfig{DeviceID: p.Name, Tags: tags})
+	}
+
+	return sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{
+		GroupID: cfg.MQTT.GroupID,
+		NodeID:  cfg.MQTT.EdgeNodeID,
+		Client:  mqttClient,
+		Devices: devices,
+		Log:     slog.Default(),
+	})
 }
 
 // probePlCSim performs a TCP dial to addr with a 5-second timeout.

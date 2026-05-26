@@ -149,7 +149,7 @@ func (d *Deps) getServerForTest() *server.Server {
 // defaultPLCManagerFactory is the production PLCManagerFactory.
 // It wraps plc.NewManager to match the server.PLCManager interface.
 func defaultPLCManagerFactory(cfg *config.Config) server.PLCManager {
-	return plc.NewManager(cfg, slog.Default(), nil)
+	return plc.NewManager(cfg, slog.Default(), nil, nil)
 }
 
 // probePlCSim performs a TCP dial to addr with a 5-second timeout.

@@ -231,3 +231,12 @@ func TestDefault_NoPLCs_NoCheckRegistered(t *testing.T) {
 		t.Errorf("expected 5 checks with no PLCs, got %d", len(checks))
 	}
 }
+
+func TestResticCheck_FailsWhenBackupConfiguredAndResticMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	c := &resticCheck{cfg: &config.Config{Backup: config.BackupSection{Repos: []config.BackupRepo{{URL: "/backups/lgb", Password: "[REDACTED]"}}}}}
+	got := c.Run(context.Background())
+	if got.Status != StatusFail {
+		t.Fatalf("restic check status = %s; want FAIL when backup is configured", got.Status)
+	}
+}

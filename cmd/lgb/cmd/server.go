@@ -258,13 +258,28 @@ func defaultPLCManagerFactory(cfg *config.Config, tagCb plc.TagCallback) server.
 
 // defaultSparkplugNodeFactory is the production SparkplugNodeFactory.
 func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
+	// Build NDEATH payload for MQTT Will message per Sparkplug B spec.
+	ndeathTopic := fmt.Sprintf("spBv1.0/%s/NDEATH/%s", cfg.MQTT.GroupID, cfg.MQTT.EdgeNodeID)
+	ndeathPayload, _ := sparkplug.BuildNDEATH(0)
+
+	keepAlive := 30 * time.Second
+	if cfg.MQTT.KeepAlive != "" {
+		if d, err := time.ParseDuration(cfg.MQTT.KeepAlive); err == nil && d > 0 {
+			keepAlive = d
+		}
+	}
+
 	mqttClient := mqtt.NewClient(mqtt.Options{
 		BrokerURL:    cfg.MQTT.BrokerURL,
 		ClientID:     cfg.MQTT.ClientID,
-		Username:     "",
 		Password:     cfg.MQTT.Password,
 		QoS:          byte(cfg.MQTT.QoS),
+		KeepAlive:    keepAlive,
 		CleanSession: cfg.MQTT.CleanSession,
+		WillTopic:    ndeathTopic,
+		WillPayload:  ndeathPayload,
+		WillQoS:      1,
+		WillRetain:   false,
 	})
 
 	var devices []sparkplug.DeviceConfig

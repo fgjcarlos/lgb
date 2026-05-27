@@ -7,13 +7,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/mqtt"
 	"github.com/fgjcarlos/lgb/internal/sparkplug"
+	pb "github.com/fgjcarlos/lgb/internal/sparkplug/pb"
+	"google.golang.org/protobuf/proto"
 )
+
+type subscribeCall struct {
+	Topic   string
+	QoS     byte
+	Handler mqtt.MessageHandler
+}
 
 type mockMQTTClient struct {
 	mu           sync.Mutex
 	connected    bool
 	published    []publishCall
+	subscribed   []subscribeCall
 	onConnect    func()
 	disconnected bool
 }
@@ -56,6 +66,21 @@ func (m *mockMQTTClient) IsConnected() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.connected
+}
+
+func (m *mockMQTTClient) Subscribe(_ context.Context, topic string, qos byte, handler mqtt.MessageHandler) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.subscribed = append(m.subscribed, subscribeCall{Topic: topic, QoS: qos, Handler: handler})
+	return nil
+}
+
+func (m *mockMQTTClient) getSubscriptions() []subscribeCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]subscribeCall, len(m.subscribed))
+	copy(cp, m.subscribed)
+	return cp
 }
 
 func (m *mockMQTTClient) SetOnConnect(fn func()) {
@@ -292,4 +317,187 @@ func TestEdgeNode_ConcurrentHandleTagUpdate(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestEdgeNode_Start_SubscribesToNCMDAndDCMD(t *testing.T) {
+	t.Parallel()
+	mc := &mockMQTTClient{}
+	en := sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{
+		GroupID: "plant-a",
+		NodeID:  "lgb-1",
+		Client:  mc,
+		Devices: []sparkplug.DeviceConfig{{DeviceID: "plc-a"}},
+	})
+
+	ctx := context.Background()
+	if err := en.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer func() { _ = en.Stop() }()
+
+	subs := mc.getSubscriptions()
+	if len(subs) < 2 {
+		t.Fatalf("expected at least 2 subscriptions (NCMD+DCMD), got %d", len(subs))
+	}
+
+	ncmdFound, dcmdFound := false, false
+	for _, s := range subs {
+		switch s.Topic {
+		case "spBv1.0/plant-a/NCMD/lgb-1":
+			ncmdFound = true
+		case "spBv1.0/plant-a/DCMD/lgb-1/+":
+			dcmdFound = true
+		}
+	}
+	if !ncmdFound {
+		t.Error("expected NCMD subscription")
+	}
+	if !dcmdFound {
+		t.Error("expected DCMD subscription")
+	}
+}
+
+func TestEdgeNode_NCMD_Rebirth_TriggersNBIRTH(t *testing.T) {
+	t.Parallel()
+	mc := &mockMQTTClient{}
+	en := sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{
+		GroupID: "plant-a",
+		NodeID:  "lgb-1",
+		Client:  mc,
+		Devices: []sparkplug.DeviceConfig{
+			{DeviceID: "plc-a", Tags: []sparkplug.TagDef{{Name: "Motor.Speed", SparkplugType: "Float"}}},
+		},
+	})
+
+	ctx := context.Background()
+	if err := en.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer func() { _ = en.Stop() }()
+
+	// Record publish count before rebirth.
+	beforeRebirth := len(mc.getPublished())
+
+	// Find the NCMD subscription handler and invoke it with a rebirth command.
+	subs := mc.getSubscriptions()
+	var ncmdHandler mqtt.MessageHandler
+	for _, s := range subs {
+		if s.Topic == "spBv1.0/plant-a/NCMD/lgb-1" {
+			ncmdHandler = s.Handler
+			break
+		}
+	}
+	if ncmdHandler == nil {
+		t.Fatal("NCMD subscription handler not found")
+	}
+
+	// Build a rebirth NCMD payload.
+	rebirthPayload := buildRebirthNCMD(t)
+	ncmdHandler("spBv1.0/plant-a/NCMD/lgb-1", rebirthPayload)
+
+	// After rebirth: NBIRTH + DBIRTH should be re-published.
+	pubs := mc.getPublished()
+	afterRebirth := pubs[beforeRebirth:]
+	if len(afterRebirth) < 2 {
+		t.Fatalf("expected at least 2 publishes after rebirth (NBIRTH+DBIRTH), got %d", len(afterRebirth))
+	}
+	if afterRebirth[0].Topic != "spBv1.0/plant-a/NBIRTH/lgb-1" {
+		t.Errorf("first post-rebirth publish topic = %q; want NBIRTH", afterRebirth[0].Topic)
+	}
+}
+
+func TestEdgeNode_DCMD_InvokesCommandHandler(t *testing.T) {
+	t.Parallel()
+
+	var cmdMu sync.Mutex
+	var commands []struct{ Device, Tag string; Value any }
+	onCmd := func(deviceID, tag string, value any) {
+		cmdMu.Lock()
+		commands = append(commands, struct{ Device, Tag string; Value any }{deviceID, tag, value})
+		cmdMu.Unlock()
+	}
+
+	mc := &mockMQTTClient{}
+	en := sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{
+		GroupID:   "plant-a",
+		NodeID:    "lgb-1",
+		Client:    mc,
+		Devices:   []sparkplug.DeviceConfig{{DeviceID: "plc-a"}},
+		OnCommand: onCmd,
+	})
+
+	ctx := context.Background()
+	if err := en.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer func() { _ = en.Stop() }()
+
+	// Find the DCMD subscription handler.
+	subs := mc.getSubscriptions()
+	var dcmdHandler mqtt.MessageHandler
+	for _, s := range subs {
+		if s.Topic == "spBv1.0/plant-a/DCMD/lgb-1/+" {
+			dcmdHandler = s.Handler
+			break
+		}
+	}
+	if dcmdHandler == nil {
+		t.Fatal("DCMD subscription handler not found")
+	}
+
+	// Build a DCMD payload with a float write.
+	dcmdPayload := buildDCMDPayload(t, "Motor.Speed", float32(1500.0))
+	dcmdHandler("spBv1.0/plant-a/DCMD/lgb-1/plc-a", dcmdPayload)
+
+	cmdMu.Lock()
+	defer cmdMu.Unlock()
+	if len(commands) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(commands))
+	}
+	if commands[0].Device != "plc-a" {
+		t.Errorf("command device = %q; want plc-a", commands[0].Device)
+	}
+	if commands[0].Tag != "Motor.Speed" {
+		t.Errorf("command tag = %q; want Motor.Speed", commands[0].Tag)
+	}
+	if v, ok := commands[0].Value.(float32); !ok || v != 1500.0 {
+		t.Errorf("command value = %v; want float32(1500.0)", commands[0].Value)
+	}
+}
+
+// buildRebirthNCMD creates an NCMD payload with "Node Control/Rebirth" = true.
+func buildRebirthNCMD(t *testing.T) []byte {
+	t.Helper()
+	name := "Node Control/Rebirth"
+	dt := uint32(11) // Boolean
+	payload := &pb.Payload{
+		Metrics: []*pb.Payload_Metric{{
+			Name:     &name,
+			Datatype: &dt,
+			Value:    &pb.Payload_Metric_BooleanValue{BooleanValue: true},
+		}},
+	}
+	data, err := proto.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal rebirth NCMD: %v", err)
+	}
+	return data
+}
+
+// buildDCMDPayload creates a DCMD payload with a single float metric.
+func buildDCMDPayload(t *testing.T, tag string, val float32) []byte {
+	t.Helper()
+	dt := uint32(9) // Float
+	payload := &pb.Payload{
+		Metrics: []*pb.Payload_Metric{{
+			Name:     &tag,
+			Datatype: &dt,
+			Value:    &pb.Payload_Metric_FloatValue{FloatValue: val},
+		}},
+	}
+	data, err := proto.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal DCMD: %v", err)
+	}
+	return data
 }

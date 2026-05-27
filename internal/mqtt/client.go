@@ -16,11 +16,15 @@ var (
 	ErrMQTTSubscribe = errs.ErrMQTTSubscribe
 )
 
+// MessageHandler is called when a message arrives on a subscribed topic.
+type MessageHandler func(topic string, payload []byte)
+
 // Client is the boundary interface for MQTT operations.
 type Client interface {
 	Connect(ctx context.Context) error
 	Disconnect(quiesce uint)
 	Publish(ctx context.Context, topic string, qos byte, retained bool, payload []byte) error
+	Subscribe(ctx context.Context, topic string, qos byte, handler MessageHandler) error
 	IsConnected() bool
 	SetOnConnect(fn func())
 }
@@ -134,6 +138,34 @@ func (c *PahoClient) Publish(ctx context.Context, topic string, qos byte, retain
 // IsConnected returns true if the MQTT session is active.
 func (c *PahoClient) IsConnected() bool {
 	return c.client.IsConnected()
+}
+
+// Subscribe registers a handler for the given topic filter.
+func (c *PahoClient) Subscribe(ctx context.Context, topic string, qos byte, handler MessageHandler) error {
+	if !c.client.IsConnected() {
+		return fmt.Errorf("mqtt: subscribe: not connected: %w", ErrMQTTSubscribe)
+	}
+
+	callback := func(_ paho.Client, msg paho.Message) {
+		handler(msg.Topic(), msg.Payload())
+	}
+
+	token := c.client.Subscribe(topic, qos, callback)
+	done := make(chan struct{})
+	go func() {
+		token.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if token.Error() != nil {
+			return fmt.Errorf("mqtt: subscribe %q: %w: %w", topic, ErrMQTTSubscribe, token.Error())
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("mqtt: subscribe %q: %w: %w", topic, ErrMQTTSubscribe, ctx.Err())
+	}
 }
 
 // SetOnConnect registers a callback invoked on every (re)connect.

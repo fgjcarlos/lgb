@@ -29,6 +29,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/log"
 	"github.com/fgjcarlos/lgb/internal/mqtt"
+	"github.com/fgjcarlos/lgb/internal/opcua"
 	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/server"
 	"github.com/fgjcarlos/lgb/internal/sparkplug"
@@ -221,11 +222,23 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	}
 	tokenService := auth.NewTokenService(cfg.Auth.JwtSecret, sessionTTL)
 
+	// Create OPC UA server when enabled and PLCs are configured.
+	var opcuaSrv server.OPCUAServer
+	if cfg.OPCUA.Enabled && plcMgr != nil {
+		if tagSrc, ok := plcMgr.(opcua.TagSource); ok {
+			opcuaSrv = opcua.New(cfg, tagSrc, logger)
+			logger.Info("opcua server created",
+				slog.String("component", "opcua"),
+				slog.Int("port", cfg.OPCUA.Port))
+		}
+	}
+
 	srv := server.New(cfg, logger, checks, server.Opts{
 		PLCMgr:     plcMgr,
 		SpNode:     spNode,
 		HistW:      histW,
 		BkpSch:     bkpSch,
+		OPCUASrv:   opcuaSrv,
 		AuthTokens: tokenService,
 	})
 

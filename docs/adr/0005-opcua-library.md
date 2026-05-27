@@ -1,7 +1,7 @@
 # ADR-0005: OPC UA library — `gopcua/opcua` v0.8.0 + mandatory Phase 1 spike; `awcullen/opcua` named contingency
 
 **Date**: 2026-05-23
-**Status**: Proposed
+**Status**: Accepted (spike passed 2026-05-27)
 
 ## Decision
 
@@ -24,11 +24,21 @@ LGB will act as an OPC UA server (or client bridge) exposing PLC tag data. The l
 
 `gopcua/opcua` is the most complete Go OPC UA library with active maintenance. The mandatory Phase 1 spike gates the final decision — if `CGO_ENABLED=0` verification fails, `awcullen/opcua` is the named fallback. Naming the contingency now prevents a Phase 1 discovery spiral.
 
+## Spike Results (2026-05-27)
+
+`gopcua/opcua` v0.8.0 passed `CGO_ENABLED=0` cross-compilation on all four targets:
+- `GOOS=linux GOARCH=amd64` — PASS
+- `GOOS=linux GOARCH=arm64` — PASS
+- `GOOS=darwin GOARCH=arm64` — PASS
+- `GOOS=windows GOARCH=amd64` — PASS
+
+The server API (`server.New`, `server.Start`, `server.NewNodeNameSpace`, `AddNewVariableStringNode`) works correctly with dynamic value functions for tag reads.
+
 ## Consequences
 
-- **Accepted**: The OPC UA library choice is deferred to Phase 1 spike. This ADR documents the candidate and the decision process.
-- **Monitor**: `gopcua/opcua` upstream CGo posture. Track `awcullen/opcua` maturity.
-- **Revisit**: At `opcua-bridge` change kickoff: run `CGO_ENABLED=0 go build` against the library on all four targets and document the result in this ADR (update status to Accepted or Superseded).
+- **Accepted**: `gopcua/opcua` v0.8.0 is confirmed pure-Go and used for production.
+- **Monitor**: `gopcua/opcua` upstream releases for security fixes.
+- **Contingency**: `awcullen/opcua` remains as fallback if gopcua develops CGo dependencies in future versions.
 
 ## References
 

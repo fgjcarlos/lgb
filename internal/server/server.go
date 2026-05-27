@@ -59,6 +59,13 @@ type BackupScheduler interface {
 	Stop() error
 }
 
+// OPCUAServer is the interface the OPC UA server must satisfy
+// for server lifecycle integration.
+type OPCUAServer interface {
+	Start(ctx context.Context) error
+	Stop() error
+}
+
 // Server is the LGB HTTP server stub.
 type Server struct {
 	cfg        *config.Config
@@ -68,6 +75,7 @@ type Server struct {
 	spNode     SparkplugNode      // nil when MQTT/Sparkplug is not configured
 	histW      HistorianWriter    // nil when historian is not configured
 	bkpSch     BackupScheduler    // nil when backup is not configured
+	opcuaSrv   OPCUAServer        // nil when OPC UA is not configured
 	authTokens *auth.TokenService // nil disables API auth, used by tests only
 	tagHub     *tagHub            // realtime API fanout for PLC tag updates
 
@@ -81,6 +89,7 @@ type Opts struct {
 	SpNode     SparkplugNode
 	HistW      HistorianWriter
 	BkpSch     BackupScheduler
+	OPCUASrv   OPCUAServer
 	AuthTokens *auth.TokenService
 }
 
@@ -95,6 +104,7 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		spNode:     opts.SpNode,
 		histW:      opts.HistW,
 		bkpSch:     opts.BkpSch,
+		opcuaSrv:   opts.OPCUASrv,
 		authTokens: opts.AuthTokens,
 		tagHub:     newTagHub(),
 	}
@@ -185,6 +195,15 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
+	// Start OPC UA server FOURTH (exposes tag values, needs PLC manager running).
+	if s.opcuaSrv != nil {
+		go func() {
+			if err := s.opcuaSrv.Start(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("opcua server: Start returned error", slog.String("error", err.Error()))
+			}
+		}()
+	}
+
 	// Start backup scheduler LAST (periodic backups of historian snapshots).
 	if s.bkpSch != nil {
 		s.bkpSch.Start(ctx)
@@ -216,7 +235,14 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	// Stop PLC manager SECOND (stops tag reads).
+	// Stop OPC UA server SECOND (stops serving tag values).
+	if s.opcuaSrv != nil {
+		if err := s.opcuaSrv.Stop(); err != nil {
+			s.log.Warn("opcua server: Stop returned error", slog.String("error", err.Error()))
+		}
+	}
+
+	// Stop PLC manager THIRD (stops tag reads).
 	if s.plcMgr != nil {
 		if err := s.plcMgr.Stop(); err != nil {
 			s.log.Warn("plc manager: Stop returned error", slog.String("error", err.Error()))

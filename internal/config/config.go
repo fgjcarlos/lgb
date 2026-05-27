@@ -40,8 +40,19 @@ type Config struct {
 	MQTT      MQTTSection      `koanf:"mqtt"`
 	Historian HistorianSection `koanf:"historian"`
 	Backup    BackupSection    `koanf:"backup"`
+	OPCUA     OPCUASection     `koanf:"opcua"`
 	PLCs      []PLC            `koanf:"plcs"`
 	PLCSim    PLCSimSection    `koanf:"plcsim"`
+}
+
+// OPCUASection holds OPC UA server settings.
+type OPCUASection struct {
+	Enabled      bool   `koanf:"enabled"`
+	Host         string `koanf:"host"`
+	Port         int    `koanf:"port"`
+	SecurityMode string `koanf:"securityMode"`
+	CertFile     string `koanf:"certFile"`
+	KeyFile      string `koanf:"keyFile"`
 }
 
 // PLCSimSection holds configuration for the in-process PLC simulator probe.

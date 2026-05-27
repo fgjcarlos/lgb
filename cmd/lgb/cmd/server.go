@@ -183,7 +183,9 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	}
 
 	// Create the Backup Scheduler when repos are configured.
+	// bkpMgr is hoisted to outer scope so it can be passed to server.Opts.
 	var bkpSch server.BackupScheduler
+	var bkpMgr *backup.Manager
 	if len(cfg.Backup.Repos) > 0 {
 		interval, _ := time.ParseDuration(cfg.Backup.Interval)
 		if interval <= 0 {
@@ -194,7 +196,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		for i, r := range cfg.Backup.Repos {
 			repos[i] = backup.Repository{URL: r.URL, Password: r.Password}
 		}
-		bkpMgr := backup.NewManager(nil, repos)
+		bkpMgr = backup.NewManager(nil, repos)
 		snapshotDir := filepath.Join(resolvedPath, "backup-tmp")
 		sched := backup.NewScheduler(bkpMgr, []string{snapshotDir}, interval)
 
@@ -222,6 +224,26 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	}
 	tokenService := auth.NewTokenService(cfg.Auth.JwtSecret, sessionTTL)
 
+	// Create the UserStore (SQLite-backed, stored in datadir).
+	// Use context.Background() for setup: the migration must not be cancelled by
+	// the server's run context, which may already be done in tests.
+	usersDBPath := filepath.Join(resolvedPath, "users.db")
+	userStore, userStoreErr := auth.OpenUserStore(context.Background(), usersDBPath)
+	if userStoreErr != nil {
+		return fmt.Errorf("server: open user store: %w", userStoreErr)
+	}
+	defer userStore.Close()
+	logger.Info("user store opened",
+		slog.String("component", "auth"),
+		slog.String("path", usersDBPath))
+
+	// Create the AuditLogger (appends JSONL events to datadir).
+	auditLog, auditErr := auth.OpenAuditLogger(resolvedPath)
+	if auditErr != nil {
+		return fmt.Errorf("server: open audit logger: %w", auditErr)
+	}
+	defer auditLog.Close()
+
 	// Create OPC UA server when enabled and PLCs are configured.
 	var opcuaSrv server.OPCUAServer
 	if cfg.OPCUA.Enabled && plcMgr != nil {
@@ -240,6 +262,10 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		BkpSch:     bkpSch,
 		OPCUASrv:   opcuaSrv,
 		AuthTokens: tokenService,
+		UserStore:  userStore,
+		AuditLog:   auditLog,
+		HistStore:  histStore,
+		BkpMgr:     bkpMgr,
 	})
 
 	// Store server reference for tests.

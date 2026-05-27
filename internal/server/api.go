@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/plc"
 )
 
@@ -43,9 +44,37 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
+// withMiddleware wraps h with the provided middleware functions. Middleware is
+// applied left-to-right, so the first element in mws is the outermost wrapper
+// and therefore runs first when a request arrives.
+//
+//	withMiddleware(h, mw1, mw2)  →  mw1(mw2(h))
+func withMiddleware(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
+	// Apply in reverse so that mws[0] ends up as the outermost layer.
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return h
+}
+
 func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tags/current", s.handleCurrentTags)
 	mux.HandleFunc("GET /api/ws/tags", s.handleTagsWebSocket)
+
+	// Auth endpoints — login is public; refresh requires a valid token.
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	if s.authTokens != nil {
+		mux.Handle("POST /api/auth/refresh",
+			withMiddleware(http.HandlerFunc(s.handleRefresh), authMiddleware(s.authTokens)))
+	} else {
+		mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+	}
+}
+
+// authMiddleware is a thin adapter that converts auth.Middleware to the
+// func(http.Handler) http.Handler signature expected by withMiddleware.
+func authMiddleware(ts *auth.TokenService) func(http.Handler) http.Handler {
+	return auth.Middleware(ts)
 }
 
 // PublishTagUpdate pushes a PLC tag update to realtime API subscribers.

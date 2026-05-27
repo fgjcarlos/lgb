@@ -17,9 +17,11 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/lgb/internal/auth"
+	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/health"
+	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/httpx"
 	"github.com/fgjcarlos/lgb/internal/plc"
 )
@@ -79,6 +81,12 @@ type Server struct {
 	authTokens *auth.TokenService // nil disables API auth, used by tests only
 	tagHub     *tagHub            // realtime API fanout for PLC tag updates
 
+	// Domain store dependencies (all nil-safe).
+	userStore *auth.UserStore
+	auditLog  *auth.AuditLogger
+	histStore *historian.Store
+	bkpMgr    *backup.Manager
+
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
 }
@@ -91,6 +99,12 @@ type Opts struct {
 	BkpSch     BackupScheduler
 	OPCUASrv   OPCUAServer
 	AuthTokens *auth.TokenService
+
+	// Domain store dependencies (all optional).
+	UserStore *auth.UserStore
+	AuditLog  *auth.AuditLogger
+	HistStore *historian.Store
+	BkpMgr    *backup.Manager
 }
 
 // New creates a new Server. All optional dependencies in opts may be nil;
@@ -107,6 +121,10 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		opcuaSrv:   opts.OPCUASrv,
 		authTokens: opts.AuthTokens,
 		tagHub:     newTagHub(),
+		userStore:  opts.UserStore,
+		auditLog:   opts.AuditLog,
+		histStore:  opts.HistStore,
+		bkpMgr:     opts.BkpMgr,
 	}
 }
 

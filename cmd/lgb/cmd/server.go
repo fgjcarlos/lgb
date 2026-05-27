@@ -234,6 +234,21 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		*d.serverRef = srv
 	}
 
+	// Start config file watcher for PLC hot-reload.
+	if plcMgr != nil && d.ConfigPath != "" {
+		watchCtx := ctx
+		go func() {
+			_ = config.Watch(watchCtx, d.ConfigPath, func(newCfg *config.Config) {
+				logger.Info("config changed, reloading PLC manager", slog.String("component", "config-watch"))
+				if err := plcMgr.Reload(watchCtx, newCfg); err != nil {
+					logger.Warn("plc manager reload error",
+						slog.String("component", "config-watch"),
+						slog.String("err", err.Error()))
+				}
+			})
+		}()
+	}
+
 	if err := srv.Run(ctx); err != nil {
 		logger.Error("server error", slog.String("error", err.Error()))
 		return err

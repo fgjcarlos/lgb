@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
 
@@ -197,6 +198,8 @@ func (m *mockPLCManager) Stop() error {
 	m.mu.Unlock()
 	return m.stopErr
 }
+
+func (m *mockPLCManager) Reload(_ context.Context, _ *config.Config) error { return nil }
 
 func (m *mockPLCManager) StartWasCalled() bool {
 	m.mu.Lock()

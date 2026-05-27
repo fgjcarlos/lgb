@@ -34,7 +34,7 @@ func TestIntegration_ManagerStartStop(t *testing.T) {
 		},
 	}
 
-	mgr := plc.NewManager(cfg, nil, nil) // nil factory → uses NewDriver
+	mgr := plc.NewManager(cfg, nil, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -93,7 +93,7 @@ func TestIntegration_ManagerReload(t *testing.T) {
 		},
 	}
 
-	mgr := plc.NewManager(cfgA, nil, nil)
+	mgr := plc.NewManager(cfgA, nil, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -174,7 +174,7 @@ func TestIntegration_ManagerPLCRemoval(t *testing.T) {
 		},
 	}
 
-	mgr := plc.NewManager(cfg, nil, nil)
+	mgr := plc.NewManager(cfg, nil, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

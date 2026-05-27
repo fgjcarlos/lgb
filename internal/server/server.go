@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/health"
@@ -59,14 +60,15 @@ type BackupScheduler interface {
 
 // Server is the LGB HTTP server stub.
 type Server struct {
-	cfg    *config.Config
-	log    *slog.Logger
-	checks []doctor.Check
-	plcMgr PLCManager      // nil when no PLCs are configured
-	spNode SparkplugNode   // nil when MQTT/Sparkplug is not configured
-	histW  HistorianWriter // nil when historian is not configured
-	bkpSch BackupScheduler // nil when backup is not configured
-	tagHub *tagHub         // realtime API fanout for PLC tag updates
+	cfg        *config.Config
+	log        *slog.Logger
+	checks     []doctor.Check
+	plcMgr     PLCManager         // nil when no PLCs are configured
+	spNode     SparkplugNode      // nil when MQTT/Sparkplug is not configured
+	histW      HistorianWriter    // nil when historian is not configured
+	bkpSch     BackupScheduler    // nil when backup is not configured
+	authTokens *auth.TokenService // nil disables API auth, used by tests only
+	tagHub     *tagHub            // realtime API fanout for PLC tag updates
 
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
@@ -74,24 +76,26 @@ type Server struct {
 
 // Opts groups optional server dependencies. All fields may be nil.
 type Opts struct {
-	PLCMgr PLCManager
-	SpNode SparkplugNode
-	HistW  HistorianWriter
-	BkpSch BackupScheduler
+	PLCMgr     PLCManager
+	SpNode     SparkplugNode
+	HistW      HistorianWriter
+	BkpSch     BackupScheduler
+	AuthTokens *auth.TokenService
 }
 
 // New creates a new Server. All optional dependencies in opts may be nil;
 // Run handles the nil cases without panicking.
 func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts) *Server {
 	return &Server{
-		cfg:    cfg,
-		log:    log,
-		checks: checks,
-		plcMgr: opts.PLCMgr,
-		spNode: opts.SpNode,
-		histW:  opts.HistW,
-		bkpSch: opts.BkpSch,
-		tagHub: newTagHub(),
+		cfg:        cfg,
+		log:        log,
+		checks:     checks,
+		plcMgr:     opts.PLCMgr,
+		spNode:     opts.SpNode,
+		histW:      opts.HistW,
+		bkpSch:     opts.BkpSch,
+		authTokens: opts.AuthTokens,
+		tagHub:     newTagHub(),
 	}
 }
 

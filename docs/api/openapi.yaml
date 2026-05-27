@@ -46,8 +46,14 @@ paths:
     get:
       summary: WebSocket stream for live PLC tag updates
       description: |
-        Upgrade to WebSocket and receive JSON tag_update messages.
-        Optional `plc` and `tag` query parameters filter the stream.
+        Upgrade to WebSocket and exchange JSON messages for live PLC tag updates.
+        Authentication uses a JWT bearer token in the `Authorization` header or
+        `token` query parameter. Optional initial `plc` and `tag` query
+        parameters filter the stream. Clients can later send
+        `{ "type": "subscribe", "plc": "...", "tag": "..." }`,
+        `{ "type": "unsubscribe" }`, or `{ "type": "ping" }`. The server
+        replies with `subscribed`, `unsubscribed`, `pong`, periodic `ping`, and
+        `tag_update` messages.
       parameters:
         - name: plc
           in: query
@@ -57,9 +63,20 @@ paths:
           in: query
           schema:
             type: string
+        - name: token
+          in: query
+          description: JWT bearer token for browser clients that cannot set Authorization during upgrade.
+          schema:
+            type: string
       responses:
         "101":
           description: WebSocket upgrade accepted
+        "401":
+          description: Missing or invalid JWT token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     TagValue:

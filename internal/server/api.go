@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -83,43 +86,147 @@ func (s *Server) handleCurrentTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTagsWebSocket(w http.ResponseWriter, r *http.Request) {
+	if s.authTokens != nil && !s.authorizeAPIRequest(w, r) {
+		return
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
-	sub := &tagSubscriber{
-		plc: r.URL.Query().Get("plc"),
-		tag: r.URL.Query().Get("tag"),
-		ch:  make(chan plc.TagUpdate, 16),
-	}
+	sub := &tagSubscriber{ch: make(chan plc.TagUpdate, 16)}
+	sub.setFilter(r.URL.Query().Get("plc"), r.URL.Query().Get("tag"))
 	s.tagHub.register(sub)
 	defer s.tagHub.unregister(sub)
 
-	if err := wsjson.Write(r.Context(), conn, struct {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	writeErr := make(chan error, 1)
+	var writeMu sync.Mutex
+	writeJSONMessage := func(value any) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return wsjson.Write(ctx, conn, value)
+	}
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case update, ok := <-sub.ch:
+				if !ok {
+					return
+				}
+				msg := struct {
+					Type      string    `json:"type"`
+					PLC       string    `json:"plc"`
+					Tag       string    `json:"tag"`
+					Value     any       `json:"value"`
+					Timestamp time.Time `json:"timestamp"`
+				}{Type: "tag_update", PLC: update.PLCName, Tag: update.Tag, Value: update.Value, Timestamp: update.Timestamp}
+				if err := writeJSONMessage(msg); err != nil {
+					cancel()
+					writeErr <- err
+					return
+				}
+			case <-ticker.C:
+				if err := writeJSONMessage(struct {
+					Type string `json:"type"`
+				}{Type: "ping"}); err != nil {
+					cancel()
+					writeErr <- err
+					return
+				}
+			}
+		}
+	}()
+
+	if err := writeJSONMessage(struct {
 		Type string `json:"type"`
-	}{Type: "subscribed"}); err != nil {
+		PLC  string `json:"plc,omitempty"`
+		Tag  string `json:"tag,omitempty"`
+	}{Type: "subscribed", PLC: r.URL.Query().Get("plc"), Tag: r.URL.Query().Get("tag")}); err != nil {
 		return
 	}
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
-		case update := <-sub.ch:
-			msg := struct {
-				Type      string    `json:"type"`
-				PLC       string    `json:"plc"`
-				Tag       string    `json:"tag"`
-				Value     any       `json:"value"`
-				Timestamp time.Time `json:"timestamp"`
-			}{Type: "tag_update", PLC: update.PLCName, Tag: update.Tag, Value: update.Value, Timestamp: update.Timestamp}
-			if err := wsjson.Write(r.Context(), conn, msg); err != nil {
+		case <-writeErr:
+			return
+		default:
+		}
+
+		var msg tagWSClientMessage
+		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+			return
+		}
+		switch msg.Type {
+		case "subscribe":
+			sub.setFilter(msg.PLC, msg.Tag)
+			if err := writeJSONMessage(struct {
+				Type string `json:"type"`
+				PLC  string `json:"plc,omitempty"`
+				Tag  string `json:"tag,omitempty"`
+			}{Type: "subscribed", PLC: msg.PLC, Tag: msg.Tag}); err != nil {
+				return
+			}
+		case "unsubscribe":
+			sub.unsubscribe()
+			if err := writeJSONMessage(struct {
+				Type string `json:"type"`
+			}{Type: "unsubscribed"}); err != nil {
+				return
+			}
+		case "ping":
+			if err := writeJSONMessage(struct {
+				Type string `json:"type"`
+			}{Type: "pong"}); err != nil {
+				return
+			}
+		default:
+			if err := writeJSONMessage(struct {
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}{Type: "error", Code: "bad_message", Message: "type must be subscribe, unsubscribe, or ping"}); err != nil {
 				return
 			}
 		}
 	}
+}
+
+type tagWSClientMessage struct {
+	Type string `json:"type"`
+	PLC  string `json:"plc,omitempty"`
+	Tag  string `json:"tag,omitempty"`
+}
+
+func (s *Server) authorizeAPIRequest(w http.ResponseWriter, r *http.Request) bool {
+	token := extractBearerOrQueryToken(r)
+	if token == "" {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing authorization token")
+		return false
+	}
+	if _, err := s.authTokens.Validate(token); err != nil {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+		return false
+	}
+	return true
+}
+
+func extractBearerOrQueryToken(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	}
+	return r.URL.Query().Get("token")
 }
 
 func parsePagination(w http.ResponseWriter, r *http.Request) (limit int, offset int, ok bool) {

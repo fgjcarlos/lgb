@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/datadir"
@@ -210,11 +211,22 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 			slog.String("interval", interval.String()))
 	}
 
+	sessionTTL := 8 * time.Hour
+	if cfg.Auth.SessionTTL != "" {
+		parsedTTL, ttlErr := time.ParseDuration(cfg.Auth.SessionTTL)
+		if ttlErr != nil {
+			return fmt.Errorf("server: auth.sessionTTL: %w", ttlErr)
+		}
+		sessionTTL = parsedTTL
+	}
+	tokenService := auth.NewTokenService(cfg.Auth.JwtSecret, sessionTTL)
+
 	srv := server.New(cfg, logger, checks, server.Opts{
-		PLCMgr: plcMgr,
-		SpNode: spNode,
-		HistW:  histW,
-		BkpSch: bkpSch,
+		PLCMgr:     plcMgr,
+		SpNode:     spNode,
+		HistW:      histW,
+		BkpSch:     bkpSch,
+		AuthTokens: tokenService,
 	})
 
 	// Store server reference for tests.

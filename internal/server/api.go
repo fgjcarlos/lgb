@@ -70,6 +70,26 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
 	}
 
+	// Historian query endpoint — viewer+.
+	if s.histStore != nil {
+		if s.authTokens != nil {
+			mux.Handle("GET /api/historian/query",
+				withMiddleware(http.HandlerFunc(s.handleHistorianQuery), authMiddleware(s.authTokens)))
+		} else {
+			mux.HandleFunc("GET /api/historian/query", s.handleHistorianQuery)
+		}
+	} else {
+		mux.HandleFunc("GET /api/historian/query", s.handleHistorianQuery)
+	}
+
+	// Doctor endpoint — viewer+.
+	if s.authTokens != nil {
+		mux.Handle("GET /api/doctor",
+			withMiddleware(http.HandlerFunc(s.handleDoctor), authMiddleware(s.authTokens)))
+	} else {
+		mux.HandleFunc("GET /api/doctor", s.handleDoctor)
+	}
+
 	// User CRUD endpoints — admin only.
 	if s.userStore != nil && s.authTokens != nil {
 		adminMWs := []func(http.Handler) http.Handler{

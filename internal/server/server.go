@@ -105,15 +105,27 @@ type Opts struct {
 	AuditLog  *auth.AuditLogger
 	HistStore *historian.Store
 	BkpMgr    *backup.Manager
+
+	// Checks is the list of doctor.Check instances run by GET /api/doctor.
+	// When nil, the server starts with no checks registered.
+	Checks []doctor.Check
 }
 
 // New creates a new Server. All optional dependencies in opts may be nil;
 // Run handles the nil cases without panicking.
+//
+// Checks from both the positional parameter and opts.Checks are merged; opts.Checks
+// is appended after the positional slice so callers can inject test-only checks
+// via Opts without altering production call sites.
 func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts) *Server {
+	allChecks := checks
+	if len(opts.Checks) > 0 {
+		allChecks = append(allChecks, opts.Checks...)
+	}
 	return &Server{
 		cfg:        cfg,
 		log:        log,
-		checks:     checks,
+		checks:     allChecks,
 		plcMgr:     opts.PLCMgr,
 		spNode:     opts.SpNode,
 		histW:      opts.HistW,

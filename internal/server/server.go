@@ -29,6 +29,7 @@ import (
 type PLCManager interface {
 	Start(ctx context.Context) error
 	Stop() error
+	Reload(ctx context.Context, cfg *config.Config) error
 }
 
 // tagUpdateHook is implemented by PLC managers that can fan out scanned tag

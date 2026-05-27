@@ -150,6 +150,12 @@ func (s *UserStore) Count(ctx context.Context) (int, error) {
 	return count, err
 }
 
+func (s *UserStore) CountByRole(ctx context.Context, role Role) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = ?`, string(role)).Scan(&count)
+	return count, err
+}
+
 func (s *UserStore) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	user, err := s.GetByUsername(ctx, username)
 	if err != nil {

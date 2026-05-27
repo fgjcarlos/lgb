@@ -97,13 +97,15 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go s.refreshLoop(ctx)
 
-	if err := srv.Start(ctx); err != nil {
-		s.mu.Lock()
-		s.running = false
-		s.mu.Unlock()
+	err := srv.Start(ctx)
+
+	s.mu.Lock()
+	s.running = false
+	s.mu.Unlock()
+
+	if err != nil && ctx.Err() == nil {
 		return fmt.Errorf("opcua: start: %w", err)
 	}
-
 	return nil
 }
 

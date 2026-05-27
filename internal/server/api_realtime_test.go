@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/testutil"
@@ -140,13 +141,138 @@ func TestServer_TagsWebSocketStreamsMatchingUpdates(t *testing.T) {
 	}
 }
 
+func TestServer_TagsWebSocketRequiresValidJWTWhenConfigured(t *testing.T) {
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{AuthTokens: tokens})
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags?plc=packaging&tag=Speed"
+	_, resp, err := websocket.Dial(ctx, wsURL, nil)
+	if err == nil {
+		t.Fatal("expected websocket dial without token to fail")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		got := 0
+		if resp != nil {
+			got = resp.StatusCode
+		}
+		t.Fatalf("expected 401 response, got %d (err=%v)", got, err)
+	}
+
+	token, err := tokens.Issue(1, "operator", auth.RoleOperator)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	conn, _, err := websocket.Dial(ctx, wsURL+"&token="+token, nil)
+	if err != nil {
+		t.Fatalf("dial websocket with token: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	var ack struct {
+		Type string `json:"type"`
+	}
+	if err := wsjson.Read(ctx, conn, &ack); err != nil {
+		t.Fatalf("read subscription ack: %v", err)
+	}
+	if ack.Type != "subscribed" {
+		t.Fatalf("unexpected subscription ack: %#v", ack)
+	}
+}
+
+func TestServer_TagsWebSocketSupportsSubscribeUnsubscribeAndPing(t *testing.T) {
+	srv, baseURL, stop := startAPITestServer(t, &snapshotPLCManager{})
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	var ack struct {
+		Type string `json:"type"`
+		PLC  string `json:"plc"`
+		Tag  string `json:"tag"`
+	}
+	if err := wsjson.Read(ctx, conn, &ack); err != nil {
+		t.Fatalf("read initial ack: %v", err)
+	}
+	if ack.Type != "subscribed" {
+		t.Fatalf("unexpected initial ack: %#v", ack)
+	}
+
+	if err := wsjson.Write(ctx, conn, tagWSClientMessage{Type: "subscribe", PLC: "packaging", Tag: "Speed"}); err != nil {
+		t.Fatalf("send subscribe: %v", err)
+	}
+	if err := wsjson.Read(ctx, conn, &ack); err != nil {
+		t.Fatalf("read subscribe ack: %v", err)
+	}
+	if ack.Type != "subscribed" || ack.PLC != "packaging" || ack.Tag != "Speed" {
+		t.Fatalf("unexpected subscribe ack: %#v", ack)
+	}
+
+	wantTS := time.Date(2026, 5, 26, 12, 2, 0, 0, time.UTC)
+	srv.PublishTagUpdate(plc.TagUpdate{PLCName: "packaging", Tag: "Speed", Value: int32(121), Timestamp: wantTS})
+	var update struct {
+		Type      string    `json:"type"`
+		PLC       string    `json:"plc"`
+		Tag       string    `json:"tag"`
+		Value     int32     `json:"value"`
+		Timestamp time.Time `json:"timestamp"`
+	}
+	if err := wsjson.Read(ctx, conn, &update); err != nil {
+		t.Fatalf("read subscribed update: %v", err)
+	}
+	if update.Type != "tag_update" || update.PLC != "packaging" || update.Tag != "Speed" || update.Value != 121 || !update.Timestamp.Equal(wantTS) {
+		t.Fatalf("unexpected update: %#v", update)
+	}
+
+	if err := wsjson.Write(ctx, conn, tagWSClientMessage{Type: "ping"}); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+	var pong struct {
+		Type string `json:"type"`
+	}
+	if err := wsjson.Read(ctx, conn, &pong); err != nil {
+		t.Fatalf("read pong: %v", err)
+	}
+	if pong.Type != "pong" {
+		t.Fatalf("unexpected ping response: %#v", pong)
+	}
+
+	if err := wsjson.Write(ctx, conn, tagWSClientMessage{Type: "unsubscribe"}); err != nil {
+		t.Fatalf("send unsubscribe: %v", err)
+	}
+	var unsub struct {
+		Type string `json:"type"`
+	}
+	if err := wsjson.Read(ctx, conn, &unsub); err != nil {
+		t.Fatalf("read unsubscribe ack: %v", err)
+	}
+	if unsub.Type != "unsubscribed" {
+		t.Fatalf("unexpected unsubscribe ack: %#v", unsub)
+	}
+}
+
 func startAPITestServer(t *testing.T, mgr PLCManager) (*Server, string, func()) {
+	t.Helper()
+	return startAPITestServerWithOpts(t, mgr, Opts{})
+}
+
+func startAPITestServerWithOpts(t *testing.T, mgr PLCManager, opts Opts) (*Server, string, func()) {
 	t.Helper()
 	cfg := testutil.MinimalConfig(t)
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 	cfg.PLCs = []config.PLC{{Name: "packaging", Tags: []config.TagDef{{Name: "Speed", Type: "Float"}}}}
 	logger := testutil.NewLogger(t)
-	srv := New(cfg, logger, nil, Opts{PLCMgr: mgr})
+	opts.PLCMgr = mgr
+	srv := New(cfg, logger, nil, opts)
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Run(ctx) }()

@@ -12,9 +12,11 @@ type tagHub struct {
 }
 
 type tagSubscriber struct {
-	plc string
-	tag string
-	ch  chan plc.TagUpdate
+	mu     sync.RWMutex
+	plc    string
+	tag    string
+	active bool
+	ch     chan plc.TagUpdate
 }
 
 func newTagHub() *tagHub {
@@ -50,7 +52,28 @@ func (h *tagHub) publish(update plc.TagUpdate) {
 	}
 }
 
+func (s *tagSubscriber) setFilter(plcName, tagName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plc = plcName
+	s.tag = tagName
+	s.active = true
+}
+
+func (s *tagSubscriber) unsubscribe() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plc = ""
+	s.tag = ""
+	s.active = false
+}
+
 func (s *tagSubscriber) matches(update plc.TagUpdate) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.active {
+		return false
+	}
 	if s.plc != "" && s.plc != update.PLCName {
 		return false
 	}

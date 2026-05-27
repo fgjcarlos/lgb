@@ -77,5 +77,63 @@ func EncodeMetric(name string, value any, ts time.Time) (*pb.Payload_Metric, err
 	return m, nil
 }
 
+// DecodeMetricValue extracts a Go value from a Sparkplug B Metric.
+func DecodeMetricValue(m *pb.Payload_Metric) any {
+	if m == nil || m.Datatype == nil {
+		return nil
+	}
+	switch *m.Datatype {
+	case dtBoolean:
+		if v, ok := m.Value.(*pb.Payload_Metric_BooleanValue); ok {
+			return v.BooleanValue
+		}
+	case dtInt8:
+		if v, ok := m.Value.(*pb.Payload_Metric_IntValue); ok {
+			return int8(v.IntValue)
+		}
+	case dtInt16:
+		if v, ok := m.Value.(*pb.Payload_Metric_IntValue); ok {
+			return int16(v.IntValue)
+		}
+	case dtInt32:
+		if v, ok := m.Value.(*pb.Payload_Metric_IntValue); ok {
+			return int32(v.IntValue)
+		}
+	case dtInt64:
+		if v, ok := m.Value.(*pb.Payload_Metric_LongValue); ok {
+			return int64(v.LongValue)
+		}
+	case dtUInt8:
+		if v, ok := m.Value.(*pb.Payload_Metric_IntValue); ok {
+			return uint8(v.IntValue)
+		}
+	case dtUInt16:
+		if v, ok := m.Value.(*pb.Payload_Metric_IntValue); ok {
+			return uint16(v.IntValue)
+		}
+	case dtUInt32:
+		if v, ok := m.Value.(*pb.Payload_Metric_IntValue); ok {
+			return v.IntValue
+		}
+	case dtUInt64:
+		if v, ok := m.Value.(*pb.Payload_Metric_LongValue); ok {
+			return v.LongValue
+		}
+	case dtFloat:
+		if v, ok := m.Value.(*pb.Payload_Metric_FloatValue); ok {
+			return v.FloatValue
+		}
+	case dtDouble:
+		if v, ok := m.Value.(*pb.Payload_Metric_DoubleValue); ok {
+			return v.DoubleValue
+		}
+	case dtString:
+		if v, ok := m.Value.(*pb.Payload_Metric_StringValue); ok {
+			return v.StringValue
+		}
+	}
+	return nil
+}
+
 func uint32Ptr(v uint32) *uint32 { return &v }
 func uint64Ptr(v uint64) *uint64 { return &v }

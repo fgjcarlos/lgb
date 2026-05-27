@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/fgjcarlos/lgb/internal/mqtt"
+	pb "github.com/fgjcarlos/lgb/internal/sparkplug/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 // DeviceConfig maps a PLC to its Sparkplug metric definitions.
@@ -15,22 +18,27 @@ type DeviceConfig struct {
 	Tags     []TagDef
 }
 
+// CommandHandler is invoked when a DCMD arrives with a tag write request.
+type CommandHandler func(deviceID, tag string, value any)
+
 // EdgeNodeConfig configures the Sparkplug B edge node.
 type EdgeNodeConfig struct {
-	GroupID string
-	NodeID  string
-	Client  mqtt.Client
-	Devices []DeviceConfig
-	Log     *slog.Logger
+	GroupID   string
+	NodeID    string
+	Client    mqtt.Client
+	Devices   []DeviceConfig
+	Log       *slog.Logger
+	OnCommand CommandHandler
 }
 
 // EdgeNode orchestrates the Sparkplug B lifecycle.
 type EdgeNode struct {
-	groupID string
-	nodeID  string
-	client  mqtt.Client
-	devices []DeviceConfig
-	log     *slog.Logger
+	groupID   string
+	nodeID    string
+	client    mqtt.Client
+	devices   []DeviceConfig
+	log       *slog.Logger
+	onCommand CommandHandler
 
 	sm  StateMachine
 	seq SeqTracker
@@ -47,12 +55,13 @@ func NewEdgeNode(cfg EdgeNodeConfig) *EdgeNode {
 		log = slog.Default()
 	}
 	return &EdgeNode{
-		groupID: cfg.GroupID,
-		nodeID:  cfg.NodeID,
-		client:  cfg.Client,
-		devices: cfg.Devices,
-		log:     log,
-		updates: make(chan TagUpdate, 256),
+		groupID:   cfg.GroupID,
+		nodeID:    cfg.NodeID,
+		client:    cfg.Client,
+		devices:   cfg.Devices,
+		log:       log,
+		onCommand: cfg.OnCommand,
+		updates:   make(chan TagUpdate, 256),
 	}
 }
 
@@ -158,6 +167,64 @@ func (e *EdgeNode) onConnect() {
 	}
 
 	e.sm.Transition(EventConnectSuccess)
+
+	// Subscribe to NCMD (node commands) and DCMD (device commands).
+	ncmdTopic := nodeTopic(e.groupID, e.nodeID, "NCMD")
+	if err := e.client.Subscribe(ctx, ncmdTopic, 1, e.handleNCMD); err != nil {
+		e.log.Warn("sparkplug: NCMD subscribe error", slog.String("err", err.Error()))
+	}
+
+	dcmdTopic := fmt.Sprintf("spBv1.0/%s/DCMD/%s/+", e.groupID, e.nodeID)
+	if err := e.client.Subscribe(ctx, dcmdTopic, 1, e.handleDCMD); err != nil {
+		e.log.Warn("sparkplug: DCMD subscribe error", slog.String("err", err.Error()))
+	}
+}
+
+func (e *EdgeNode) handleNCMD(_ string, payload []byte) {
+	var p pb.Payload
+	if err := proto.Unmarshal(payload, &p); err != nil {
+		e.log.Warn("sparkplug: NCMD decode error", slog.String("err", err.Error()))
+		return
+	}
+	for _, m := range p.Metrics {
+		if m.Name != nil && *m.Name == "Node Control/Rebirth" {
+			if v, ok := m.Value.(*pb.Payload_Metric_BooleanValue); ok && v.BooleanValue {
+				e.log.Info("sparkplug: rebirth requested via NCMD")
+				e.onConnect()
+				return
+			}
+		}
+	}
+}
+
+func (e *EdgeNode) handleDCMD(topic string, payload []byte) {
+	if e.onCommand == nil {
+		return
+	}
+
+	// Extract device ID from topic: spBv1.0/{group}/DCMD/{node}/{device}
+	parts := strings.Split(topic, "/")
+	if len(parts) < 5 {
+		return
+	}
+	deviceID := parts[4]
+
+	var p pb.Payload
+	if err := proto.Unmarshal(payload, &p); err != nil {
+		e.log.Warn("sparkplug: DCMD decode error", slog.String("device", deviceID), slog.String("err", err.Error()))
+		return
+	}
+
+	for _, m := range p.Metrics {
+		if m.Name == nil {
+			continue
+		}
+		val := DecodeMetricValue(m)
+		if val == nil {
+			continue
+		}
+		e.onCommand(deviceID, *m.Name, val)
+	}
 }
 
 func (e *EdgeNode) publishLoop() {

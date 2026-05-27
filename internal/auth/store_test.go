@@ -194,3 +194,37 @@ func TestUserStore_InvalidRole(t *testing.T) {
 		t.Error("expected error for invalid role")
 	}
 }
+
+func TestUserStore_CountByRole(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Seed: 2 admins + 1 viewer.
+	_, _ = s.Create(ctx, "admin1", "pass", RoleAdmin)
+	_, _ = s.Create(ctx, "admin2", "pass", RoleAdmin)
+	_, _ = s.Create(ctx, "viewer1", "pass", RoleViewer)
+
+	n, err := s.CountByRole(ctx, RoleAdmin)
+	if err != nil {
+		t.Fatalf("CountByRole(admin): %v", err)
+	}
+	if n != 2 {
+		t.Errorf("CountByRole(admin) = %d; want 2", n)
+	}
+
+	n, err = s.CountByRole(ctx, RoleViewer)
+	if err != nil {
+		t.Fatalf("CountByRole(viewer): %v", err)
+	}
+	if n != 1 {
+		t.Errorf("CountByRole(viewer) = %d; want 1", n)
+	}
+
+	n, err = s.CountByRole(ctx, RoleOperator)
+	if err != nil {
+		t.Fatalf("CountByRole(operator): %v", err)
+	}
+	if n != 0 {
+		t.Errorf("CountByRole(operator) = %d; want 0", n)
+	}
+}

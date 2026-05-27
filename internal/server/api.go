@@ -69,6 +69,26 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	} else {
 		mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
 	}
+
+	// User CRUD endpoints — admin only.
+	if s.userStore != nil && s.authTokens != nil {
+		adminMWs := []func(http.Handler) http.Handler{
+			authMiddleware(s.authTokens),
+			auth.RequireRole(auth.RoleAdmin),
+		}
+		mux.Handle("GET /api/users",
+			withMiddleware(http.HandlerFunc(s.handleListUsers), adminMWs...))
+		mux.Handle("POST /api/users",
+			withMiddleware(http.HandlerFunc(s.handleCreateUser), adminMWs...))
+		mux.Handle("GET /api/users/{id}",
+			withMiddleware(http.HandlerFunc(s.handleGetUser), adminMWs...))
+		mux.Handle("PUT /api/users/{id}/role",
+			withMiddleware(http.HandlerFunc(s.handleUpdateUserRole), adminMWs...))
+		mux.Handle("PUT /api/users/{id}/password",
+			withMiddleware(http.HandlerFunc(s.handleUpdateUserPassword), adminMWs...))
+		mux.Handle("DELETE /api/users/{id}",
+			withMiddleware(http.HandlerFunc(s.handleDeleteUser), adminMWs...))
+	}
 }
 
 // authMiddleware is a thin adapter that converts auth.Middleware to the

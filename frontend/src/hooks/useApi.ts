@@ -39,6 +39,31 @@ export function useCurrentTags(
   });
 }
 
+export interface MappingTag {
+  name: string;
+  type: string;
+}
+
+export interface Mapping {
+  plc: string;
+  address: string;
+  scan_rate: string;
+  tags: MappingTag[];
+}
+
+export function useMappings(): UseQueryResult<
+  { data: Mapping[] },
+  ApiError | Error
+> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["config", "mappings"],
+    queryFn: () =>
+      apiFetch<{ data: Mapping[] }>("/api/config/mappings", { token }),
+    enabled: !!token,
+  });
+}
+
 // ─── Stub hooks: filled in by PRs 4 and 5 ──────────────────────────────────
 
 export interface HistorianSample {

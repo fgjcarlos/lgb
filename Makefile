@@ -9,9 +9,13 @@ DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # Target: -X github.com/fgjcarlos/lgb/internal/version.{Version,Commit,Date}
 LDFLAGS := -X github.com/fgjcarlos/lgb/internal/version.Version=$(VERSION) -X github.com/fgjcarlos/lgb/internal/version.Commit=$(COMMIT) -X github.com/fgjcarlos/lgb/internal/version.Date=$(DATE)
 
+## build — produce a backend binary. The embedded SPA is whatever happens to be
+## in frontend/dist/ at build time: a fresh clone has only the .gitkeep
+## placeholder (server logs a warning and skips the SPA mount), while a prior
+## `make build-with-ui` populates the full bundle.
 build:
 	mkdir -p bin
-	CGO_ENABLED=0 go build -tags no_embed -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME) ./cmd/lgb
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME) ./cmd/lgb
 
 ## frontend-install — install frontend npm dependencies via `npm ci`.
 ## Requirements: FE-CFG-1, FE-NFR-1.
@@ -45,13 +49,14 @@ clean:
 
 # build-all cross-compiles the binary for all four target platforms.
 # Used by CI and release workflows. CGO_ENABLED=0 is mandatory (ADR-0009).
-# -tags no_embed prevents requiring frontend/dist at cross-compile time.
+# Whatever lives in frontend/dist/ at build time is embedded; .gitkeep alone
+# produces a backend-only binary that skips SPA mounting at runtime.
 build-all:
 	mkdir -p bin
-	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -tags no_embed -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-linux-amd64       ./cmd/lgb
-	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -tags no_embed -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-linux-arm64       ./cmd/lgb
-	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -tags no_embed -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-darwin-arm64      ./cmd/lgb
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags no_embed -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-windows-amd64.exe ./cmd/lgb
+	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-linux-amd64       ./cmd/lgb
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-linux-arm64       ./cmd/lgb
+	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-darwin-arm64      ./cmd/lgb
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-windows-amd64.exe ./cmd/lgb
 
 ## docker-up — start the development stack (gateway + plcsim + mqtt).
 ## Requires LGB_AUTH_JWT_SECRET to be set in the shell or in docker/.env.dev.

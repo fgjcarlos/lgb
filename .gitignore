@@ -1,7 +1,7 @@
 # Build outputs
 bin/
-dist/
-frontend/dist/
+frontend/dist/*
+!frontend/dist/.gitkeep
 frontend/node_modules/
 frontend/*.tsbuildinfo
 

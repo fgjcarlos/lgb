@@ -199,6 +199,32 @@ components:
           items:
             type: string
 
+    MappingTag:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: Tag data type identifier as defined in the gateway YAML config.
+
+    Mapping:
+      type: object
+      required: [plc, address, scan_rate, tags]
+      properties:
+        plc:
+          type: string
+        address:
+          type: string
+        scan_rate:
+          type: string
+          example: 200ms
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MappingTag"
+
 security:
   - bearerAuth: []
 
@@ -410,6 +436,39 @@ paths:
                 $ref: "#/components/schemas/DoctorResponse"
         "401":
           description: Missing or invalid bearer token.
+
+  /api/config/mappings:
+    get:
+      summary: Read-only view of configured PLC tag mappings
+      description: |
+        Returns the gateway's PLC configuration as currently loaded — one entry
+        per configured PLC with its address, scan rate, and tag definitions.
+
+        Tag mappings are authored in the YAML config and hot-reloaded by the
+        watcher; this endpoint exposes a read-only view. Write operations are
+        intentionally not provided — modify the YAML and the watcher reloads
+        the change.
+
+        Requires viewer role or higher when authentication is enabled.
+      responses:
+        "200":
+          description: Mapping list (envelope `data: []` when none configured).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Mapping"
+        "401":
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/users:
     get:

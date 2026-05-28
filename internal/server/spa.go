@@ -36,19 +36,21 @@ func serveSPA(assets fs.FS) http.Handler {
 }
 
 // mountSPA wires the embedded frontend/dist tree onto mux as the catch-all
-// route. When the asset tree is unavailable (e.g. -tags no_embed builds with
-// an empty embed.FS), the call logs a warning and leaves the mux unchanged so
-// that requests for unknown paths fall through to the default 404 handler.
+// route. When the asset tree lacks an index.html (e.g. backend-only builds
+// where dist only contains the committed .gitkeep placeholder), the call logs
+// a warning and leaves the mux unchanged so that requests for unknown paths
+// fall through to the default 404 handler.
 func (s *Server) mountSPA(mux *http.ServeMux) {
 	sub, err := fs.Sub(lgb.Assets, "frontend/dist")
 	if err != nil {
 		s.log.Warn("SPA assets not available", slog.String("error", err.Error()))
 		return
 	}
-	// If the sub-FS has no entries (e.g. no_embed build), skip mounting.
-	if entries, err := fs.ReadDir(sub, "."); err != nil || len(entries) == 0 {
-		s.log.Warn("SPA assets directory empty — skipping mount")
+	f, err := sub.Open("index.html")
+	if err != nil {
+		s.log.Warn("SPA assets missing index.html — skipping mount")
 		return
 	}
+	_ = f.Close()
 	mux.Handle("/", serveSPA(sub))
 }

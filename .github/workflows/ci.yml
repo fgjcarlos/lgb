@@ -81,11 +81,48 @@ jobs:
         if: steps.fecheck.outputs.has_frontend == 'true'
         with:
           node-version-file: 'frontend/.nvmrc'
-      - name: npm ci && build
+      - name: npm ci
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        working-directory: frontend
+        run: npm ci
+      - name: lint (tsc --noEmit)
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        working-directory: frontend
+        run: npm run lint
+      - name: build
         if: steps.fecheck.outputs.has_frontend == 'true'
         working-directory: frontend
         # spec MVP-FND-9.5 mandates `npm ci && npm run build`
-        run: npm ci && npm run build
+        run: npm run build
+      - name: gzipped bundle size check
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        working-directory: frontend
+        # NFR-BUNDLE: warn when total gzipped JS exceeds 500 KB. This is a
+        # soft check — we annotate the run but do not fail it so a single
+        # bloated dep doesn't block release. Tune the threshold if needed.
+        run: |
+          if [ ! -d dist/assets ]; then
+            echo "::warning::frontend/dist/assets/ missing — skipping size check"
+            exit 0
+          fi
+          total=0
+          for f in dist/assets/*.js; do
+            [ -f "$f" ] || continue
+            sz=$(gzip -c -- "$f" | wc -c)
+            total=$((total + sz))
+          done
+          echo "Gzipped JS total: $total bytes ($(awk "BEGIN { printf \"%.1f\", $total/1024 }") KB)"
+          if [ "$total" -gt 512000 ]; then
+            echo "::warning::Gzipped JS bundle ($total bytes) exceeds 500 KB target"
+          fi
+      - name: upload frontend/dist
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+          if-no-files-found: error
 
   backend-build:
     name: Backend build (${{ matrix.goos }}/${{ matrix.goarch }})

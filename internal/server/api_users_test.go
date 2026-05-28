@@ -13,26 +13,6 @@ import (
 	"github.com/fgjcarlos/lgb/internal/auth"
 )
 
-// newUsersTestServer builds a *Server with real in-memory UserStore + TokenService
-// suitable for user CRUD handler tests. Returns (srv, store, tokens, stop).
-func newUsersTestServer(t *testing.T) (*Server, *auth.UserStore, *auth.TokenService, func()) {
-	t.Helper()
-	ctx := context.Background()
-	store, err := auth.OpenUserStore(ctx, ":memory:")
-	if err != nil {
-		t.Fatalf("open user store: %v", err)
-	}
-	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
-	_, baseURL, stopSrv := startAPITestServerWithOpts(t, &snapshotPLCManager{},
-		Opts{AuthTokens: tokens, UserStore: store})
-	stop := func() {
-		stopSrv()
-		_ = store.Close()
-	}
-	_ = baseURL
-	return nil, store, tokens, stop
-}
-
 // newUsersTestServerFull returns the server, store, tokens, baseURL, and stop.
 func newUsersTestServerFull(t *testing.T) (*auth.UserStore, *auth.TokenService, string, func()) {
 	t.Helper()

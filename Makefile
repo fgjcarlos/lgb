@@ -1,4 +1,5 @@
-.PHONY: build test vet run clean build-all docker-up docker-down lint generate adr-index
+.PHONY: build test vet run clean build-all docker-up docker-down lint generate adr-index \
+        frontend-install frontend-build build-with-ui
 
 BINARY_NAME ?= lgb
 VERSION ?= dev
@@ -11,6 +12,24 @@ LDFLAGS := -X github.com/fgjcarlos/lgb/internal/version.Version=$(VERSION) -X gi
 build:
 	mkdir -p bin
 	CGO_ENABLED=0 go build -tags no_embed -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME) ./cmd/lgb
+
+## frontend-install — install frontend npm dependencies via `npm ci`.
+## Requirements: FE-CFG-1, FE-NFR-1.
+frontend-install:
+	cd frontend && npm ci
+
+## frontend-build — produce the production frontend bundle in frontend/dist.
+## Requirements: FE-CFG-1, FE-NFR-1.
+frontend-build:
+	cd frontend && npm run build
+
+## build-with-ui — install + build the frontend, then build the Go binary
+## WITHOUT `-tags no_embed` so the compiled SPA assets are embedded.
+## Failures in npm steps abort the Go build (shell `&&` chaining).
+## Requirements: FE-CFG-1, FE-NFR-1.
+build-with-ui: frontend-install frontend-build
+	mkdir -p bin
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME) ./cmd/lgb
 
 test:
 	go test ./... -race -count=1

@@ -196,6 +196,7 @@ func (s *Server) Run(ctx context.Context) error {
 	})
 
 	s.registerAPIRoutes(mux)
+	s.mountSPA(mux)
 
 	shutdownTimeout := 10 * time.Second
 	if s.cfg.Server.ShutdownTimeout != "" {

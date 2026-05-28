@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/fgjcarlos/lgb/internal/auth"
 )
 
 // TestWithMiddleware_SinglePassthrough verifies that a single middleware wraps
@@ -94,6 +97,71 @@ func TestWithMiddleware_NoMiddleware(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("expected 204, got %d", rec.Code)
+	}
+}
+
+// ─── REST-TAGS-1: auth gate on /api/tags/current ─────────────────────────────
+
+// TestCurrentTagsAuth_NoTokenReturns401 verifies that when a TokenService is
+// configured, requests to GET /api/tags/current without a Bearer token are
+// rejected with 401.
+func TestCurrentTagsAuth_NoTokenReturns401(t *testing.T) {
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{},
+		Opts{AuthTokens: tokens})
+	defer stop()
+
+	resp, err := http.Get(baseURL + "/api/tags/current")
+	if err != nil {
+		t.Fatalf("GET /api/tags/current: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestCurrentTagsAuth_ValidViewerTokenReturns200 verifies that a viewer-role
+// token is accepted on GET /api/tags/current when a TokenService is
+// configured.
+func TestCurrentTagsAuth_ValidViewerTokenReturns200(t *testing.T) {
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{},
+		Opts{AuthTokens: tokens})
+	defer stop()
+
+	token, err := tokens.Issue(1, "viewer1", auth.RoleViewer)
+	if err != nil {
+		t.Fatalf("issue viewer token: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/api/tags/current", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/tags/current: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// TestCurrentTagsAuth_NilTokenServiceAllowsAccess verifies the legacy
+// behaviour: when no TokenService is configured (s.authTokens == nil), the
+// endpoint is publicly accessible without a token.
+func TestCurrentTagsAuth_NilTokenServiceAllowsAccess(t *testing.T) {
+	_, baseURL, stop := startAPITestServer(t, &snapshotPLCManager{})
+	defer stop()
+
+	resp, err := http.Get(baseURL + "/api/tags/current")
+	if err != nil {
+		t.Fatalf("GET /api/tags/current: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }
 

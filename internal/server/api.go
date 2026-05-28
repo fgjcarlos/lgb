@@ -58,7 +58,12 @@ func withMiddleware(h http.Handler, mws ...func(http.Handler) http.Handler) http
 }
 
 func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/tags/current", s.handleCurrentTags)
+	if s.authTokens != nil {
+		mux.Handle("GET /api/tags/current",
+			withMiddleware(http.HandlerFunc(s.handleCurrentTags), authMiddleware(s.authTokens)))
+	} else {
+		mux.HandleFunc("GET /api/tags/current", s.handleCurrentTags)
+	}
 	mux.HandleFunc("GET /api/ws/tags", s.handleTagsWebSocket)
 
 	// Auth endpoints — login is public; refresh requires a valid token.

@@ -1,12 +1,261 @@
 openapi: 3.0.3
 info:
   title: LGB Gateway API
-  version: 0.1.0
-  description: REST and realtime API surface for current PLC tag values.
+  version: 0.2.0
+  description: |
+    REST and realtime API surface for the LGB industrial IoT gateway.
+
+    Endpoints are role-gated when `auth.tokens` is configured on the server:
+    - `viewer`: read tag, historian, and doctor data
+    - `operator`: viewer + write/control endpoints (reserved)
+    - `admin`: full access including user management and backup operations
+
+    Authentication uses a JWT bearer token (`Authorization: Bearer <token>`).
+    WebSocket clients may instead pass `?token=` as a query parameter during
+    upgrade.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    TagValue:
+      type: object
+      required: [plc, tag, value, quality, timestamp]
+      properties:
+        plc:
+          type: string
+        tag:
+          type: string
+        value:
+          description: Current PLC tag value; scalar type depends on the tag definition.
+        quality:
+          type: string
+          example: good
+        timestamp:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      required: [limit, offset, count]
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        count:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+    TokenResponse:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: Signed JWT bearer token.
+        expires_at:
+          type: string
+          format: date-time
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    UserResponse:
+      type: object
+      required: [id, username, role, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        created_at:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+
+    UpdateRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+
+    UpdatePasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+
+    HistorianSample:
+      type: object
+      required: [plc_name, tag, timestamp, value, quality]
+      properties:
+        plc_name:
+          type: string
+        tag:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        value:
+          description: Stored sample value; scalar type depends on the tag definition.
+        quality:
+          type: string
+
+    DoctorCheck:
+      type: object
+      required: [name, status, message]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pass, warn, fail]
+        message:
+          type: string
+
+    DoctorResponse:
+      type: object
+      required: [checks, overall]
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/DoctorCheck"
+        overall:
+          type: string
+          enum: [pass, warn, fail]
+
+    BackupStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [idle, running, failed]
+        last_run:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+
+    Snapshot:
+      type: object
+      required: [id, time, hostname, paths]
+      properties:
+        id:
+          type: string
+        time:
+          type: string
+          format: date-time
+        hostname:
+          type: string
+        paths:
+          type: array
+          items:
+            type: string
+
+security:
+  - bearerAuth: []
+
 paths:
+  /api/auth/login:
+    post:
+      summary: Issue a JWT for a registered user
+      description: Public endpoint. Returns a signed bearer token on success.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authentication succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/auth/refresh:
+    post:
+      summary: Re-issue a JWT for the current session
+      description: Requires an existing valid bearer token; returns a fresh one.
+      responses:
+        "200":
+          description: New token issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Missing, expired, or invalid token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/tags/current:
     get:
       summary: List current PLC tag values
+      description: Requires viewer role or higher when authentication is enabled.
       parameters:
         - name: limit
           in: query
@@ -23,7 +272,7 @@ paths:
             default: 0
       responses:
         "200":
-          description: Current PLC tag values
+          description: Current PLC tag values.
           content:
             application/json:
               schema:
@@ -37,11 +286,18 @@ paths:
                   pagination:
                     $ref: "#/components/schemas/Pagination"
         "400":
-          description: Invalid pagination request
+          description: Invalid pagination request.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/ws/tags:
     get:
       summary: WebSocket stream for live PLC tag updates
@@ -70,50 +326,340 @@ paths:
             type: string
       responses:
         "101":
-          description: WebSocket upgrade accepted
+          description: WebSocket upgrade accepted.
         "401":
-          description: Missing or invalid JWT token
+          description: Missing or invalid JWT token.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-components:
-  schemas:
-    TagValue:
-      type: object
-      required: [plc, tag, value, quality, timestamp]
-      properties:
-        plc:
-          type: string
-        tag:
-          type: string
-        value:
-          description: Current PLC tag value; scalar type depends on the tag definition.
-        quality:
-          type: string
-          example: good
-        timestamp:
-          type: string
-          format: date-time
-    Pagination:
-      type: object
-      required: [limit, offset, count]
-      properties:
-        limit:
+
+  /api/historian/query:
+    get:
+      summary: Query stored historian samples
+      description: Requires viewer role or higher. Returns up to `limit` samples in ascending timestamp order.
+      parameters:
+        - name: plc
+          in: query
+          schema:
+            type: string
+        - name: tag
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Inclusive lower bound (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Inclusive upper bound (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Historian samples.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/HistorianSample"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "503":
+          description: Historian store not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/doctor:
+    get:
+      summary: Run gateway self-checks
+      description: Requires viewer role or higher. Returns the result of each registered doctor.Check plus an aggregated overall severity (`fail > warn > pass`).
+      responses:
+        "200":
+          description: Doctor report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoctorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+
+  /api/users:
+    get:
+      summary: List users
+      description: Admin only.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: User list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserResponse"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+
+    post:
+      summary: Create a new user
+      description: Admin only. Returns the created user without the password hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid request (e.g. unknown role).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "409":
+          description: Username already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
           type: integer
-        offset:
-          type: integer
-        count:
-          type: integer
-    ErrorResponse:
-      type: object
-      required: [error]
-      properties:
-        error:
-          type: object
-          required: [code, message]
-          properties:
-            code:
-              type: string
-            message:
-              type: string
+          format: int64
+    get:
+      summary: Fetch a user by id
+      description: Admin only.
+      responses:
+        "200":
+          description: User found.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: User not found.
+    delete:
+      summary: Delete a user
+      description: Admin only. Rejects deletion of the last remaining admin.
+      responses:
+        "204":
+          description: User deleted.
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: User not found.
+        "409":
+          description: Cannot delete the last admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/users/{id}/role:
+    put:
+      summary: Update a user's role
+      description: Admin only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleRequest"
+      responses:
+        "200":
+          description: Role updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid role value.
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: User not found.
+
+  /api/users/{id}/password:
+    put:
+      summary: Update a user's password
+      description: Admin only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePasswordRequest"
+      responses:
+        "204":
+          description: Password updated.
+        "400":
+          description: Invalid body.
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: User not found.
+
+  /api/backup/trigger:
+    post:
+      summary: Trigger an async backup run
+      description: Admin only. Returns 202 immediately; subsequent triggers return 409 while a backup is running.
+      responses:
+        "202":
+          description: Backup triggered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: triggered
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "409":
+          description: A backup run is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/backup/status:
+    get:
+      summary: Get current backup run status
+      description: Admin only.
+      responses:
+        "200":
+          description: Current backup status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupStatus"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+
+  /api/backup/snapshots:
+    get:
+      summary: List restic snapshots in the primary backup repository
+      description: Admin only.
+      responses:
+        "200":
+          description: Snapshot list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Snapshot"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.

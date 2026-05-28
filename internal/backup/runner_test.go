@@ -60,6 +60,70 @@ esac
 	}
 }
 
+func TestRunner_Snapshots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("two snapshots JSON returns two Snapshot values", func(t *testing.T) {
+		t.Parallel()
+
+		fake := filepath.Join(t.TempDir(), "restic")
+		script := `#!/bin/sh
+printf '[{"short_id":"abc123","time":"2026-05-26T10:00:00Z","hostname":"host1","paths":["/data"]},{"short_id":"def456","time":"2026-05-27T12:00:00Z","hostname":"host2","paths":["/data","/etc"]}]\n'
+`
+		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake restic: %v", err)
+		}
+
+		runner := backup.NewRunner(fake)
+		repo := backup.Repository{URL: filepath.Join(t.TempDir(), "repo"), Password: "secret"}
+		snaps, err := runner.Snapshots(context.Background(), repo)
+		if err != nil {
+			t.Fatalf("Snapshots returned error: %v", err)
+		}
+		if len(snaps) != 2 {
+			t.Fatalf("expected 2 snapshots, got %d", len(snaps))
+		}
+		if snaps[0].ID != "abc123" {
+			t.Errorf("snap[0].ID = %q; want %q", snaps[0].ID, "abc123")
+		}
+		if snaps[0].Hostname != "host1" {
+			t.Errorf("snap[0].Hostname = %q; want %q", snaps[0].Hostname, "host1")
+		}
+		if len(snaps[0].Paths) != 1 || snaps[0].Paths[0] != "/data" {
+			t.Errorf("snap[0].Paths = %v; want [\"/data\"]", snaps[0].Paths)
+		}
+		if snaps[1].ID != "def456" {
+			t.Errorf("snap[1].ID = %q; want %q", snaps[1].ID, "def456")
+		}
+		if len(snaps[1].Paths) != 2 {
+			t.Errorf("snap[1].Paths has %d entries; want 2", len(snaps[1].Paths))
+		}
+	})
+
+	t.Run("empty JSON array returns empty slice not nil", func(t *testing.T) {
+		t.Parallel()
+
+		fake := filepath.Join(t.TempDir(), "restic")
+		script := "#!/bin/sh\nprintf '[]\n'\n"
+		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake restic: %v", err)
+		}
+
+		runner := backup.NewRunner(fake)
+		repo := backup.Repository{URL: filepath.Join(t.TempDir(), "repo"), Password: "secret"}
+		snaps, err := runner.Snapshots(context.Background(), repo)
+		if err != nil {
+			t.Fatalf("Snapshots returned error: %v", err)
+		}
+		if snaps == nil {
+			t.Error("expected non-nil empty slice, got nil")
+		}
+		if len(snaps) != 0 {
+			t.Errorf("expected 0 snapshots, got %d", len(snaps))
+		}
+	})
+}
+
 func TestRunner_RestoreRequiresCleanDestination(t *testing.T) {
 	t.Parallel()
 

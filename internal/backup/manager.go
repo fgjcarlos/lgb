@@ -27,6 +27,15 @@ func (m *Manager) BackupAll(ctx context.Context, paths []string) error {
 	return nil
 }
 
+// Snapshots returns the snapshots for the first configured repository.
+// Returns an empty (non-nil) slice when no repositories are configured.
+func (m *Manager) Snapshots(ctx context.Context) ([]Snapshot, error) {
+	if len(m.repos) == 0 {
+		return []Snapshot{}, nil
+	}
+	return m.runner.Snapshots(ctx, m.repos[0])
+}
+
 func (m *Manager) CheckAll(ctx context.Context) error {
 	for _, repo := range m.repos {
 		if _, err := m.runner.Check(ctx, repo); err != nil {

@@ -87,6 +87,8 @@ type Server struct {
 	histStore *historian.Store
 	bkpMgr    *backup.Manager
 
+	bkpStatus backupStatus // mutex-guarded backup status cell
+
 	mu   sync.Mutex
 	addr string // resolved bound address (host:port)
 }
@@ -137,6 +139,7 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		auditLog:   opts.AuditLog,
 		histStore:  opts.HistStore,
 		bkpMgr:     opts.BkpMgr,
+		bkpStatus:  backupStatus{status: "idle"},
 	}
 }
 

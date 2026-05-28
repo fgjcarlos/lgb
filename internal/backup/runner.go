@@ -8,7 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
+
+// Snapshot represents a single restic snapshot as returned by `restic snapshots --json`.
+type Snapshot struct {
+	ID       string    `json:"short_id"`
+	Time     time.Time `json:"time"`
+	Hostname string    `json:"hostname"`
+	Paths    []string  `json:"paths"`
+}
 
 type Repository struct {
 	URL      string
@@ -49,6 +58,26 @@ func (r *Runner) Restore(ctx context.Context, repo Repository, snapshotID, dest 
 		return CommandResult{}, err
 	}
 	return r.run(ctx, repo, "restore", snapshotID, "--target", dest)
+}
+
+// Snapshots returns the list of snapshots in the given repository by shelling
+// out to `restic snapshots --json`. It always returns a non-nil slice.
+func (r *Runner) Snapshots(ctx context.Context, repo Repository) ([]Snapshot, error) {
+	fullArgs := []string{"-r", repo.URL, "snapshots", "--json"}
+	cmd := exec.CommandContext(ctx, r.bin, fullArgs...)
+	cmd.Env = append(os.Environ(), "RESTIC_PASSWORD="+repo.Password)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("restic snapshots failed: %w: %s", err, string(out))
+	}
+	var snaps []Snapshot
+	if err := json.Unmarshal(out, &snaps); err != nil {
+		return nil, fmt.Errorf("parse snapshots JSON: %w", err)
+	}
+	if snaps == nil {
+		snaps = []Snapshot{}
+	}
+	return snaps, nil
 }
 
 func (r *Runner) run(ctx context.Context, repo Repository, args ...string) (CommandResult, error) {

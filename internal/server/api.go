@@ -90,6 +90,26 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/doctor", s.handleDoctor)
 	}
 
+	// Backup endpoints — admin only.
+	if s.bkpMgr != nil {
+		if s.authTokens != nil {
+			adminMWs := []func(http.Handler) http.Handler{
+				authMiddleware(s.authTokens),
+				auth.RequireRole(auth.RoleAdmin),
+			}
+			mux.Handle("POST /api/backup/trigger",
+				withMiddleware(http.HandlerFunc(s.handleBackupTrigger), adminMWs...))
+			mux.Handle("GET /api/backup/status",
+				withMiddleware(http.HandlerFunc(s.handleBackupStatus), adminMWs...))
+			mux.Handle("GET /api/backup/snapshots",
+				withMiddleware(http.HandlerFunc(s.handleBackupSnapshots), adminMWs...))
+		} else {
+			mux.HandleFunc("POST /api/backup/trigger", s.handleBackupTrigger)
+			mux.HandleFunc("GET /api/backup/status", s.handleBackupStatus)
+			mux.HandleFunc("GET /api/backup/snapshots", s.handleBackupSnapshots)
+		}
+	}
+
 	// User CRUD endpoints — admin only.
 	if s.userStore != nil && s.authTokens != nil {
 		adminMWs := []func(http.Handler) http.Handler{

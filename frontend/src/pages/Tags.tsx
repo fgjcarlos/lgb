@@ -15,8 +15,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { UnavailableBanner } from "@/components/UnavailableBanner";
-import { useCurrentTags } from "@/hooks/useApi";
+import { useCurrentTags, useMappings } from "@/hooks/useApi";
+import { ApiError } from "@/lib/api";
 
 const PAGE_SIZE = 25;
 
@@ -115,12 +117,86 @@ function MappingSection() {
       <CardHeader>
         <CardTitle>Tag mappings</CardTitle>
         <CardDescription>
-          Configured PLC → tag mapping definitions.
+          Read-only view of the configured PLC → tag definitions. Writes are
+          authored in the gateway YAML and hot-reloaded by the watcher.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <UnavailableBanner message="Tag mapping config endpoint is not implemented in this release. Configure mappings via the gateway YAML config and restart the service." />
+        <MappingsTable />
       </CardContent>
     </Card>
+  );
+}
+
+function MappingsTable() {
+  const query = useMappings();
+
+  const unavailable =
+    query.error instanceof ApiError &&
+    (query.error.status === 404 || query.error.status === 503);
+
+  if (unavailable) {
+    return (
+      <UnavailableBanner message="Mapping endpoint is not available on this gateway. Configure mappings via the YAML config." />
+    );
+  }
+  if (query.isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+  if (query.isError) {
+    return (
+      <p className="text-sm text-destructive">{query.error.message}</p>
+    );
+  }
+  if (!query.data || query.data.data.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No PLC mappings configured.
+      </p>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>PLC</TableHead>
+          <TableHead>Address</TableHead>
+          <TableHead>Scan rate</TableHead>
+          <TableHead>Tags</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {query.data.data.map((m) => (
+          <TableRow key={m.plc}>
+            <TableCell className="font-medium">{m.plc}</TableCell>
+            <TableCell className="font-mono text-xs">{m.address}</TableCell>
+            <TableCell>{m.scan_rate}</TableCell>
+            <TableCell>
+              <div className="flex flex-wrap gap-1">
+                {m.tags.length === 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    no tags
+                  </span>
+                ) : (
+                  m.tags.map((t) => (
+                    <Badge
+                      key={t.name}
+                      variant="outline"
+                      title={t.type}
+                      className="font-mono"
+                    >
+                      {t.name}
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        :{t.type}
+                      </span>
+                    </Badge>
+                  ))
+                )}
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }

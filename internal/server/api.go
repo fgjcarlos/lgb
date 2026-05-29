@@ -95,6 +95,14 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/doctor", s.handleDoctor)
 	}
 
+	// Config / tag-mapping read endpoint — viewer+.
+	if s.authTokens != nil {
+		mux.Handle("GET /api/config/mappings",
+			withMiddleware(http.HandlerFunc(s.handleConfigMappings), authMiddleware(s.authTokens)))
+	} else {
+		mux.HandleFunc("GET /api/config/mappings", s.handleConfigMappings)
+	}
+
 	// Backup endpoints — admin only.
 	if s.bkpMgr != nil {
 		if s.authTokens != nil {

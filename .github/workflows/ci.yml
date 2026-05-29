@@ -37,14 +37,13 @@ jobs:
           fi
       - name: go vet
         if: steps.gocheck.outputs.has_go == 'true'
-        # -tags no_embed prevents requiring frontend/dist at CI vet time.
-        # The embed guard will be removed before archive (spec MVP-FND-1.10).
-        run: go vet -tags no_embed ./...
+        # frontend/dist/.gitkeep is committed so the embed.go directive
+        # compiles without requiring the full SPA bundle. Runtime SPA mount
+        # is gated on the presence of index.html (see internal/server/spa.go).
+        run: go vet ./...
       - name: go test
         if: steps.gocheck.outputs.has_go == 'true'
-        # -tags no_embed prevents requiring frontend/dist at CI test time.
-        # The embed guard will be removed before archive (spec MVP-FND-1.10).
-        run: go test -tags no_embed ./... -race -count=1
+        run: go test ./... -race -count=1
       - name: make generate
         if: steps.gocheck.outputs.has_go == 'true'
         # Runs protobuf codegen (if .proto files exist) or prints a notice and exits 0.
@@ -154,6 +153,8 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        # -tags no_embed prevents requiring frontend/dist at CI build time.
-        # The embed guard will be removed before archive (spec MVP-FND-1.10).
-        run: go build -tags no_embed ./...
+        # frontend/dist/.gitkeep is committed so go build succeeds without
+        # running the frontend pipeline first. For a production binary with
+        # the embedded SPA, run `make build-with-ui` (or use a release flow
+        # that downloads the frontend-build artifact).
+        run: go build ./...

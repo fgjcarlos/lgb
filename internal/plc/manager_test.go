@@ -615,3 +615,229 @@ func TestManager_CurrentSnapshotReturnsDefensiveCopy(t *testing.T) {
 		}
 	}
 }
+
+// ─── PLC-DRV-2.3: Reload field-level diff ────────────────────────────────────
+
+// countingMockDriver extends trackingMockDriver to count Connect and Close calls.
+type countingMockDriver struct {
+	trackingMockDriver
+	mu           sync.Mutex
+	connectCount int
+	closeCount   int
+}
+
+func (d *countingMockDriver) Connect(ctx context.Context) error {
+	d.mu.Lock()
+	d.connectCount++
+	d.mu.Unlock()
+	return d.trackingMockDriver.Connect(ctx)
+}
+
+func (d *countingMockDriver) Close() error {
+	d.mu.Lock()
+	d.closeCount++
+	d.mu.Unlock()
+	return d.trackingMockDriver.Close()
+}
+
+var _ plc.Driver = (*countingMockDriver)(nil)
+
+// TestReload_ChangedScanRate_DrainsAndRestarts verifies that changing scanRate
+// causes the old worker to be drained (Close called) and a new worker started
+// (Connect called again). PLC-DRV-2.3.
+func TestReload_ChangedScanRate_DrainsAndRestarts(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var created []*countingMockDriver
+
+	factory := func(cfg config.PLC) plc.Driver {
+		d := &countingMockDriver{}
+		mu.Lock()
+		created = append(created, d)
+		mu.Unlock()
+		return d
+	}
+
+	cfg := managerOnePLCConfig("plc-a")
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond) // let first Connect run
+
+	// Change scanRate and reload.
+	newCfg := managerOnePLCConfig("plc-a")
+	newCfg.PLCs[0].ScanRate = "999ms" // differs from original 500ms
+	if err := mgr.Reload(ctx, newCfg); err != nil {
+		t.Fatalf("Reload error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond) // let second Connect run
+
+	mu.Lock()
+	drvCount := len(created)
+	mu.Unlock()
+
+	if drvCount < 2 {
+		t.Fatalf("expected at least 2 drivers created (original + restarted), got %d", drvCount)
+	}
+
+	// The first driver must have been closed.
+	mu.Lock()
+	first := created[0]
+	mu.Unlock()
+	first.mu.Lock()
+	closed := first.closeCount
+	first.mu.Unlock()
+	if closed == 0 {
+		t.Error("original driver Close was not called after scanRate change")
+	}
+
+	_ = mgr.Stop()
+}
+
+// TestReload_UnchangedPLC_NotRestarted verifies that when two PLCs are running
+// and only one changes, only the changed worker is drained. PLC-DRV-2.3.
+func TestReload_UnchangedPLC_NotRestarted(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	// Slice preserves creation order: index 0 = plc-a initial, index 1 = plc-b,
+	// index 2 = plc-a after reload. We track by name to get pre-reload drivers.
+	initialByName := make(map[string]*countingMockDriver)
+	created := 0
+
+	factory := func(cfg config.PLC) plc.Driver {
+		d := &countingMockDriver{}
+		mu.Lock()
+		if _, seen := initialByName[cfg.Name]; !seen {
+			// Only record the first driver created per name (pre-reload).
+			initialByName[cfg.Name] = d
+		}
+		created++
+		mu.Unlock()
+		return d
+	}
+
+	cfg := managerMultiPLCConfig() // plc-a + plc-b
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Snapshot the original drivers before reload.
+	mu.Lock()
+	origA := initialByName["plc-a"]
+	origB := initialByName["plc-b"]
+	mu.Unlock()
+
+	if origA == nil || origB == nil {
+		t.Fatal("expected initial drivers for plc-a and plc-b before reload")
+	}
+
+	// Only change plc-a's scanRate; plc-b stays identical.
+	newCfg := managerMultiPLCConfig()
+	newCfg.PLCs[0].ScanRate = "999ms" // plc-a changed
+	// plc-b stays at 500ms (unchanged)
+
+	if err := mgr.Reload(ctx, newCfg); err != nil {
+		t.Fatalf("Reload error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// plc-a's original driver must have been closed.
+	origA.mu.Lock()
+	closedA := origA.closeCount
+	origA.mu.Unlock()
+	if closedA == 0 {
+		t.Error("plc-a original driver Close was not called after scanRate change")
+	}
+
+	// plc-b's driver must NOT have been closed (unchanged PLC).
+	origB.mu.Lock()
+	closedB := origB.closeCount
+	origB.mu.Unlock()
+	if closedB != 0 {
+		t.Errorf("plc-b driver Close was called %d times; want 0 (unchanged PLC)", closedB)
+	}
+
+	_ = mgr.Stop()
+}
+
+// TestReload_ChangedTags_DrainsAndRestarts verifies that editing a PLC's tag
+// list (the primary UI edit case) is detected as a change and drains the old
+// worker, starting a fresh one. The tag slice is part of the config.PLC the
+// reload diff compares, so a tag-only change must restart the worker just like
+// a scalar field change. PLC-DRV-2.3.
+func TestReload_ChangedTags_DrainsAndRestarts(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var created []*countingMockDriver
+
+	factory := func(cfg config.PLC) plc.Driver {
+		d := &countingMockDriver{}
+		mu.Lock()
+		created = append(created, d)
+		mu.Unlock()
+		return d
+	}
+
+	cfg := managerOnePLCConfig("plc-a")
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond) // let first Connect run
+
+	// Edit the tag list only — scanRate and all other fields stay identical.
+	newCfg := managerOnePLCConfig("plc-a")
+	newCfg.PLCs[0].Tags = append(newCfg.PLCs[0].Tags, config.TagDef{Name: "Pressure", Type: "Float"})
+	if err := mgr.Reload(ctx, newCfg); err != nil {
+		t.Fatalf("Reload error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond) // let second Connect run
+
+	mu.Lock()
+	drvCount := len(created)
+	first := created[0]
+	mu.Unlock()
+
+	if drvCount < 2 {
+		t.Fatalf("expected at least 2 drivers created (original + restarted after tag edit), got %d", drvCount)
+	}
+
+	// The original worker must have been drained.
+	first.mu.Lock()
+	closed := first.closeCount
+	first.mu.Unlock()
+	if closed == 0 {
+		t.Error("original driver Close was not called after tag-list change")
+	}
+
+	// The restarted worker must have actually connected.
+	mu.Lock()
+	last := created[drvCount-1]
+	mu.Unlock()
+	last.mu.Lock()
+	connected := last.connectCount
+	last.mu.Unlock()
+	if connected == 0 {
+		t.Error("restarted driver Connect was not called after tag-list change")
+	}
+
+	_ = mgr.Stop()
+}

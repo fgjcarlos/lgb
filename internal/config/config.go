@@ -130,8 +130,9 @@ type PLC struct {
 
 // TagDef maps a PLC tag to a Sparkplug B metric.
 type TagDef struct {
-	Name string `koanf:"name"`
-	Type string `koanf:"type"`
+	Name     string `koanf:"name"`
+	Type     string `koanf:"type"`
+	Writable bool   `koanf:"writable"` // PCS-CFG-5.1 — stored, never enforced
 }
 
 // Validate checks the loaded config against schema constraints.
@@ -191,48 +192,10 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate each PLC entry (PLC-CFG-1.2 through PLC-CFG-1.6).
+	// ValidatePLC holds the per-entry rules; we re-prefix each constituent
+	// violation with the slice index so messages remain plcs[i].field: ...
 	for i, plc := range c.PLCs {
-		// address must not be empty.
-		if plc.Address == "" {
-			violations = append(violations, errorf("plcs[%d].address: must not be empty: %w", i, ErrConfigInvalid))
-		}
-
-		// socketTimeout must be a valid positive duration when non-empty.
-		if plc.SocketTimeout != "" {
-			d, err := time.ParseDuration(plc.SocketTimeout)
-			if err != nil {
-				violations = append(violations, errorf("plcs[%d].socketTimeout: %q is not a valid Go duration: %w", i, plc.SocketTimeout, ErrConfigInvalid))
-			} else if d <= 0 {
-				violations = append(violations, errorf("plcs[%d].socketTimeout: must be positive, got %q: %w", i, plc.SocketTimeout, ErrConfigInvalid))
-			}
-		}
-
-		// scanRate must be a valid positive duration when non-empty.
-		if plc.ScanRate != "" {
-			d, err := time.ParseDuration(plc.ScanRate)
-			if err != nil {
-				violations = append(violations, errorf("plcs[%d].scanRate: %q is not a valid Go duration: %w", i, plc.ScanRate, ErrConfigInvalid))
-			} else if d <= 0 {
-				violations = append(violations, errorf("plcs[%d].scanRate: must be positive, got %q: %w", i, plc.ScanRate, ErrConfigInvalid))
-			}
-		}
-
-		// slot must be in range [0, 15].
-		if plc.Slot < 0 || plc.Slot > 15 {
-			violations = append(violations, errorf("plcs[%d].slot: must be between 0 and 15, got %d: %w", i, plc.Slot, ErrConfigInvalid))
-		}
-
-		// Validate tags (SPK-CFG-2.6, SPK-CFG-2.7).
-		for j, tag := range plc.Tags {
-			if tag.Name == "" {
-				violations = append(violations, errorf("plcs[%d].tags[%d].name: must not be empty: %w", i, j, ErrConfigInvalid))
-			}
-			if tag.Type == "" {
-				violations = append(violations, errorf("plcs[%d].tags[%d].type: must not be empty: %w", i, j, ErrConfigInvalid))
-			} else if !validSparkplugType(tag.Type) {
-				violations = append(violations, errorf("plcs[%d].tags[%d].type: %q is not a supported Sparkplug B scalar type: %w", i, j, tag.Type, ErrConfigInvalid))
-			}
-		}
+		violations = append(violations, prefixPLCViolations(i, ValidatePLC(plc))...)
 	}
 
 	// MQTT/Sparkplug validation (SPK-CFG-2.2 through SPK-CFG-2.4).

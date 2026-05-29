@@ -3,6 +3,7 @@ package plc
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
 
@@ -188,14 +189,19 @@ func (m *Manager) CurrentSnapshot() map[string]map[string]TagValue {
 	return snapshot
 }
 
-// Reload applies a new configuration hot. It stops goroutines for PLCs that
-// were removed or changed, creates drivers for new or changed PLCs, and starts
-// goroutines for the new set. The parent ctx must be the same context passed
-// to Start.
+// Reload applies a new configuration hot. It uses a field-level diff
+// (reflect.DeepEqual on the full config.PLC including Tags) to decide which
+// workers need draining:
 //
-// Design §6.3 (hot-reload sequence).
+//   - Removed PLCs (name no longer in cfg): drained and closed.
+//   - Changed PLCs (name present but config differs): drained and re-added.
+//   - Unchanged PLCs: left untouched, no restart.
+//   - New PLCs (name not yet in workers): added.
+//
+// The parent ctx must be the same context passed to Start.
+// Design §6.3 (hot-reload sequence), PLC-DRV-2.3.
 func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
-	// Build a quick lookup of new config by name.
+	// Build a quick lookup of the incoming config by name.
 	newCfgByName := make(map[string]config.PLC, len(cfg.PLCs))
 	for _, plcCfg := range cfg.PLCs {
 		newCfgByName[plcCfg.Name] = plcCfg
@@ -203,10 +209,17 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 
 	m.mu.Lock()
 
-	// Collect workers to drain (removed or changed PLCs).
+	// Collect workers to drain: removed PLCs or changed PLCs.
+	// Changed PLCs are deleted here and re-added in the add-loop below,
+	// since their names will be missing from m.workers at that point.
 	var toDrain []string
-	for name := range m.workers {
-		if _, exists := newCfgByName[name]; !exists {
+	for name, w := range m.workers {
+		newCfg, exists := newCfgByName[name]
+		if !exists {
+			// Removed — drain only.
+			toDrain = append(toDrain, name)
+		} else if !reflect.DeepEqual(w.cfg, newCfg) {
+			// Changed — drain old worker; the add-loop will re-create it.
 			toDrain = append(toDrain, name)
 		}
 	}
@@ -225,11 +238,10 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 
 	m.mu.Unlock()
 
-	// Wait for drained goroutines to exit.
-	// Since we cancelled their contexts, runWorker will exit quickly.
+	// Wait for all drained goroutines to exit.
 	m.wg.Wait()
 
-	// Close drained drivers.
+	// Close drained drivers after goroutines have stopped.
 	for _, d := range drainedDrivers {
 		if err := d.Close(); err != nil {
 			m.log.Warn("plc manager: Reload: Close error",
@@ -237,7 +249,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	// Add new PLCs.
+	// Add new PLCs and re-add changed PLCs (their names were deleted above).
 	m.mu.Lock()
 	for _, plcCfg := range cfg.PLCs {
 		if _, exists := m.workers[plcCfg.Name]; !exists {

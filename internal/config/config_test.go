@@ -728,6 +728,73 @@ func TestBackupValidateValidConfig(t *testing.T) {
 	}
 }
 
+// TestTagDefWritable_TrueFromYAML asserts PCS-CFG-5.1: a tag with writable:true
+// is loaded with Writable == true.
+func TestTagDefWritable_TrueFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "writable-tag.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "plc-w"
+    address: "10.0.0.1"
+    tags:
+      - name: "Motor.Speed"
+        type: "Float"
+        writable: true
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing writable-tag.yaml: %v", err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 || len(cfg.PLCs[0].Tags) == 0 {
+		t.Fatal("expected PLC with tags")
+	}
+	if !cfg.PLCs[0].Tags[0].Writable {
+		t.Errorf("Tags[0].Writable = false; want true (writable:true in YAML)")
+	}
+}
+
+// TestTagDefWritable_DefaultsFalse asserts PCS-CFG-5.1: a tag omitting writable
+// defaults to Writable == false.
+func TestTagDefWritable_DefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "no-writable.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "plc-r"
+    address: "10.0.0.1"
+    tags:
+      - name: "Motor.Speed"
+        type: "Float"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing no-writable.yaml: %v", err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 || len(cfg.PLCs[0].Tags) == 0 {
+		t.Fatal("expected PLC with tags")
+	}
+	if cfg.PLCs[0].Tags[0].Writable {
+		t.Errorf("Tags[0].Writable = true; want false (writable omitted in YAML)")
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()

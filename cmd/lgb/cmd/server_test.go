@@ -16,6 +16,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/plc"
+	"github.com/fgjcarlos/lgb/internal/plcstore"
 	"github.com/fgjcarlos/lgb/internal/server"
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
@@ -168,20 +169,21 @@ func TestServerCmd_WithPLCs_CreatesPLCManager(t *testing.T) {
 	}
 }
 
-// TestServerCmd_NoPLCs_NilManager verifies that runServerTo passes nil for the
-// PLCManager when no PLCs are configured (backward-compatible path). (PLC-DRV-2.1)
-func TestServerCmd_NoPLCs_NilManager(t *testing.T) {
+// TestServerCmd_NoPLCs_EmptyManager verifies that runServerTo ALWAYS calls the
+// PLCManagerFactory — even when no PLCs are configured — so that the manager is
+// never nil. The resulting manager has zero workers. (PCS-RELOAD-3.1)
+func TestServerCmd_NoPLCs_EmptyManager(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Auth.JwtSecret = fixtureJwtValue
 	cfg.Historian.RetentionDays = 0
-	cfg.PLCs = nil // no PLCs
+	cfg.PLCs = nil // no PLCs in YAML
 
 	var factoryCalled bool
 	d := &Deps{
 		Config: cfg,
 		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
 			factoryCalled = true
-			return nil
+			return &mockServerPLCManager{}
 		},
 	}
 
@@ -194,9 +196,131 @@ func TestServerCmd_NoPLCs_NilManager(t *testing.T) {
 	cancel()
 	<-errCh
 
-	// Factory must NOT be called when there are no PLCs.
-	if factoryCalled {
-		t.Error("expected PLCManagerFactory NOT to be called when no PLCs are configured")
+	// Factory MUST be called even with zero PLCs (always-construct invariant).
+	if !factoryCalled {
+		t.Error("expected PLCManagerFactory to be called even when no PLCs are configured")
+	}
+}
+
+// TestServerCmd_PLCStoreSeed_FirstBoot verifies that on first boot (empty store)
+// the YAML PLCs are seeded into the plcstore. We capture the seeded PLC count
+// inside the factory (before runServerTo closes the store) via a channel.
+// (PCS-STORE-1.2)
+func TestServerCmd_PLCStoreSeed_FirstBoot(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
+	cfg.PLCs = []config.PLC{
+		{Name: "line1", Address: "10.0.0.1:44818", ScanRate: "1s", SocketTimeout: "5s"},
+	}
+
+	// seededNames is populated by the PLCManagerFactory, which receives the
+	// liveCfg built from the store after seeding. This proves the store was
+	// seeded before the manager was created.
+	var seededNames []string
+	factoryCh := make(chan []string, 1)
+
+	d := &Deps{
+		Config: cfg,
+		PLCStoreFactory: func(ctx context.Context, path string) (*plcstore.Store, error) {
+			return plcstore.Open(ctx, ":memory:")
+		},
+		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
+			names := make([]string, len(c.PLCs))
+			for i, p := range c.PLCs {
+				names[i] = p.Name
+			}
+			factoryCh <- names
+			return &mockServerPLCManager{}
+		},
+	}
+	_ = seededNames
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	// Wait for factory to be called (server must start first).
+	select {
+	case names := <-factoryCh:
+		seededNames = names
+	case err := <-errCh:
+		t.Fatalf("server exited before factory was called: %v", err)
+	}
+
+	cancel()
+	<-errCh
+
+	if len(seededNames) != 1 {
+		t.Errorf("expected 1 seeded PLC passed to manager factory, got %d", len(seededNames))
+	}
+	if len(seededNames) > 0 && seededNames[0] != "line1" {
+		t.Errorf("expected PLC 'line1' in manager factory, got %q", seededNames[0])
+	}
+}
+
+// TestServerCmd_PLCStoreSeed_Idempotent verifies that a pre-populated store
+// is not re-seeded on restart (Seed is a no-op when IsEmpty=false). We verify
+// by checking the manager factory receives only the pre-existing PLC. (PCS-STORE-1.2)
+func TestServerCmd_PLCStoreSeed_Idempotent(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
+	// YAML has "line1" — but the store already has "pre-existing".
+	cfg.PLCs = []config.PLC{
+		{Name: "line1", Address: "10.0.0.1:44818", ScanRate: "1s", SocketTimeout: "5s"},
+	}
+
+	factoryCh := make(chan []string, 1)
+
+	d := &Deps{
+		Config: cfg,
+		PLCStoreFactory: func(ctx context.Context, path string) (*plcstore.Store, error) {
+			s, err := plcstore.Open(ctx, ":memory:")
+			if err != nil {
+				return nil, err
+			}
+			// Pre-populate so IsEmpty returns false.
+			_ = s.Create(ctx, config.PLC{
+				Name: "pre-existing", Address: "10.9.9.9:44818", ScanRate: "1s", SocketTimeout: "5s",
+			})
+			return s, nil
+		},
+		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
+			names := make([]string, len(c.PLCs))
+			for i, p := range c.PLCs {
+				names[i] = p.Name
+			}
+			factoryCh <- names
+			return &mockServerPLCManager{}
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	var managerPLCs []string
+	select {
+	case names := <-factoryCh:
+		managerPLCs = names
+	case err := <-errCh:
+		t.Fatalf("server exited before factory was called: %v", err)
+	}
+
+	cancel()
+	<-errCh
+
+	// Manager must receive only "pre-existing" (YAML seed was skipped).
+	if len(managerPLCs) != 1 {
+		t.Errorf("expected 1 PLC from store (pre-existing), got %d", len(managerPLCs))
+	}
+	if len(managerPLCs) > 0 && managerPLCs[0] != "pre-existing" {
+		t.Errorf("expected 'pre-existing', got %q", managerPLCs[0])
 	}
 }
 

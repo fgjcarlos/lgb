@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: LGB Gateway API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     REST and realtime API surface for the LGB industrial IoT gateway.
 
@@ -224,6 +224,81 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MappingTag"
+
+    PLCTag:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          description: Tag identifier (must be unique within the PLC).
+        type:
+          type: string
+          description: Sparkplug B scalar type (Float, Int, Bool, String, etc.).
+          example: Float
+        writable:
+          type: boolean
+          default: false
+          description: Stored but not enforced; reserved for future per-tag write gating.
+
+    PLCRequest:
+      type: object
+      required: [name, address]
+      properties:
+        name:
+          type: string
+          description: Unique PLC identifier (natural key; used in URL routes).
+        address:
+          type: string
+          description: "TCP address of the PLC (e.g. 10.0.0.5:44818)."
+          example: "10.0.0.5:44818"
+        slot:
+          type: integer
+          minimum: 0
+          maximum: 15
+          default: 0
+          description: S7 slot number (0–15).
+        socket_timeout:
+          type: string
+          description: TCP connect timeout as a Go duration string.
+          example: 5s
+        scan_rate:
+          type: string
+          description: Tag polling interval as a Go duration string.
+          example: 1s
+        keep_alive:
+          type: boolean
+          default: false
+        path:
+          type: string
+          default: ""
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/PLCTag"
+
+    PLCResponse:
+      type: object
+      required: [name, address, slot, socket_timeout, scan_rate, keep_alive, path, tags]
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        slot:
+          type: integer
+        socket_timeout:
+          type: string
+        scan_rate:
+          type: string
+        keep_alive:
+          type: boolean
+        path:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/PLCTag"
 
 security:
   - bearerAuth: []
@@ -722,3 +797,166 @@ paths:
           description: Missing or invalid bearer token.
         "403":
           description: Caller is not an admin.
+
+  /api/plcs:
+    get:
+      summary: List all PLCs
+      description: |
+        Viewer or higher. Returns PLCs sourced from the SQLite PLC store (not
+        the frozen YAML config). The list reflects mutations performed via
+        POST, PUT, and DELETE without a restart.
+      responses:
+        "200":
+          description: PLC list (envelope `data: []` when none configured).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PLCResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller's role is not permitted.
+
+    post:
+      summary: Create a new PLC
+      description: |
+        Admin only. Validates the PLC (address non-empty, durations parseable
+        and positive, slot 0–15, tag names/types non-empty and valid Sparkplug
+        scalars), stores it, triggers a live Reload, and emits an audit event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PLCRequest"
+      responses:
+        "201":
+          description: PLC created. Returns the stored canonical form.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PLCResponse"
+        "400":
+          description: Invalid body or validation failure (`invalid_plc`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "409":
+          description: A PLC with that name already exists (`duplicate_plc`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/plcs/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: PLC name (natural key).
+        schema:
+          type: string
+
+    get:
+      summary: Fetch a single PLC by name
+      description: Viewer or higher.
+      responses:
+        "200":
+          description: PLC found.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PLCResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller's role is not permitted.
+        "404":
+          description: PLC not found (`plc_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      summary: Update a PLC
+      description: |
+        Admin only. Replaces all fields of the named PLC atomically (tags
+        replaced wholesale). Validates, stores, triggers Reload, and audits.
+        The `name` in the body may differ from the URL if renaming; a rename
+        that collides with an existing PLC returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PLCRequest"
+      responses:
+        "200":
+          description: PLC updated. Returns the stored canonical form.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PLCResponse"
+        "400":
+          description: Invalid body or validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: PLC not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Rename collision — another PLC already has that name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Delete a PLC
+      description: Admin only. Removes the PLC and all its tags; triggers Reload; audits.
+      responses:
+        "204":
+          description: PLC deleted.
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: PLC not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"

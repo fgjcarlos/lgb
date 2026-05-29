@@ -24,6 +24,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/httpx"
 	"github.com/fgjcarlos/lgb/internal/plc"
+	"github.com/fgjcarlos/lgb/internal/plcstore"
 )
 
 // PLCManager is the interface that the PLC manager must satisfy for server
@@ -86,6 +87,7 @@ type Server struct {
 	auditLog  *auth.AuditLogger
 	histStore *historian.Store
 	bkpMgr    *backup.Manager
+	plcStore  *plcstore.Store
 
 	bkpStatus backupStatus // mutex-guarded backup status cell
 
@@ -107,6 +109,7 @@ type Opts struct {
 	AuditLog  *auth.AuditLogger
 	HistStore *historian.Store
 	BkpMgr    *backup.Manager
+	PLCStore  *plcstore.Store
 
 	// Checks is the list of doctor.Check instances run by GET /api/doctor.
 	// When nil, the server starts with no checks registered.
@@ -139,6 +142,7 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		auditLog:   opts.AuditLog,
 		histStore:  opts.HistStore,
 		bkpMgr:     opts.BkpMgr,
+		plcStore:   opts.PLCStore,
 		bkpStatus:  backupStatus{status: "idle"},
 	}
 }

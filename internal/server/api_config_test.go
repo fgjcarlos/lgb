@@ -12,6 +12,7 @@ import (
 
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/config"
+	"github.com/fgjcarlos/lgb/internal/plcstore"
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
 
@@ -137,6 +138,99 @@ func TestHandleConfigMappings_EmptyConfigReturnsEmptyArray(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(raw), `"data":[]`) {
 		t.Errorf("expected data to be an empty JSON array, got: %s", string(raw))
+	}
+}
+
+// TestHandleConfigMappings_StoreCreate_ReflectsNewPLC verifies that after a
+// store Create, GET /api/config/mappings returns the new PLC without restart.
+// This covers the read-path redirect (PCS-API-2.6): the handler queries the
+// store directly instead of the frozen s.cfg pointer.
+func TestHandleConfigMappings_StoreCreate_ReflectsNewPLC(t *testing.T) {
+	ctx := context.Background()
+	store, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open plcstore: %v", err)
+	}
+	defer store.Close()
+
+	cfg := configWithPLCs(nil) // start with no PLCs in cfg
+	baseURL, stop := startConfigTestServer(t, cfg, &snapshotPLCManager{}, Opts{PLCStore: store})
+	defer stop()
+
+	// Insert a PLC directly into the store (simulating a prior POST /api/plcs).
+	if err := store.Create(ctx, config.PLC{Name: "factory", Address: "10.0.1.1:44818", ScanRate: "1s", SocketTimeout: "5s"}); err != nil {
+		t.Fatalf("store create: %v", err)
+	}
+
+	resp, err := http.Get(baseURL + "/api/config/mappings")
+	if err != nil {
+		t.Fatalf("GET /api/config/mappings: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []struct {
+			PLC string `json:"plc"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("expected 1 PLC from store, got %d", len(body.Data))
+	}
+	if body.Data[0].PLC != "factory" {
+		t.Errorf("expected PLC 'factory', got %q", body.Data[0].PLC)
+	}
+}
+
+// TestHandleConfigMappings_StoreDelete_PLCRemoved verifies that after a store
+// Delete, GET /api/config/mappings no longer contains the deleted PLC.
+// (PCS-API-2.6)
+func TestHandleConfigMappings_StoreDelete_PLCRemoved(t *testing.T) {
+	ctx := context.Background()
+	store, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open plcstore: %v", err)
+	}
+	defer store.Close()
+
+	// Pre-populate store.
+	if err := store.Create(ctx, config.PLC{Name: "factory", Address: "10.0.1.1:44818", ScanRate: "1s", SocketTimeout: "5s"}); err != nil {
+		t.Fatalf("store create: %v", err)
+	}
+
+	cfg := configWithPLCs(nil)
+	baseURL, stop := startConfigTestServer(t, cfg, &snapshotPLCManager{}, Opts{PLCStore: store})
+	defer stop()
+
+	// Delete from store (simulating DELETE /api/plcs/factory).
+	if err := store.Delete(ctx, "factory"); err != nil {
+		t.Fatalf("store delete: %v", err)
+	}
+
+	resp, err := http.Get(baseURL + "/api/config/mappings")
+	if err != nil {
+		t.Fatalf("GET /api/config/mappings: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []struct {
+			PLC string `json:"plc"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 0 {
+		t.Errorf("expected 0 PLCs after store delete, got %d", len(body.Data))
 	}
 }
 

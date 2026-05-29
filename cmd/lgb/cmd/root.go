@@ -17,6 +17,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/log"
 	"github.com/fgjcarlos/lgb/internal/plc"
+	"github.com/fgjcarlos/lgb/internal/plcstore"
 	"github.com/fgjcarlos/lgb/internal/server"
 )
 
@@ -45,8 +46,12 @@ type Deps struct {
 	// Tests inject a spy to verify the call without real filesystem side-effects.
 	DataDirEnsureFn func(path string) (string, error)
 
+	// PLCStoreFactory opens (or creates) the PLCStore at path. When nil, the
+	// production plcstore.Open is used.
+	PLCStoreFactory func(ctx context.Context, path string) (*plcstore.Store, error)
+
 	// PLCManagerFactory creates a PLCManager from config. When nil, the
-	// production plc.NewManager is used (when PLCs are configured).
+	// production plc.NewManager is used (always constructed).
 	PLCManagerFactory func(cfg *config.Config, tagCb plc.TagCallback) server.PLCManager
 
 	// SparkplugNodeFactory creates a SparkplugNode from config. When nil, the

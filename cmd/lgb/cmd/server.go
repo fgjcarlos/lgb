@@ -31,6 +31,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/mqtt"
 	"github.com/fgjcarlos/lgb/internal/opcua"
 	"github.com/fgjcarlos/lgb/internal/plc"
+	"github.com/fgjcarlos/lgb/internal/plcstore"
 	"github.com/fgjcarlos/lgb/internal/server"
 	"github.com/fgjcarlos/lgb/internal/sparkplug"
 )
@@ -165,17 +166,55 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		tagCb = buildTagCallback(ctx, histWriter, spHandler, logger)
 	}
 
-	// Create the PLC Manager when PLCs are configured.
-	var plcMgr server.PLCManager
-	if len(cfg.PLCs) > 0 {
-		factory := d.PLCManagerFactory
-		if factory == nil {
-			factory = defaultPLCManagerFactory
-		}
-		plcMgr = factory(cfg, tagCb)
-		logger.Info("plc manager created", slog.String("component", "plc-manager"),
-			slog.Int("plc_count", len(cfg.PLCs)))
+	// Open the PLC store (plcs.db). Seeds from YAML on first boot; store wins thereafter.
+	plcStorePath := filepath.Join(resolvedPath, "plcs.db")
+	openPLCStore := d.PLCStoreFactory
+	if openPLCStore == nil {
+		openPLCStore = plcstore.Open
 	}
+	plcStore, plcStoreErr := openPLCStore(context.Background(), plcStorePath)
+	if plcStoreErr != nil {
+		return fmt.Errorf("server: open plc store: %w", plcStoreErr)
+	}
+	defer plcStore.Close()
+	logger.Info("plc store opened",
+		slog.String("component", "plc-store"),
+		slog.String("path", plcStorePath))
+
+	// Seed from YAML on first boot (IsEmpty guard makes it idempotent).
+	empty, err := plcStore.IsEmpty(context.Background())
+	if err != nil {
+		return fmt.Errorf("server: plc store IsEmpty: %w", err)
+	}
+	if empty {
+		if err := plcStore.Seed(context.Background(), cfg.PLCs); err != nil {
+			return fmt.Errorf("server: plc store seed: %w", err)
+		}
+		logger.Info("plc store seeded from yaml",
+			slog.String("component", "plc-store"),
+			slog.Int("count", len(cfg.PLCs)))
+	}
+
+	// Always load PLCs from the store (store is the source of truth).
+	storePLCs, err := plcStore.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("server: plc store list: %w", err)
+	}
+	// Build a live config that carries store PLCs (cfg remains the frozen YAML view).
+	liveCfg := *cfg
+	liveCfg.PLCs = storePLCs
+
+	// Always construct the PLC Manager — even when the store has zero PLCs.
+	// An empty manager is cheap (no goroutines); this eliminates nil branches in
+	// handlers and enables Reload to add workers when the first PLC is created via API.
+	factory := d.PLCManagerFactory
+	if factory == nil {
+		factory = defaultPLCManagerFactory
+	}
+	plcMgr := factory(&liveCfg, tagCb)
+	logger.Info("plc manager created",
+		slog.String("component", "plc-manager"),
+		slog.Int("plc_count", len(storePLCs)))
 
 	var histW server.HistorianWriter
 	if histWriter != nil {
@@ -266,6 +305,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		AuditLog:   auditLog,
 		HistStore:  histStore,
 		BkpMgr:     bkpMgr,
+		PLCStore:   plcStore,
 	})
 
 	// Store server reference for tests.
@@ -274,12 +314,26 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	}
 
 	// Start config file watcher for PLC hot-reload.
-	if plcMgr != nil && d.ConfigPath != "" {
+	// The closure captures plcStore so that on any YAML change the PLCs are
+	// always sourced from the store (store wins; YAML plcs: block is ignored
+	// post-seed). Non-PLC fields (log level, historian config, etc.) come from
+	// the freshly parsed newCfg.
+	if d.ConfigPath != "" {
+		capturedStore := plcStore // capture for closure
 		watchCtx := ctx
 		go func() {
 			_ = config.Watch(watchCtx, d.ConfigPath, func(newCfg *config.Config) {
 				logger.Info("config changed, reloading PLC manager", slog.String("component", "config-watch"))
-				if err := plcMgr.Reload(watchCtx, newCfg); err != nil {
+				storePLCs, listErr := capturedStore.List(watchCtx)
+				if listErr != nil {
+					logger.Warn("plc store list error during reload",
+						slog.String("component", "config-watch"),
+						slog.String("err", listErr.Error()))
+					return
+				}
+				merged := *newCfg
+				merged.PLCs = storePLCs // store wins; YAML plcs: ignored post-seed
+				if err := plcMgr.Reload(watchCtx, &merged); err != nil {
 					logger.Warn("plc manager reload error",
 						slog.String("component", "config-watch"),
 						slog.String("err", err.Error()))

@@ -142,6 +142,32 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 		mux.Handle("DELETE /api/users/{id}",
 			withMiddleware(http.HandlerFunc(s.handleDeleteUser), adminMWs...))
 	}
+
+	// PLC CRUD endpoints — store-backed. Reads are viewer+ (consistent with
+	// GET /api/config/mappings, which exposes the same PLC/tag data); mutations
+	// are admin only.
+	if s.plcStore != nil && s.authTokens != nil {
+		// RequireRole is an exact-match allowlist (not a minimum rank), so
+		// "viewer or higher" must enumerate every role.
+		viewerMWs := []func(http.Handler) http.Handler{
+			authMiddleware(s.authTokens),
+			auth.RequireRole(auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin),
+		}
+		adminMWs := []func(http.Handler) http.Handler{
+			authMiddleware(s.authTokens),
+			auth.RequireRole(auth.RoleAdmin),
+		}
+		mux.Handle("GET /api/plcs",
+			withMiddleware(http.HandlerFunc(s.handleListPLCs), viewerMWs...))
+		mux.Handle("GET /api/plcs/{name}",
+			withMiddleware(http.HandlerFunc(s.handleGetPLC), viewerMWs...))
+		mux.Handle("POST /api/plcs",
+			withMiddleware(http.HandlerFunc(s.handleCreatePLC), adminMWs...))
+		mux.Handle("PUT /api/plcs/{name}",
+			withMiddleware(http.HandlerFunc(s.handleUpdatePLC), adminMWs...))
+		mux.Handle("DELETE /api/plcs/{name}",
+			withMiddleware(http.HandlerFunc(s.handleDeletePLC), adminMWs...))
+	}
 }
 
 // authMiddleware is a thin adapter that converts auth.Middleware to the

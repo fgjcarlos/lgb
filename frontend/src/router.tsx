@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import {
   Activity,
+  Cpu,
   Database,
   Gauge,
   HardDriveDownload,
@@ -15,6 +16,7 @@ import { Historian } from "@/pages/Historian";
 import { Diagnostics } from "@/pages/Diagnostics";
 import { Backup } from "@/pages/Backup";
 import { Users } from "@/pages/Users";
+import { PLCs } from "@/pages/PLCs";
 
 export interface RouteEntry {
   path: string;
@@ -48,6 +50,13 @@ export const routes: RouteEntry[] = [
     label: "Diagnostics",
     icon: Stethoscope,
     element: <Diagnostics />,
+  },
+  {
+    path: "/plcs",
+    label: "PLCs",
+    icon: Cpu,
+    requiredRole: "admin",
+    element: <PLCs />,
   },
   {
     path: "/backup",

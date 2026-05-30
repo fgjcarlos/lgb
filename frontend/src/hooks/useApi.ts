@@ -1,4 +1,10 @@
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import { apiFetch, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
 
@@ -162,5 +168,103 @@ export function useDoctorChecks(): UseQueryResult<
     queryKey: ["doctor"],
     queryFn: () => apiFetch<DoctorResponse>("/api/doctor", { token }),
     enabled: !!token,
+  });
+}
+
+// ─── PLC config CRUD (admin-managed; backed by the SQLite plc store) ───────
+
+export interface PLCTag {
+  name: string;
+  type: string;
+  writable: boolean;
+}
+
+export interface PLCRow {
+  name: string;
+  address: string;
+  slot: number;
+  socket_timeout: string;
+  scan_rate: string;
+  keep_alive: boolean;
+  path: string;
+  tags: PLCTag[];
+}
+
+export function usePLCs(): UseQueryResult<
+  { data: PLCRow[] },
+  ApiError | Error
+> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["plcs"],
+    queryFn: () => apiFetch<{ data: PLCRow[] }>("/api/plcs", { token }),
+    enabled: !!token,
+  });
+}
+
+export function usePLC(
+  name: string | null,
+): UseQueryResult<{ data: PLCRow }, ApiError | Error> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["plcs", name],
+    queryFn: () =>
+      apiFetch<{ data: PLCRow }>(`/api/plcs/${encodeURIComponent(name!)}`, {
+        token,
+      }),
+    enabled: !!token && !!name,
+  });
+}
+
+export function useCreatePLC(): UseMutationResult<
+  { data: PLCRow },
+  ApiError | Error,
+  PLCRow
+> {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (plc: PLCRow) =>
+      apiFetch<{ data: PLCRow }>("/api/plcs", {
+        method: "POST",
+        token,
+        body: JSON.stringify(plc),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
+  });
+}
+
+export function useUpdatePLC(): UseMutationResult<
+  { data: PLCRow },
+  ApiError | Error,
+  { name: string; plc: PLCRow }
+> {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, plc }: { name: string; plc: PLCRow }) =>
+      apiFetch<{ data: PLCRow }>(`/api/plcs/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        token,
+        body: JSON.stringify(plc),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
+  });
+}
+
+export function useDeletePLC(): UseMutationResult<
+  void,
+  ApiError | Error,
+  string
+> {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<void>(`/api/plcs/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+        token,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
   });
 }

@@ -133,6 +133,7 @@ func (m *mockServerPLCManager) Start(ctx context.Context) error {
 
 func (m *mockServerPLCManager) Stop() error                                      { return nil }
 func (m *mockServerPLCManager) Reload(_ context.Context, _ *config.Config) error { return nil }
+func (m *mockServerPLCManager) WriteTag(_ string, _ string, _ any) error         { return nil }
 
 // TestServerCmd_WithPLCs_CreatesPLCManager verifies that runServerTo creates a
 // PLCManager when PLCs are configured and passes it to server.New. (PLC-DRV-2.1)

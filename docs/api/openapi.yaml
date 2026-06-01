@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
   title: LGB Gateway API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     REST and realtime API surface for the LGB industrial IoT gateway.
 
     Endpoints are role-gated when `auth.tokens` is configured on the server:
     - `viewer`: read tag, historian, and doctor data
-    - `operator`: viewer + write/control endpoints (reserved)
+    - `operator`: viewer + may attempt tag writes (the role×tag ACL decides the outcome)
     - `admin`: full access including user management and backup operations
 
     Authentication uses a JWT bearer token (`Authorization: Bearer <token>`).
@@ -239,7 +239,18 @@ components:
         writable:
           type: boolean
           default: false
-          description: Stored but not enforced; reserved for future per-tag write gating.
+          description: >
+            Master write switch for this tag. When false, NO write succeeds on any
+            surface (HTTP or DCMD) for any role, including admin. Enforced by the
+            write guard as the first gate before any ACL or dcmd_enabled check.
+        dcmd_enabled:
+          type: boolean
+          default: false
+          description: >
+            Per-tag opt-in for Sparkplug DCMD writes. When false (the default),
+            inbound DCMD commands for this tag are dropped — independent of the
+            role×tag ACL, which DCMD never consults. A write via DCMD requires both
+            writable=true and dcmd_enabled=true.
 
     PLCRequest:
       type: object
@@ -565,7 +576,7 @@ paths:
         Requires viewer role or higher when authentication is enabled.
       responses:
         "200":
-          description: Mapping list (envelope `data: []` when none configured).
+          description: Mapping list (envelope with an empty `data` array when none configured).
           content:
             application/json:
               schema:
@@ -845,7 +856,7 @@ paths:
         POST, PUT, and DELETE without a restart.
       responses:
         "200":
-          description: PLC list (envelope `data: []` when none configured).
+          description: PLC list (envelope with an empty `data` array when none configured).
           content:
             application/json:
               schema:
@@ -999,6 +1010,74 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/plcs/{plc}/tags/{tag}/write:
+    parameters:
+      - name: plc
+        in: path
+        required: true
+        description: PLC name (natural key).
+        schema:
+          type: string
+      - name: tag
+        in: path
+        required: true
+        description: Tag name within the PLC.
+        schema:
+          type: string
+
+    post:
+      summary: Write a value to a PLC tag
+      description: |
+        Any authenticated role may attempt; the write guard decides the outcome.
+        A write succeeds only past two gates: (1) the tag's `writable` master switch
+        is true, and (2) a role×tag ACL rule allows `(role, plc, tag)`. With no
+        matching allow rule the write is denied (deny-by-default). Every attempt —
+        allowed or denied — is recorded as a `tag.write` audit event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  description: >
+                    The value to write. Accepted as-is (JSON any) and passed to the
+                    driver; it is NOT coerced to the tag's declared Sparkplug type.
+                  example: 2.5
+      responses:
+        "200":
+          description: Write accepted and dispatched to the driver (no body).
+        "400":
+          description: Invalid request body (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: >
+            Write denied (`write_denied`) — either the `writable` master switch is
+            off or no ACL rule permits the caller's role for this tag.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: PLC or tag not found (`tag_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Write failed at the driver (`write_error`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/acl/rules:
     get:
       summary: List all ACL rules
@@ -1008,7 +1087,7 @@ paths:
         by the per-tag `dcmd_enabled` flag, not this table.
       responses:
         "200":
-          description: ACL rule list (envelope `data: []` when none configured).
+          description: ACL rule list (envelope with an empty `data` array when none configured).
           content:
             application/json:
               schema:

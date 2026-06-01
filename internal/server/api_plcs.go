@@ -12,9 +12,10 @@ import (
 
 // plcTagResponse is the API-safe tag representation.
 type plcTagResponse struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Writable bool   `json:"writable"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Writable    bool   `json:"writable"`
+	DcmdEnabled bool   `json:"dcmd_enabled"` // PCS-CFG-5.2
 }
 
 // plcResponse is the API-safe PLC representation.
@@ -33,7 +34,7 @@ type plcResponse struct {
 func plcToResponse(p config.PLC) plcResponse {
 	tags := make([]plcTagResponse, 0, len(p.Tags))
 	for _, t := range p.Tags {
-		tags = append(tags, plcTagResponse{Name: t.Name, Type: t.Type, Writable: t.Writable})
+		tags = append(tags, plcTagResponse{Name: t.Name, Type: t.Type, Writable: t.Writable, DcmdEnabled: t.DCMDEnabled})
 	}
 	return plcResponse{
 		Name:          p.Name,
@@ -64,7 +65,7 @@ func decodePLCRequest(r *http.Request) (config.PLC, error) {
 	}
 	tags := make([]config.TagDef, 0, len(req.Tags))
 	for _, t := range req.Tags {
-		tags = append(tags, config.TagDef{Name: t.Name, Type: t.Type, Writable: t.Writable})
+		tags = append(tags, config.TagDef{Name: t.Name, Type: t.Type, Writable: t.Writable, DCMDEnabled: t.DcmdEnabled})
 	}
 	return config.PLC{
 		Name:          req.Name,

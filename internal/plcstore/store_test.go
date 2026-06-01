@@ -4,12 +4,14 @@ package plcstore_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/plcstore"
+	_ "modernc.org/sqlite"
 )
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -415,4 +417,141 @@ func TestSeed_IdempotentOnNonEmpty(t *testing.T) {
 	if len(list) != 1 {
 		t.Errorf("List len after second Seed = %d; want 1 (idempotent)", len(list))
 	}
+}
+
+// ─── PCS-CFG-5.2: dcmd_enabled column ────────────────────────────────────────
+
+// samplePLCWithDCMD returns a PLC with a tag that has DCMDEnabled set to true.
+func samplePLCWithDCMD(name string) config.PLC {
+	return config.PLC{
+		Name:          name,
+		Address:       "10.0.0.1",
+		Slot:          0,
+		SocketTimeout: "5s",
+		ScanRate:      "1s",
+		KeepAlive:     false,
+		Path:          "",
+		Tags: []config.TagDef{
+			{Name: "Feed.Rate", Type: "Float", Writable: true, DCMDEnabled: true},
+			{Name: "Motor.Speed", Type: "Float", Writable: false, DCMDEnabled: false},
+		},
+	}
+}
+
+// TestDCMDEnabled_FreshDB verifies that a brand-new DB has the dcmd_enabled column,
+// defaults to false for new tags, and correctly round-trips true. (PCS-CFG-5.2)
+func TestDCMDEnabled_FreshDB(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openMemory(t)
+
+	p := samplePLCWithDCMD("line1")
+	if err := s.Create(ctx, p); err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+
+	got, err := s.Get(ctx, "line1")
+	if err != nil {
+		t.Fatalf("Get error: %v", err)
+	}
+	if len(got.Tags) != 2 {
+		t.Fatalf("Tags len = %d; want 2", len(got.Tags))
+	}
+
+	// Tag 0: DCMDEnabled should be true (we set it to true).
+	if !got.Tags[0].DCMDEnabled {
+		t.Errorf("Tags[0].DCMDEnabled = false; want true (round-trip)")
+	}
+	// Tag 1: DCMDEnabled should be false.
+	if got.Tags[1].DCMDEnabled {
+		t.Errorf("Tags[1].DCMDEnabled = true; want false (default)")
+	}
+}
+
+// TestDCMDEnabled_LegacyDB verifies that opening a DB that was created WITHOUT
+// the dcmd_enabled column runs the idempotent ALTER TABLE migration successfully,
+// existing rows default to 0 (false), and Open on the same DB a second time
+// does NOT error (idempotency). (PCS-CFG-5.2)
+func TestDCMDEnabled_LegacyDB(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Build a "legacy" DB: create plcs + plc_tags WITHOUT dcmd_enabled column.
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy DB: %v", err)
+	}
+	legacyDB.SetMaxOpenConns(1)
+	_, err = legacyDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	_, err = legacyDB.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS plcs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    name           TEXT    NOT NULL UNIQUE,
+    address        TEXT    NOT NULL,
+    slot           INTEGER NOT NULL DEFAULT 0,
+    socket_timeout TEXT    NOT NULL DEFAULT '',
+    scan_rate      TEXT    NOT NULL DEFAULT '',
+    keep_alive     INTEGER NOT NULL DEFAULT 0,
+    path           TEXT    NOT NULL DEFAULT '',
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plc_tags (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    plc_id   INTEGER NOT NULL REFERENCES plcs(id) ON DELETE CASCADE,
+    name     TEXT    NOT NULL,
+    type     TEXT    NOT NULL,
+    writable INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(plc_id, name)
+);`)
+	if err != nil {
+		t.Fatalf("create legacy tables: %v", err)
+	}
+
+	// Insert a legacy row (without dcmd_enabled).
+	now := int64(1000)
+	res, err := legacyDB.ExecContext(ctx,
+		`INSERT INTO plcs(name, address, slot, socket_timeout, scan_rate, keep_alive, path, created_at, updated_at)
+		 VALUES ('legacy-plc', '10.0.0.1', 0, '5s', '1s', 0, '', ?, ?)`, now, now)
+	if err != nil {
+		t.Fatalf("insert legacy plc: %v", err)
+	}
+	plcID, _ := res.LastInsertId()
+	_, err = legacyDB.ExecContext(ctx,
+		`INSERT INTO plc_tags(plc_id, name, type, writable) VALUES (?, 'OldTag', 'Float', 1)`, plcID)
+	if err != nil {
+		t.Fatalf("insert legacy tag: %v", err)
+	}
+	_ = legacyDB.Close()
+
+	// (a) Open via plcstore.Open — must succeed; migration adds dcmd_enabled column.
+	s, err := plcstore.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("plcstore.Open on legacy DB: %v", err)
+	}
+	defer s.Close()
+
+	// Verify the existing tag now has dcmd_enabled = false (default 0).
+	plc, err := s.Get(ctx, "legacy-plc")
+	if err != nil {
+		t.Fatalf("Get legacy-plc: %v", err)
+	}
+	if len(plc.Tags) != 1 {
+		t.Fatalf("Tags len = %d; want 1", len(plc.Tags))
+	}
+	if plc.Tags[0].DCMDEnabled {
+		t.Errorf("legacy tag DCMDEnabled = true; want false (migrated from old schema, default 0)")
+	}
+
+	// (b) Close and Open again — idempotency: must NOT error.
+	_ = s.Close()
+	s2, err := plcstore.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("second plcstore.Open on migrated DB (idempotency check): %v", err)
+	}
+	defer s2.Close()
 }

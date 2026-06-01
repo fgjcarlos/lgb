@@ -658,5 +658,81 @@ func TestHandleCreatePLC_ValidationFail_NoAudit(t *testing.T) {
 	}
 }
 
+// ─── PCS-CFG-5.2: dcmd_enabled API round-trip ────────────────────────────────
+
+// TestHandleCreatePLC_DcmdEnabledPersists verifies that creating a PLC with a tag
+// having dcmd_enabled:true persists and returns the field as true. (PCS-CFG-5.2)
+func TestHandleCreatePLC_DcmdEnabledPersists(t *testing.T) {
+	_, _, tokens, baseURL, stop := newPLCTestServer(t)
+	defer stop()
+
+	tok, _ := tokens.Issue(1, "admin", auth.RoleAdmin)
+	body := `{"name":"plc-dcmd","address":"10.0.0.1:44818","slot":0,"socket_timeout":"5s","scan_rate":"1s","keep_alive":false,"path":"","tags":[{"name":"Feed.Rate","type":"Float","writable":true,"dcmd_enabled":true}]}`
+	resp := doRequest(t, http.MethodPost, baseURL+"/api/plcs", body, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Tags []struct {
+				Name        string `json:"name"`
+				DcmdEnabled bool   `json:"dcmd_enabled"`
+			} `json:"tags"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result.Data.Tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(result.Data.Tags))
+	}
+	if !result.Data.Tags[0].DcmdEnabled {
+		t.Errorf("tag dcmd_enabled = false; want true (round-trip from POST body)")
+	}
+}
+
+// TestHandleGetPLC_DcmdEnabledInResponse verifies that retrieving a PLC returns
+// dcmd_enabled in the tag JSON. (PCS-CFG-5.2)
+func TestHandleGetPLC_DcmdEnabledInResponse(t *testing.T) {
+	store, _, tokens, baseURL, stop := newPLCTestServer(t)
+	defer stop()
+	ctx := context.Background()
+
+	// Seed the store directly with DCMDEnabled=true.
+	_ = store.Create(ctx, config.PLC{
+		Name: "plc-dcmd2", Address: "10.0.0.2:44818", ScanRate: "1s", SocketTimeout: "5s",
+		Tags: []config.TagDef{{Name: "Setpoint.Temp", Type: "Float", Writable: true, DCMDEnabled: true}},
+	})
+
+	tok, _ := tokens.Issue(1, "admin", auth.RoleAdmin)
+	resp := doRequest(t, http.MethodGet, baseURL+"/api/plcs/plc-dcmd2", "", tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Tags []struct {
+				Name        string `json:"name"`
+				DcmdEnabled bool   `json:"dcmd_enabled"`
+			} `json:"tags"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result.Data.Tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(result.Data.Tags))
+	}
+	if !result.Data.Tags[0].DcmdEnabled {
+		t.Errorf("GET response tag dcmd_enabled = false; want true")
+	}
+}
+
 // compile-time guard: bytes import used by doRequest (defined in api_users_test.go).
 var _ = bytes.NewBuffer

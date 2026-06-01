@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -15,16 +15,123 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { UnavailableBanner } from "@/components/UnavailableBanner";
-import { useCurrentTags, useMappings } from "@/hooks/useApi";
+import { useCurrentTags, useMappings, usePLCs, useWriteTag } from "@/hooks/useApi";
 import { ApiError } from "@/lib/api";
 
 const PAGE_SIZE = 25;
 
+// Build a fast writability lookup: "plcName|tagName" → true/false
+function useWritabilityMap(): Map<string, boolean> {
+  const plcsQuery = usePLCs();
+  const map = new Map<string, boolean>();
+  if (plcsQuery.data) {
+    for (const plc of plcsQuery.data.data) {
+      for (const tag of plc.tags) {
+        map.set(`${plc.name}|${tag.name}`, tag.writable);
+      }
+    }
+  }
+  return map;
+}
+
+interface WriteControlProps {
+  plc: string;
+  tag: string;
+  writable: boolean;
+}
+
+function WriteControl({ plc, tag, writable }: WriteControlProps) {
+  const writeMutation = useWriteTag(plc, tag);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  if (!writable) {
+    return (
+      <span
+        className="text-xs text-muted-foreground"
+        title="Master write switch is off for this tag"
+      >
+        read-only
+      </span>
+    );
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const raw = inputRef.current?.value ?? "";
+    if (raw === "") return;
+    // Send as string; backend accepts any JSON value via `any`.
+    writeMutation.mutate(
+      { value: raw },
+      {
+        onSuccess: () => {
+          if (inputRef.current) inputRef.current.value = "";
+        },
+      },
+    );
+  }
+
+  const is403 =
+    writeMutation.isError &&
+    writeMutation.error instanceof ApiError &&
+    writeMutation.error.status === 403;
+  const is404 =
+    writeMutation.isError &&
+    writeMutation.error instanceof ApiError &&
+    writeMutation.error.status === 404;
+  const is400 =
+    writeMutation.isError &&
+    writeMutation.error instanceof ApiError &&
+    writeMutation.error.status === 400;
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="flex items-center gap-1"
+      aria-label={`Write value to ${tag}`}
+    >
+      <Input
+        ref={inputRef}
+        className="h-6 w-24 px-1 text-xs"
+        placeholder="value"
+        disabled={writeMutation.isPending}
+      />
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        className="h-6 px-2 text-xs"
+        disabled={writeMutation.isPending}
+      >
+        {writeMutation.isPending ? "…" : "Write"}
+      </Button>
+      {writeMutation.isSuccess && (
+        <span className="text-xs text-green-600">sent</span>
+      )}
+      {is403 && (
+        <span className="text-xs text-destructive">permission denied</span>
+      )}
+      {is404 && (
+        <span className="text-xs text-destructive">tag not found</span>
+      )}
+      {is400 && (
+        <span className="text-xs text-destructive">bad request</span>
+      )}
+      {writeMutation.isError && !is403 && !is404 && !is400 && (
+        <span className="text-xs text-destructive">
+          {writeMutation.error.message}
+        </span>
+      )}
+    </form>
+  );
+}
+
 export function Tags() {
   const [offset, setOffset] = useState(0);
   const tagsQuery = useCurrentTags({ limit: PAGE_SIZE, offset });
+  const writabilityMap = useWritabilityMap();
 
   const data = tagsQuery.data;
   const count = data?.pagination.count ?? 0;
@@ -67,20 +174,34 @@ export function Tags() {
                   <TableHead>Value</TableHead>
                   <TableHead>Quality</TableHead>
                   <TableHead>Timestamp</TableHead>
+                  <TableHead>Write</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.data.map((row) => (
-                  <TableRow key={`${row.plc}:${row.tag}`}>
-                    <TableCell>{row.plc}</TableCell>
-                    <TableCell className="font-mono text-xs">{row.tag}</TableCell>
-                    <TableCell>{String(row.value)}</TableCell>
-                    <TableCell>{row.quality}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {new Date(row.timestamp).toLocaleString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {data.data.map((row) => {
+                  const writable =
+                    writabilityMap.get(`${row.plc}|${row.tag}`) ?? false;
+                  return (
+                    <TableRow key={`${row.plc}:${row.tag}`}>
+                      <TableCell>{row.plc}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {row.tag}
+                      </TableCell>
+                      <TableCell>{String(row.value)}</TableCell>
+                      <TableCell>{row.quality}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {new Date(row.timestamp).toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <WriteControl
+                          plc={row.plc}
+                          tag={row.tag}
+                          writable={writable}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

@@ -269,3 +269,106 @@ export function useDeletePLC(): UseMutationResult<
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
   });
 }
+
+// ─── ACL CRUD hooks (admin-only; backed by the SQLite tag_acl store) ────────
+
+export interface ACLRule {
+  id: number;
+  role: string;
+  plc: string;
+  tag: string;
+  allow_write: boolean;
+}
+
+export interface ACLRuleInput {
+  role: string;
+  plc: string;
+  tag: string;
+  allow_write: boolean;
+}
+
+export function useACLRules(): UseQueryResult<
+  { data: ACLRule[] },
+  ApiError | Error
+> {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["acl"],
+    queryFn: () =>
+      apiFetch<{ data: ACLRule[] }>("/api/acl/rules", { token }),
+    enabled: !!token,
+  });
+}
+
+export function useCreateACLRule(): UseMutationResult<
+  { data: ACLRule },
+  ApiError | Error,
+  ACLRuleInput
+> {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ACLRuleInput) =>
+      apiFetch<{ data: ACLRule }>("/api/acl/rules", {
+        method: "POST",
+        token,
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+  });
+}
+
+export function useUpdateACLRule(): UseMutationResult<
+  { data: ACLRule },
+  ApiError | Error,
+  { id: number; input: ACLRuleInput }
+> {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: ACLRuleInput }) =>
+      apiFetch<{ data: ACLRule }>(`/api/acl/rules/${id}`, {
+        method: "PUT",
+        token,
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+  });
+}
+
+export function useDeleteACLRule(): UseMutationResult<
+  void,
+  ApiError | Error,
+  number
+> {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/api/acl/rules/${id}`, {
+        method: "DELETE",
+        token,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+  });
+}
+
+// ─── Write tag mutation (HTTP write surface) ─────────────────────────────────
+
+export function useWriteTag(
+  plcName: string,
+  tagName: string,
+): UseMutationResult<void, ApiError | Error, { value: unknown }> {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: ({ value }: { value: unknown }) =>
+      apiFetch<void>(
+        `/api/plcs/${encodeURIComponent(plcName)}/tags/${encodeURIComponent(tagName)}/write`,
+        {
+          method: "POST",
+          token,
+          body: JSON.stringify({ value }),
+        },
+      ),
+  });
+}

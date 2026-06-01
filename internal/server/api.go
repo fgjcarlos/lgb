@@ -148,6 +148,10 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	// decides the outcome. (TWA-HTTP-3.1)
 	s.registerWriteRoutes(mux)
 
+	// ACL admin CRUD endpoints — admin only; registered only when aclStore is set.
+	// (TWA-API-5.1)
+	s.registerACLRoutes(mux)
+
 	// PLC CRUD endpoints — store-backed. Reads are viewer+ (consistent with
 	// GET /api/config/mappings, which exposes the same PLC/tag data); mutations
 	// are admin only.

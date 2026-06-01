@@ -387,6 +387,24 @@ func (m *Manager) AddTagCallback(cb TagCallback) {
 	m.callbacks = append(m.callbacks, cb)
 }
 
+// WriteTag writes val to the named tag on the named PLC by delegating to the
+// underlying driver. It acquires a read lock to look up the worker, then calls
+// driver.WriteTag outside the lock (driver serializes its own I/O).
+//
+// Returns ErrPLCNotFound when the named PLC is not registered in this Manager.
+// Any driver-level error is returned as-is.
+//
+// Requirements: Design §2, task 2.05.
+func (m *Manager) WriteTag(plcName, tag string, val any) error {
+	m.mu.RLock()
+	w, ok := m.workers[plcName]
+	m.mu.RUnlock()
+	if !ok {
+		return ErrPLCNotFound
+	}
+	return w.driver.WriteTag(tag, val)
+}
+
 func (m *Manager) storeTag(update TagUpdate) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

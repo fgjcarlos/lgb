@@ -34,6 +34,7 @@ func (f *fakePLCManager) Reload(_ context.Context, _ *config.Config) error {
 	f.reloadCount++
 	return f.reloadErr
 }
+func (f *fakePLCManager) WriteTag(_ string, _ string, _ any) error { return nil }
 func (f *fakePLCManager) ReloadCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

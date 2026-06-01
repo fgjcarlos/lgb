@@ -200,6 +200,7 @@ func (m *mockPLCManager) Stop() error {
 }
 
 func (m *mockPLCManager) Reload(_ context.Context, _ *config.Config) error { return nil }
+func (m *mockPLCManager) WriteTag(_ string, _ string, _ any) error         { return nil }
 
 func (m *mockPLCManager) StartWasCalled() bool {
 	m.mu.Lock()

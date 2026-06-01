@@ -143,6 +143,11 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 			withMiddleware(http.HandlerFunc(s.handleDeleteUser), adminMWs...))
 	}
 
+	// Tag write endpoint — requires both plcStore and writeGuard wired.
+	// Any authenticated role may attempt a write; the Guard (ACL + master switch)
+	// decides the outcome. (TWA-HTTP-3.1)
+	s.registerWriteRoutes(mux)
+
 	// PLC CRUD endpoints — store-backed. Reads are viewer+ (consistent with
 	// GET /api/config/mappings, which exposes the same PLC/tag data); mutations
 	// are admin only.

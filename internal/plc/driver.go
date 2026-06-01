@@ -2,6 +2,7 @@ package plc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	errs "github.com/fgjcarlos/lgb/internal/errors"
@@ -22,6 +23,12 @@ var (
 	// ErrPLCTimeout is returned when a PLC operation exceeds its deadline.
 	ErrPLCTimeout = errs.ErrPLCTimeout
 )
+
+// ErrPLCNotFound is returned by Manager.WriteTag when the requested PLC name is
+// not registered in the manager. It is distinct from plcstore.ErrPLCNotFound
+// (which covers missing rows in the config store) — this one covers an absent
+// driver worker in the in-memory manager.
+var ErrPLCNotFound = errors.New("plc not found in manager")
 
 // Driver is the boundary interface for PLC tag I/O.
 //

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/aclstore"
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/httpx"
 	"github.com/fgjcarlos/lgb/internal/plc"
 	"github.com/fgjcarlos/lgb/internal/plcstore"
+	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
 // PLCManager is the interface that the PLC manager must satisfy for server
@@ -33,6 +35,10 @@ type PLCManager interface {
 	Start(ctx context.Context) error
 	Stop() error
 	Reload(ctx context.Context, cfg *config.Config) error
+	// WriteTag writes val to the named tag on the named PLC.
+	// Returns plc.ErrPLCNotFound if the PLC is not registered.
+	// Added in PR2 (Design §2).
+	WriteTag(plcName, tag string, val any) error
 }
 
 // tagUpdateHook is implemented by PLC managers that can fan out scanned tag
@@ -83,11 +89,13 @@ type Server struct {
 	tagHub     *tagHub            // realtime API fanout for PLC tag updates
 
 	// Domain store dependencies (all nil-safe).
-	userStore *auth.UserStore
-	auditLog  *auth.AuditLogger
-	histStore *historian.Store
-	bkpMgr    *backup.Manager
-	plcStore  *plcstore.Store
+	userStore  *auth.UserStore
+	auditLog   *auth.AuditLogger
+	histStore  *historian.Store
+	bkpMgr     *backup.Manager
+	plcStore   *plcstore.Store
+	aclStore   *aclstore.Store    // nil until PR4 wires the admin CRUD API
+	writeGuard *writeguard.Guard  // nil-safe; operative as soon as set (PR2+)
 
 	bkpStatus backupStatus // mutex-guarded backup status cell
 
@@ -105,11 +113,13 @@ type Opts struct {
 	AuthTokens *auth.TokenService
 
 	// Domain store dependencies (all optional).
-	UserStore *auth.UserStore
-	AuditLog  *auth.AuditLogger
-	HistStore *historian.Store
-	BkpMgr    *backup.Manager
-	PLCStore  *plcstore.Store
+	UserStore  *auth.UserStore
+	AuditLog   *auth.AuditLogger
+	HistStore  *historian.Store
+	BkpMgr     *backup.Manager
+	PLCStore   *plcstore.Store
+	ACLStore   *aclstore.Store   // nil until PR4 wires the admin CRUD API
+	WriteGuard *writeguard.Guard // nil-safe; operative as soon as set
 
 	// Checks is the list of doctor.Check instances run by GET /api/doctor.
 	// When nil, the server starts with no checks registered.
@@ -143,6 +153,8 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		histStore:  opts.HistStore,
 		bkpMgr:     opts.BkpMgr,
 		plcStore:   opts.PLCStore,
+		aclStore:   opts.ACLStore,
+		writeGuard: opts.WriteGuard,
 		bkpStatus:  backupStatus{status: "idle"},
 	}
 }

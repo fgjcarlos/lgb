@@ -5,6 +5,7 @@ import {
   Database,
   Gauge,
   HardDriveDownload,
+  ShieldCheck,
   Stethoscope,
   Tags as TagsIcon,
   Users as UsersIcon,
@@ -17,6 +18,7 @@ import { Diagnostics } from "@/pages/Diagnostics";
 import { Backup } from "@/pages/Backup";
 import { Users } from "@/pages/Users";
 import { PLCs } from "@/pages/PLCs";
+import { ACL } from "@/pages/ACL";
 
 export interface RouteEntry {
   path: string;
@@ -71,6 +73,13 @@ export const routes: RouteEntry[] = [
     icon: UsersIcon,
     requiredRole: "admin",
     element: <Users />,
+  },
+  {
+    path: "/acl",
+    label: "Write ACL",
+    icon: ShieldCheck,
+    requiredRole: "admin",
+    element: <ACL />,
   },
 ];
 

@@ -70,6 +70,15 @@ func (e *EdgeNode) State() State {
 	return e.sm.State()
 }
 
+// SetCommandHandler sets the handler for inbound DCMD metric writes.
+// It MUST be called before Start — the subscription is registered during Start,
+// and handleDCMD reads e.onCommand at dispatch time, so calling this before
+// Start is the correct and safe window. Safe to call at any time if Start has
+// not yet been invoked. (PR3 wiring seam — TWA-DCMD-3.2)
+func (e *EdgeNode) SetCommandHandler(h CommandHandler) {
+	e.onCommand = h
+}
+
 // Start connects to the MQTT broker, publishes NBIRTH + DBIRTH for all
 // devices, and transitions to ONLINE.
 func (e *EdgeNode) Start(ctx context.Context) error {

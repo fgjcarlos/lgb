@@ -132,11 +132,25 @@ type Opts struct {
 // Checks from both the positional parameter and opts.Checks are merged; opts.Checks
 // is appended after the positional slice so callers can inject test-only checks
 // via Opts without altering production call sites.
+//
+// Guard ownership: if opts.WriteGuard is nil but both opts.PLCStore and
+// opts.ACLStore are non-nil, New builds a writeguard.Guard automatically.
+// This activates the HTTP write endpoint (registerWriteRoutes) — safe because an
+// empty ACL store denies all HTTP writes by default (deny-by-default). An
+// injected opts.WriteGuard (for tests) takes precedence over auto-construction.
 func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts) *Server {
 	allChecks := checks
 	if len(opts.Checks) > 0 {
 		allChecks = append(allChecks, opts.Checks...)
 	}
+
+	// Auto-build the write guard when the stores are available and no guard was
+	// injected. Injected guard wins (used by tests that want full control).
+	guard := opts.WriteGuard
+	if guard == nil && opts.PLCStore != nil && opts.ACLStore != nil {
+		guard = writeguard.NewGuard(&plcstoreTagReader{store: opts.PLCStore}, opts.ACLStore)
+	}
+
 	return &Server{
 		cfg:        cfg,
 		log:        log,
@@ -154,7 +168,7 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		bkpMgr:     opts.BkpMgr,
 		plcStore:   opts.PLCStore,
 		aclStore:   opts.ACLStore,
-		writeGuard: opts.WriteGuard,
+		writeGuard: guard,
 		bkpStatus:  backupStatus{status: "idle"},
 	}
 }

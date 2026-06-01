@@ -9,12 +9,14 @@ import (
 
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/plcstore"
+	"github.com/fgjcarlos/lgb/internal/sparkplug"
 	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
 // plcstoreTagReader adapts *plcstore.Store to writeguard.TagReadable.
-// It reads Writable from the plc_tags table. DCMDEnabled is always false
-// until PR3-pre adds the dcmd_enabled column to plcstore.
+// It reads both Writable and DCMDEnabled from the plc_tags table.
+// DCMDEnabled was added in PR3-pre (PCS-CFG-5.2); it defaults to false
+// on existing rows via the idempotent ALTER TABLE migration.
 type plcstoreTagReader struct {
 	store *plcstore.Store
 }
@@ -26,9 +28,7 @@ func (r *plcstoreTagReader) TagMeta(ctx context.Context, plcName, tagName string
 	}
 	for _, t := range p.Tags {
 		if t.Name == tagName {
-			// DCMDEnabled is PR3-pre; defaults to false (deny-by-default) until
-			// the dcmd_enabled column and TagDef.DCMDEnabled field are added.
-			return writeguard.TagMeta{Writable: t.Writable, DCMDEnabled: false}, true
+			return writeguard.TagMeta{Writable: t.Writable, DCMDEnabled: t.DCMDEnabled}, true
 		}
 	}
 	return writeguard.TagMeta{}, false
@@ -132,10 +132,12 @@ func (s *Server) handleWriteTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// emitWriteAudit emits a tag.write audit event. It is nil-safe — if auditLog is
-// nil, the call is a no-op. Audit fires synchronously before the caller returns.
+// emitWriteAuditDetail emits a tag.write audit event with all fields supplied
+// directly. It is nil-safe — if auditLog is nil, the call is a no-op.
+// This is the canonical implementation; both the HTTP and DCMD paths use it.
+// The DCMD path passes ip="" because MQTT has no network-level request object.
 // (TWA-AUDIT-4.1)
-func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value any, outcome, reason, source, username string) {
+func (s *Server) emitWriteAuditDetail(plcName, tagName string, value any, outcome, reason, source, username string) {
 	if s.auditLog == nil {
 		return
 	}
@@ -148,4 +150,43 @@ func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value 
 		Username: username,
 		Detail:   detail,
 	})
+}
+
+// emitWriteAudit is the HTTP-path wrapper around emitWriteAuditDetail.
+// It exists to preserve the existing call sites in handleWriteTag.
+// (TWA-AUDIT-4.1)
+func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value any, outcome, reason, source, username string) {
+	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username)
+}
+
+// SparkplugCommandHandler returns a sparkplug.CommandHandler closure that
+// enforces the DCMD write gate and audits every attempt (allow AND deny).
+//
+// Returns nil when either the writeGuard or the plcMgr is absent — callers
+// MUST check for nil before wiring onto the EdgeNode.
+//
+// The closure maps deviceID → PLC name directly (deviceID IS the PLC name in
+// this system: see defaultSparkplugNodeFactory which sets DeviceID = p.Name).
+// It calls Guard.AuthorizeDCMD (never AuthorizeHTTP, never aclStore.CanWrite).
+// The DCMD path has no actor: Username is always "".
+// (TWA-DCMD-3.2, TWA-AUDIT-4.1)
+func (s *Server) SparkplugCommandHandler() sparkplug.CommandHandler {
+	if s.writeGuard == nil || s.plcMgr == nil {
+		return nil
+	}
+	return func(deviceID, tag string, value any) {
+		ctx := context.Background()
+		plcName := deviceID // deviceID IS the PLC name in this system
+		decision := s.writeGuard.AuthorizeDCMD(ctx, plcName, tag)
+		if !decision.Allowed {
+			s.emitWriteAuditDetail(plcName, tag, value, "deny", decision.Reason, "dcmd", "")
+			return
+		}
+		// Allow path: write then audit.
+		if err := s.plcMgr.WriteTag(plcName, tag, value); err != nil {
+			s.emitWriteAuditDetail(plcName, tag, value, "deny", fmt.Sprintf("write error: %v", err), "dcmd", "")
+			return
+		}
+		s.emitWriteAuditDetail(plcName, tag, value, "allow", "", "dcmd", "")
+	}
 }

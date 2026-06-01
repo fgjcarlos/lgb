@@ -465,6 +465,73 @@ func TestEdgeNode_DCMD_InvokesCommandHandler(t *testing.T) {
 	}
 }
 
+// TestEdgeNode_SetCommandHandler_PostConstruction verifies that a CommandHandler
+// can be set AFTER construction (before Start) and that it is invoked when a DCMD
+// arrives. This is the wiring seam used by cmd/lgb/cmd/server.go (PR3).
+// (TWA-DCMD-3.2 — EdgeNode side)
+func TestEdgeNode_SetCommandHandler_PostConstruction(t *testing.T) {
+	t.Parallel()
+
+	var cmdMu sync.Mutex
+	var called []struct{ Device, Tag string; Value any }
+
+	mc := &mockMQTTClient{}
+	// Create EdgeNode WITHOUT an OnCommand — simulates cmd/lgb creating the node
+	// before the server (and guard) are available.
+	en := sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{
+		GroupID: "plant-a",
+		NodeID:  "lgb-1",
+		Client:  mc,
+		Devices: []sparkplug.DeviceConfig{{DeviceID: "plc-a"}},
+		// OnCommand deliberately omitted — wired post-construction below.
+	})
+
+	// Wire the handler AFTER construction, BEFORE Start.
+	handler := func(deviceID, tag string, value any) {
+		cmdMu.Lock()
+		called = append(called, struct{ Device, Tag string; Value any }{deviceID, tag, value})
+		cmdMu.Unlock()
+	}
+	en.SetCommandHandler(handler)
+
+	ctx := context.Background()
+	if err := en.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer func() { _ = en.Stop() }()
+
+	// Find DCMD handler and fire a metric.
+	subs := mc.getSubscriptions()
+	var dcmdHandler mqtt.MessageHandler
+	for _, s := range subs {
+		if s.Topic == "spBv1.0/plant-a/DCMD/lgb-1/+" {
+			dcmdHandler = s.Handler
+			break
+		}
+	}
+	if dcmdHandler == nil {
+		t.Fatal("DCMD subscription not found after Start")
+	}
+
+	payload := buildDCMDPayload(t, "Feed.Rate", float32(3.0))
+	dcmdHandler("spBv1.0/plant-a/DCMD/lgb-1/plc-a", payload)
+
+	cmdMu.Lock()
+	defer cmdMu.Unlock()
+	if len(called) != 1 {
+		t.Fatalf("expected 1 invocation of post-construction handler, got %d", len(called))
+	}
+	if called[0].Device != "plc-a" {
+		t.Errorf("device = %q; want plc-a", called[0].Device)
+	}
+	if called[0].Tag != "Feed.Rate" {
+		t.Errorf("tag = %q; want Feed.Rate", called[0].Tag)
+	}
+	if v, ok := called[0].Value.(float32); !ok || v != 3.0 {
+		t.Errorf("value = %v; want float32(3.0)", called[0].Value)
+	}
+}
+
 // buildRebirthNCMD creates an NCMD payload with "Node Control/Rebirth" = true.
 func buildRebirthNCMD(t *testing.T) []byte {
 	t.Helper()

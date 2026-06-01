@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgjcarlos/lgb/internal/aclstore"
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
@@ -181,6 +182,20 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		slog.String("component", "plc-store"),
 		slog.String("path", plcStorePath))
 
+	// Open the ACL store (acl.db). Deny-by-default: an empty store denies all
+	// HTTP writes; the DCMD path reads dcmd_enabled from plcstore, not aclstore.
+	// Use context.Background() for setup so the migration is not cancelled by
+	// the server's run context (same pattern as userStore above).
+	aclStorePath := filepath.Join(resolvedPath, "acl.db")
+	aclStore, aclStoreErr := aclstore.Open(context.Background(), aclStorePath)
+	if aclStoreErr != nil {
+		return fmt.Errorf("server: open acl store: %w", aclStoreErr)
+	}
+	defer aclStore.Close()
+	logger.Info("acl store opened",
+		slog.String("component", "acl-store"),
+		slog.String("path", aclStorePath))
+
 	// Seed from YAML on first boot (IsEmpty guard makes it idempotent).
 	empty, err := plcStore.IsEmpty(context.Background())
 	if err != nil {
@@ -306,11 +321,29 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		HistStore:  histStore,
 		BkpMgr:     bkpMgr,
 		PLCStore:   plcStore,
+		ACLStore:   aclStore,
+		// WriteGuard is nil — server.New auto-builds it from PLCStore+ACLStore.
 	})
 
 	// Store server reference for tests.
 	if d.serverRef != nil {
 		*d.serverRef = srv
+	}
+
+	// Wire the DCMD guard-backed handler onto the Sparkplug EdgeNode.
+	// Uses the optional-interface pattern (same as HandleTagUpdate wiring above)
+	// so the build compiles cleanly when spNode is a non-EdgeNode implementation.
+	// The handler is nil-safe: SparkplugCommandHandler returns nil when the guard
+	// or plcMgr is absent, in which case OnCommand stays nil and DCMDs are dropped.
+	// (TWA-DCMD-3.2 — PR3 wiring)
+	if spNode != nil {
+		if h, ok := spNode.(interface {
+			SetCommandHandler(sparkplug.CommandHandler)
+		}); ok {
+			if cmd := srv.SparkplugCommandHandler(); cmd != nil {
+				h.SetCommandHandler(cmd)
+			}
+		}
 	}
 
 	// Start config file watcher for PLC hot-reload.

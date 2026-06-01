@@ -177,6 +177,7 @@ export interface PLCTag {
   name: string;
   type: string;
   writable: boolean;
+  dcmd_enabled: boolean; // PCS-CFG-5.2 — per-tag DCMD opt-in
 }
 
 export interface PLCRow {

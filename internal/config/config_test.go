@@ -728,6 +728,73 @@ func TestBackupValidateValidConfig(t *testing.T) {
 	}
 }
 
+// TestTagDefDCMDEnabled_TrueFromYAML asserts PCS-CFG-5.2: a tag with dcmd_enabled:true
+// is loaded with DCMDEnabled == true.
+func TestTagDefDCMDEnabled_TrueFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "dcmd-enabled-tag.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "plc-d"
+    address: "10.0.0.1"
+    tags:
+      - name: "Feed.Rate"
+        type: "Float"
+        dcmd_enabled: true
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing dcmd-enabled-tag.yaml: %v", err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 || len(cfg.PLCs[0].Tags) == 0 {
+		t.Fatal("expected PLC with tags")
+	}
+	if !cfg.PLCs[0].Tags[0].DCMDEnabled {
+		t.Errorf("Tags[0].DCMDEnabled = false; want true (dcmd_enabled:true in YAML)")
+	}
+}
+
+// TestTagDefDCMDEnabled_DefaultsFalse asserts PCS-CFG-5.2: a tag omitting dcmd_enabled
+// defaults to DCMDEnabled == false.
+func TestTagDefDCMDEnabled_DefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "no-dcmd-tag.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "plc-r"
+    address: "10.0.0.1"
+    tags:
+      - name: "Feed.Rate"
+        type: "Float"
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing no-dcmd-tag.yaml: %v", err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 || len(cfg.PLCs[0].Tags) == 0 {
+		t.Fatal("expected PLC with tags")
+	}
+	if cfg.PLCs[0].Tags[0].DCMDEnabled {
+		t.Errorf("Tags[0].DCMDEnabled = true; want false (dcmd_enabled omitted in YAML)")
+	}
+}
+
 // TestTagDefWritable_TrueFromYAML asserts PCS-CFG-5.1: a tag with writable:true
 // is loaded with Writable == true.
 func TestTagDefWritable_TrueFromYAML(t *testing.T) {

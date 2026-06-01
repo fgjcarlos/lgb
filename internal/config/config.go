@@ -130,9 +130,10 @@ type PLC struct {
 
 // TagDef maps a PLC tag to a Sparkplug B metric.
 type TagDef struct {
-	Name     string `koanf:"name"`
-	Type     string `koanf:"type"`
-	Writable bool   `koanf:"writable"` // PCS-CFG-5.1 — stored, never enforced
+	Name        string `koanf:"name"`
+	Type        string `koanf:"type"`
+	Writable    bool   `koanf:"writable"`    // PCS-CFG-5.1 — engineering master switch for writes
+	DCMDEnabled bool   `koanf:"dcmd_enabled"` // PCS-CFG-5.2 — per-tag DCMD opt-in; false by default
 }
 
 // Validate checks the loaded config against schema constraints.

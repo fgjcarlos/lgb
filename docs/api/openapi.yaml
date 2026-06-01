@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: LGB Gateway API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     REST and realtime API surface for the LGB industrial IoT gateway.
 
@@ -299,6 +299,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PLCTag"
+
+    ACLRule:
+      type: object
+      required: [id, role, plc, tag, allow_write]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Surrogate primary key assigned by the store. Read-only; set by server.
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+          description: Role this rule applies to.
+        plc:
+          type: string
+          description: PLC name this rule applies to (free-form; not validated against plcstore).
+        tag:
+          type: string
+          description: Tag name this rule applies to (free-form; not validated against plcstore).
+        allow_write:
+          type: boolean
+          default: false
+          description: Whether the role may write this tag on this PLC via the HTTP write endpoint.
+
+    ACLRuleRequest:
+      type: object
+      required: [role, plc, tag]
+      properties:
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        plc:
+          type: string
+        tag:
+          type: string
+        allow_write:
+          type: boolean
+          default: false
 
 security:
   - bearerAuth: []
@@ -956,6 +994,173 @@ paths:
           description: Caller is not an admin.
         "404":
           description: PLC not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/acl/rules:
+    get:
+      summary: List all ACL rules
+      description: |
+        Admin only. Returns all role×tag write ACL rules ordered by (role, plc, tag).
+        These rules govern the HTTP write endpoint only; DCMD writes are controlled
+        by the per-tag `dcmd_enabled` flag, not this table.
+      responses:
+        "200":
+          description: ACL rule list (envelope `data: []` when none configured).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ACLRule"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+
+    post:
+      summary: Create an ACL rule
+      description: |
+        Admin only. Creates a new role×tag write ACL rule. The (role, plc, tag) triple
+        must be unique. Emits an `acl.create` audit event on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ACLRuleRequest"
+      responses:
+        "201":
+          description: Rule created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ACLRule"
+        "400":
+          description: Invalid request body or invalid role value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "409":
+          description: A rule for the same (role, plc, tag) already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/acl/rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+        description: Surrogate ACL rule ID returned by GET/POST.
+
+    get:
+      summary: Get an ACL rule by id
+      description: Admin only. Returns the ACL rule with the given surrogate id.
+      responses:
+        "200":
+          description: ACL rule found.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ACLRule"
+        "400":
+          description: id is not a positive integer.
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: No rule with that id exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      summary: Replace an ACL rule
+      description: |
+        Admin only. Replaces all fields of the rule identified by id. Emits an
+        `acl.update` audit event on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ACLRuleRequest"
+      responses:
+        "200":
+          description: Rule updated; returns the new canonical form.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ACLRule"
+        "400":
+          description: Invalid request body or invalid role value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: No rule with that id exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The new (role, plc, tag) collides with an existing rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Delete an ACL rule
+      description: |
+        Admin only. Removes the rule with the given id. Emits an `acl.delete`
+        audit event on success.
+      responses:
+        "204":
+          description: Rule deleted.
+        "400":
+          description: id is not a positive integer.
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "404":
+          description: No rule with that id exists.
           content:
             application/json:
               schema:

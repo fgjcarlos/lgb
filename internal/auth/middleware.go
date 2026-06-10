@@ -55,10 +55,18 @@ func RequireRole(roles ...Role) func(http.Handler) http.Handler {
 	}
 }
 
-func extractToken(r *http.Request) string {
+// BearerToken extracts a JWT from the Authorization header.
+// It accepts only the "Bearer <token>" form — query-parameter tokens are
+// rejected to comply with R71-1 (no credential transport via URL).
+// Returns an empty string when the header is absent or malformed.
+func BearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return auth[7:]
 	}
-	return r.URL.Query().Get("token")
+	return ""
+}
+
+func extractToken(r *http.Request) string {
+	return BearerToken(r)
 }

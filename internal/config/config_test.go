@@ -862,6 +862,62 @@ plcs:
 	}
 }
 
+// TestServerAllowedOriginsLoaded asserts R71-2: LGB_SERVER_ALLOWEDORIGINS is
+// comma-split into a []string and loaded into cfg.Server.AllowedOrigins.
+func TestServerAllowedOriginsLoaded(t *testing.T) {
+	t.Setenv("LGB_SERVER_ALLOWEDORIGINS", "localhost:5173,localhost:3000")
+	t.Cleanup(func() { os.Unsetenv("LGB_SERVER_ALLOWEDORIGINS") })
+
+	dir := t.TempDir()
+	y := filepath.Join(dir, "origins.yaml")
+	content := "gateway:\n  id: \"test\"\n  logLevel: \"info\"\n  logFormat: \"text\"\nserver:\n  httpAddr: \":8080\"\n"
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing origins.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if len(cfg.Server.AllowedOrigins) != 2 {
+		t.Fatalf("AllowedOrigins len = %d; want 2 (got %v)", len(cfg.Server.AllowedOrigins), cfg.Server.AllowedOrigins)
+	}
+	if cfg.Server.AllowedOrigins[0] != "localhost:5173" {
+		t.Errorf("AllowedOrigins[0] = %q; want %q", cfg.Server.AllowedOrigins[0], "localhost:5173")
+	}
+	if cfg.Server.AllowedOrigins[1] != "localhost:3000" {
+		t.Errorf("AllowedOrigins[1] = %q; want %q", cfg.Server.AllowedOrigins[1], "localhost:3000")
+	}
+}
+
+// TestServerAllowedOriginsValidateEmptyEntry asserts R71-2 Validate rule: an
+// empty string inside AllowedOrigins is rejected as ErrConfigInvalid.
+func TestServerAllowedOriginsValidateEmptyEntry(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.AllowedOrigins = []string{"localhost:5173", ""}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil on empty AllowedOrigins entry; want error")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("errors.Is(err, ErrConfigInvalid) = false; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "allowedOrigins") {
+		t.Errorf("error message does not mention allowedOrigins; got %v", err)
+	}
+}
+
+// TestServerAllowedOriginsValidateNilIsOK asserts R71-2: a nil AllowedOrigins
+// slice passes validation (same-origin-only mode).
+func TestServerAllowedOriginsValidateNilIsOK(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.AllowedOrigins = nil
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() returned error on nil AllowedOrigins; want nil, got %v", err)
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()

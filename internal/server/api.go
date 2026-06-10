@@ -264,8 +264,9 @@ func (s *Server) handleTagsWebSocket(w http.ResponseWriter, r *http.Request) {
 					PLC       string    `json:"plc"`
 					Tag       string    `json:"tag"`
 					Value     any       `json:"value"`
+					Quality   string    `json:"quality"`
 					Timestamp time.Time `json:"timestamp"`
-				}{Type: "tag_update", PLC: update.PLCName, Tag: update.Tag, Value: update.Value, Timestamp: update.Timestamp}
+				}{Type: "tag_update", PLC: update.PLCName, Tag: update.Tag, Value: update.Value, Quality: update.Quality, Timestamp: update.Timestamp}
 				if err := writeJSONMessage(msg); err != nil {
 					cancel()
 					writeErr <- err

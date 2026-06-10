@@ -464,6 +464,7 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 
 // buildTagCallback creates a fan-out callback that sends tag updates to both
 // the historian writer and the sparkplug edge node.
+// R70-1/R70-4: Quality is propagated from the plc.TagUpdate to all consumers.
 func buildTagCallback(ctx context.Context, hw *historian.Writer, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
 	return func(u plc.TagUpdate) {
 		if hw != nil {
@@ -472,7 +473,7 @@ func buildTagCallback(ctx context.Context, hw *historian.Writer, spHandler func(
 				Tag:       u.Tag,
 				Value:     u.Value,
 				Timestamp: u.Timestamp,
-				Quality:   "good",
+				Quality:   u.Quality,
 			}); err != nil {
 				logger.Warn("historian enqueue error",
 					slog.String("component", "historian"),
@@ -486,6 +487,7 @@ func buildTagCallback(ctx context.Context, hw *historian.Writer, spHandler func(
 				Tag:       u.Tag,
 				Value:     u.Value,
 				Timestamp: u.Timestamp,
+				Quality:   u.Quality,
 			})
 		}
 	}

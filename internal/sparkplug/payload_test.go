@@ -144,3 +144,56 @@ func TestBuildDDEATH_EmptyMetrics(t *testing.T) {
 		t.Errorf("DDEATH seq = %d; want 7", p.GetSeq())
 	}
 }
+
+// TestBuildDDATA_BadQuality_IsNullTrue verifies R70-2: a TagUpdate with
+// Quality=="bad" produces a DDATA metric with IsNull=true.
+func TestBuildDDATA_BadQuality_IsNullTrue(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	updates := []sparkplug.TagUpdate{
+		{PLCName: "plc-a", Tag: "Pressure", Value: float32(42), Timestamp: ts, Quality: "bad"},
+	}
+
+	data, err := sparkplug.BuildDDATA(updates, 3)
+	if err != nil {
+		t.Fatalf("BuildDDATA returned error: %v", err)
+	}
+
+	var p pb.Payload
+	if err := proto.Unmarshal(data, &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if len(p.Metrics) != 1 {
+		t.Fatalf("expected 1 metric, got %d", len(p.Metrics))
+	}
+	m := p.Metrics[0]
+	if !m.GetIsNull() {
+		t.Errorf("expected IsNull=true for bad-quality metric, got false")
+	}
+}
+
+// TestBuildDDATA_GoodQuality_IsNullFalse verifies that good-quality updates do
+// NOT set IsNull (backcompat: existing behaviour unchanged).
+func TestBuildDDATA_GoodQuality_IsNullFalse(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	updates := []sparkplug.TagUpdate{
+		{PLCName: "plc-a", Tag: "Pressure", Value: float32(42), Timestamp: ts, Quality: "good"},
+	}
+
+	data, err := sparkplug.BuildDDATA(updates, 4)
+	if err != nil {
+		t.Fatalf("BuildDDATA returned error: %v", err)
+	}
+
+	var p pb.Payload
+	if err := proto.Unmarshal(data, &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if len(p.Metrics) != 1 {
+		t.Fatalf("expected 1 metric, got %d", len(p.Metrics))
+	}
+	if p.Metrics[0].GetIsNull() {
+		t.Errorf("expected IsNull=false for good-quality metric, got true")
+	}
+}

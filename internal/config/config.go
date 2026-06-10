@@ -75,9 +75,15 @@ type GatewaySection struct {
 
 // ServerSection holds HTTP server settings.
 type ServerSection struct {
-	HTTPAddr        string `koanf:"httpAddr"`
-	TLSEnabled      bool   `koanf:"tlsEnabled"`
-	ShutdownTimeout string `koanf:"shutdownTimeout"`
+	HTTPAddr        string   `koanf:"httpAddr"`
+	TLSEnabled      bool     `koanf:"tlsEnabled"`
+	ShutdownTimeout string   `koanf:"shutdownTimeout"`
+	// AllowedOrigins is the list of origins permitted to upgrade WebSocket
+	// connections. When nil or empty the server allows same-origin only
+	// (coder/websocket default). Set via LGB_SERVER_ALLOWEDORIGINS
+	// (comma-separated) or the server.allowedOrigins YAML field.
+	// R71-2: origin enforcement.
+	AllowedOrigins []string `koanf:"allowedOrigins"`
 }
 
 // AuthSection holds authentication settings.
@@ -162,6 +168,13 @@ func (c *Config) Validate() error {
 	// server.httpAddr must be non-empty.
 	if c.Server.HTTPAddr == "" {
 		violations = append(violations, errorf("server.httpAddr: must not be empty: %w", ErrConfigInvalid))
+	}
+
+	// server.allowedOrigins: each entry must be a non-empty string (R71-2).
+	for i, origin := range c.Server.AllowedOrigins {
+		if origin == "" {
+			violations = append(violations, errorf("server.allowedOrigins[%d]: entry must not be empty: %w", i, ErrConfigInvalid))
+		}
 	}
 
 	// auth.sessionTTL must be a valid Go duration string when non-empty.

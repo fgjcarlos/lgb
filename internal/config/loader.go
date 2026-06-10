@@ -142,6 +142,20 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: unmarshalling: %w", err)
 	}
 
+	// LGB_SERVER_ALLOWEDORIGINS — koanf env provider delivers this as a single
+	// string because env vars are untyped. We comma-split it manually and assign
+	// to cfg.Server.AllowedOrigins so callers get a proper []string. (R71-2)
+	if raw := os.Getenv("LGB_SERVER_ALLOWEDORIGINS"); raw != "" {
+		parts := strings.Split(raw, ",")
+		origins := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				origins = append(origins, t)
+			}
+		}
+		cfg.Server.AllowedOrigins = origins
+	}
+
 	// Apply per-PLC defaults for fields that koanf confmap cannot set on slice elements.
 	// Per design §7 and tasks risk note: koanf confmap defaults do not propagate into
 	// slice entries, so we apply them post-unmarshal.

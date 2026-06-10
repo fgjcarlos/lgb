@@ -64,20 +64,23 @@ func TestMiddleware_InvalidToken(t *testing.T) {
 	}
 }
 
-func TestMiddleware_TokenFromQueryParam(t *testing.T) {
+// TestMiddleware_TokenFromQueryParam_Rejected asserts R71-1: query-param token
+// is no longer accepted by the REST middleware; the request must be rejected
+// with 401 even when the token is valid.
+func TestMiddleware_TokenFromQueryParam_Rejected(t *testing.T) {
 	ts := NewTokenService("test-secret-32bytes-long!!", 8*time.Hour)
 	token, _ := ts.Issue(1, "alice", RoleAdmin)
 
 	handler := Middleware(ts)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		t.Error("handler should not be called — query-param token must be rejected")
 	}))
 
 	req := httptest.NewRequest("GET", "/api/test?token="+token, nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d; want 200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401 (query-param token must be rejected)", rec.Code)
 	}
 }
 

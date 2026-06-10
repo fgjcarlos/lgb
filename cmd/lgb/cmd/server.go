@@ -282,14 +282,32 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	// Use context.Background() for setup: the migration must not be cancelled by
 	// the server's run context, which may already be done in tests.
 	usersDBPath := filepath.Join(resolvedPath, "users.db")
-	userStore, userStoreErr := auth.OpenUserStore(context.Background(), usersDBPath)
+	openUserStore := d.UserStoreFactory
+	if openUserStore == nil {
+		openUserStore = auth.OpenUserStore
+	}
+	userStore, userStoreErr := openUserStore(context.Background(), usersDBPath)
 	if userStoreErr != nil {
 		return fmt.Errorf("server: open user store: %w", userStoreErr)
 	}
-	defer userStore.Close()
+	// Only close the store when runServerTo opened it (factory == nil means production).
+	// When tests inject a factory they own the store's lifetime; the test helper's
+	// t.Cleanup will close it.
+	if d.UserStoreFactory == nil {
+		defer userStore.Close()
+	}
 	logger.Info("user store opened",
 		slog.String("component", "auth"),
 		slog.String("path", usersDBPath))
+
+	// Bootstrap the first admin user when the database is empty. (R66-1)
+	// Use context.Background() so cancellation of the server's run context does
+	// not abort the setup path — mirrors the store-open pattern above.
+	// EnsureAdminExists reads LGB_AUTH_ADMIN_PASSWORD; returns an error when the
+	// env var is absent and no users exist — that error is treated as fatal.
+	if _, err := auth.EnsureAdminExists(context.Background(), userStore, logger); err != nil {
+		return fmt.Errorf("server: admin bootstrap: %w", err)
+	}
 
 	// Create the AuditLogger (appends JSONL events to datadir).
 	auditLog, auditErr := auth.OpenAuditLogger(resolvedPath)

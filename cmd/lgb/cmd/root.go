@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/historian"
@@ -61,6 +62,11 @@ type Deps struct {
 	// HistorianStoreFactory creates a historian Store. When nil, the
 	// production historian.Open is used (when retentionDays > 0).
 	HistorianStoreFactory func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error)
+
+	// UserStoreFactory opens (or creates) the UserStore at path. When nil, the
+	// production auth.OpenUserStore is used.
+	// Tests inject a factory that returns an in-memory store for isolation.
+	UserStoreFactory func(ctx context.Context, path string) (*auth.UserStore, error)
 
 	// serverRef is set by runServerTo so test helpers can retrieve the *server.Server.
 	// Unexported — test access is via getServerForTest().

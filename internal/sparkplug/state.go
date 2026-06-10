@@ -32,6 +32,7 @@ const (
 	EventConnectSuccess
 	EventConnectFail
 	EventDisconnect
+	EventConnectionLost // uncontrolled loss: Online → Offline
 )
 
 // StateMachine manages the Sparkplug B edge node state.
@@ -69,6 +70,8 @@ func transition(from State, event Event) (State, bool) {
 	case from == Connecting && event == EventConnectFail:
 		return Offline, true
 	case from == Online && event == EventDisconnect:
+		return Offline, true
+	case from == Online && event == EventConnectionLost:
 		return Offline, true
 	default:
 		return from, false

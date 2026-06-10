@@ -23,14 +23,26 @@ type TagUpdate struct {
 
 // BuildNBIRTH produces the Sparkplug B NBIRTH payload. The sequence tracker
 // is reset and advanced so seq=0 per the Sparkplug B specification.
-func BuildNBIRTH(seq *SeqTracker, tags []TagDef, ) ([]byte, error) {
+// bdSeqVal is included as the mandatory bdSeq metric (R69-3).
+func BuildNBIRTH(seq *SeqTracker, tags []TagDef, bdSeqVal uint64) ([]byte, error) {
 	seq.Reset()
 	seqVal := seq.Next()
 	now := uint64(time.Now().UnixMilli())
 
+	bdSeqName := "bdSeq"
+	bdSeqDt := dtUInt64
+
 	payload := &pb.Payload{
 		Timestamp: &now,
 		Seq:       &seqVal,
+		Metrics: []*pb.Payload_Metric{
+			{
+				Name:      &bdSeqName,
+				Datatype:  &bdSeqDt,
+				Timestamp: &now,
+				Value:     &pb.Payload_Metric_LongValue{LongValue: bdSeqVal},
+			},
+		},
 	}
 
 	for _, tag := range tags {

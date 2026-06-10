@@ -16,7 +16,7 @@ func TestBuildNBIRTH_SeqIsZero(t *testing.T) {
 		seq.Next()
 	}
 
-	data, err := sparkplug.BuildNBIRTH(&seq, nil)
+	data, err := sparkplug.BuildNBIRTH(&seq, nil, 0)
 	if err != nil {
 		t.Fatalf("BuildNBIRTH returned error: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestBuildNBIRTH_RoundTrip(t *testing.T) {
 		{Name: "Motor.Running", SparkplugType: "Boolean"},
 	}
 
-	data, err := sparkplug.BuildNBIRTH(&seq, tags)
+	data, err := sparkplug.BuildNBIRTH(&seq, tags, 0)
 	if err != nil {
 		t.Fatalf("BuildNBIRTH returned error: %v", err)
 	}
@@ -48,8 +48,9 @@ func TestBuildNBIRTH_RoundTrip(t *testing.T) {
 	if err := proto.Unmarshal(data, &p); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
-	if len(p.Metrics) < 2 {
-		t.Fatalf("expected at least 2 metrics, got %d", len(p.Metrics))
+	// +1 for the bdSeq metric that BuildNBIRTH always prepends.
+	if len(p.Metrics) < 3 {
+		t.Fatalf("expected at least 3 metrics (bdSeq + 2 tags), got %d", len(p.Metrics))
 	}
 }
 

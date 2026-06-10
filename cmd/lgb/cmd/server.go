@@ -400,6 +400,9 @@ func defaultPLCManagerFactory(cfg *config.Config, tagCb plc.TagCallback) server.
 // defaultSparkplugNodeFactory is the production SparkplugNodeFactory.
 func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 	// Build NDEATH payload for MQTT Will message per Sparkplug B spec.
+	// bdSeq=0 frozen: paho cannot update Will post-connect (R69-4).
+	// On controlled Stop(), an explicit NDEATH with the current bdSeq is
+	// published before Disconnect — the LWT is suppressed by the broker.
 	ndeathTopic := fmt.Sprintf("spBv1.0/%s/NDEATH/%s", cfg.MQTT.GroupID, cfg.MQTT.EdgeNodeID)
 	ndeathPayload, _ := sparkplug.BuildNDEATH(0)
 

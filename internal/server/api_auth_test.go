@@ -149,10 +149,15 @@ func TestHandleLogin_InvalidJSON(t *testing.T) {
 // ─── handleRefresh tests ─────────────────────────────────────────────────────
 
 func TestHandleRefresh_ValidToken(t *testing.T) {
-	srv, _, tokens, stop := newAuthTestServer(t)
+	srv, store, tokens, stop := newAuthTestServer(t)
 	defer stop()
 
-	originalToken, err := tokens.Issue(1, "alice", auth.RoleAdmin)
+	ctx := context.Background()
+	user, err := store.Create(ctx, "alice", "correctpassword", auth.RoleAdmin)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	originalToken, err := tokens.Issue(user.ID, user.Username, user.Role)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -216,6 +221,74 @@ func TestHandleRefresh_MissingAuthorizationHeader(t *testing.T) {
 		t.Fatalf("expected 401, got %d — body: %s", rec.Code, rec.Body.String())
 	}
 	assertErrorCode(t, rec, "unauthorized")
+}
+
+func TestHandleRefresh_DeletedUser_Returns401(t *testing.T) {
+	srv, store, tokens, stop := newAuthTestServer(t)
+	defer stop()
+
+	ctx := context.Background()
+	user, err := store.Create(ctx, "alice", "correctpassword", auth.RoleAdmin)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	tok, err := tokens.Issue(user.ID, user.Username, user.Role)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	// Delete the user — the token is still valid but the account is gone.
+	if err := store.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+
+	rec := doRefreshRequest(srv, tok)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for deleted user refresh, got %d — body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRefresh_DemotedUser_ReturnsNewRole(t *testing.T) {
+	srv, store, tokens, stop := newAuthTestServer(t)
+	defer stop()
+
+	ctx := context.Background()
+	// Create the user as admin, issue token, then demote to viewer.
+	user, err := store.Create(ctx, "alice", "correctpassword", auth.RoleAdmin)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	tok, err := tokens.Issue(user.ID, user.Username, auth.RoleAdmin)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	// Demote in DB — token still claims admin.
+	if err := store.UpdateRole(ctx, user.ID, auth.RoleViewer); err != nil {
+		t.Fatalf("update role: %v", err)
+	}
+
+	rec := doRefreshRequest(srv, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for demoted user refresh, got %d — body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	newClaims, err := tokens.Validate(resp.Token)
+	if err != nil {
+		t.Fatalf("new token invalid: %v", err)
+	}
+	if newClaims.Role != auth.RoleViewer {
+		t.Errorf("expected refreshed token to carry role viewer, got %s", newClaims.Role)
+	}
 }
 
 // ─── Integration: routes are registered in the HTTP mux ─────────────────────

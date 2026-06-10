@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 )
 
@@ -192,6 +194,19 @@ func TestUserStore_InvalidRole(t *testing.T) {
 	_, err := s.Create(context.Background(), "alice", "pass", Role("superuser"))
 	if err == nil {
 		t.Error("expected error for invalid role")
+	}
+}
+
+func TestIsUniqueViolation(t *testing.T) {
+	if isUniqueViolation(sql.ErrNoRows) {
+		t.Error("isUniqueViolation(sql.ErrNoRows) = true; want false")
+	}
+	if isUniqueViolation(nil) {
+		t.Error("isUniqueViolation(nil) = true; want false")
+	}
+	uniqueErr := errors.New("UNIQUE constraint failed: users.username")
+	if !isUniqueViolation(uniqueErr) {
+		t.Error("isUniqueViolation(UNIQUE constraint failed error) = false; want true")
 	}
 }
 

@@ -82,6 +82,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_role", "role must be admin, operator, or viewer")
 		return
 	}
+	if err := auth.ValidatePassword(req.Password); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "weak_password", err.Error())
+		return
+	}
 
 	user, err := s.userStore.Create(r.Context(), req.Username, req.Password, req.Role)
 	if err != nil {
@@ -176,6 +180,10 @@ func (s *Server) handleUpdateUserPassword(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "password is required")
 		return
 	}
+	if err := auth.ValidatePassword(req.Password); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "weak_password", err.Error())
+		return
+	}
 
 	if err := s.userStore.UpdatePassword(r.Context(), id, req.Password); err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
@@ -198,6 +206,14 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Self-delete guard: callers may not delete their own account.
+	if claims, ok := auth.ClaimsFromContext(ctx); ok && claims != nil {
+		if claims.UserID == id {
+			writeAPIError(w, http.StatusConflict, "self_delete", "cannot delete your own account")
+			return
+		}
+	}
 
 	// Fetch the target user to know their role before deletion.
 	user, err := s.userStore.GetByID(ctx, id)

@@ -61,6 +61,37 @@ func TestAuditLogger_LogAndRead(t *testing.T) {
 	}
 }
 
+func TestAuditLogFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := OpenAuditLogger(dir)
+	if err != nil {
+		t.Fatalf("OpenAuditLogger: %v", err)
+	}
+	if err := logger.Log(AuditEvent{Action: "test"}); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat dir: %v", err)
+	}
+	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+		t.Errorf("dir perm = %04o; want 0700", perm)
+	}
+
+	filePath := filepath.Join(dir, "events.jsonl")
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("Stat file: %v", err)
+	}
+	if perm := fileInfo.Mode().Perm(); perm != 0o600 {
+		t.Errorf("file perm = %04o; want 0600", perm)
+	}
+}
+
 func TestAuditLogger_AutoTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	logger, _ := OpenAuditLogger(dir)

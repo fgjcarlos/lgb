@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,14 +26,29 @@ type AuditLogger struct {
 }
 
 func OpenAuditLogger(dir string) (*AuditLogger, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit: mkdir %s: %w", dir, err)
 	}
+	// Best-effort: tighten permissions on pre-existing directories created with
+	// wider modes. A failure here is non-fatal — log a warning and continue.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		slog.Warn("audit: could not set directory permissions",
+			slog.String("dir", dir),
+			slog.Any("err", err))
+	}
+
 	path := filepath.Join(dir, "events.jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("audit: open %s: %w", path, err)
 	}
+	// Best-effort: tighten permissions on a pre-existing file.
+	if err := os.Chmod(path, 0o600); err != nil {
+		slog.Warn("audit: could not set file permissions",
+			slog.String("path", path),
+			slog.Any("err", err))
+	}
+
 	return &AuditLogger{file: f, enc: json.NewEncoder(f)}, nil
 }
 

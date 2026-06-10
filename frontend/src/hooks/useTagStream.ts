@@ -49,13 +49,15 @@ export function useTagStream(token: string | null): UseTagStreamReturn {
 
     const connect = () => {
       const proto = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${proto}://${window.location.host}/api/ws/tags?token=${encodeURIComponent(token)}`;
+      const url = `${proto}://${window.location.host}/api/ws/tags`;
       const ws = new WebSocket(url);
       socketRef.current = ws;
       setStatus("connecting");
 
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;
+        // Send auth frame as the very first message. (R71-4)
+        ws.send(JSON.stringify({ type: "auth", token }));
       };
 
       ws.onmessage = (ev) => {
@@ -66,6 +68,9 @@ export function useTagStream(token: string | null): UseTagStreamReturn {
           return;
         }
         switch (msg.type) {
+          case "auth_ok":
+            // Auth acknowledged — wait for "subscribed" before setting connected.
+            return;
           case "subscribed":
             setStatus("connected");
             return;

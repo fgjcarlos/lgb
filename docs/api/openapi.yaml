@@ -11,8 +11,7 @@ info:
     - `admin`: full access including user management and backup operations
 
     Authentication uses a JWT bearer token (`Authorization: Bearer <token>`).
-    WebSocket clients may instead pass `?token=` as a query parameter during
-    upgrade.
+    WebSocket authentication uses a first-message auth frame (see `/api/ws/tags`).
 
 components:
   securitySchemes:
@@ -453,12 +452,29 @@ paths:
       summary: WebSocket stream for live PLC tag updates
       description: |
         Upgrade to WebSocket and exchange JSON messages for live PLC tag updates.
-        Authentication uses a JWT bearer token in the `Authorization` header or
-        `token` query parameter. Optional initial `plc` and `tag` query
-        parameters filter the stream. Clients can later send
-        `{ "type": "subscribe", "plc": "...", "tag": "..." }`,
-        `{ "type": "unsubscribe" }`, or `{ "type": "ping" }`. The server
-        replies with `subscribed`, `unsubscribed`, `pong`, periodic `ping`, and
+
+        **Authentication (when auth is enabled):** After a successful upgrade the
+        client MUST send the following JSON object as the very first WebSocket
+        message, within 5 seconds:
+
+        ```json
+        { "type": "auth", "token": "<JWT>" }
+        ```
+
+        On success the server replies with `{ "type": "auth_ok" }`. If no frame
+        is received within the deadline, or the token is absent/invalid, the
+        server closes the connection with WebSocket close code **4001** (auth
+        failed).
+
+        **Origin enforcement:** Cross-origin upgrade requests are rejected unless
+        the server is configured with `LGB_SERVER_ALLOWEDORIGINS`. Operators
+        running the frontend on a separate dev port (e.g. Vite on `:5173`)
+        should set `LGB_SERVER_ALLOWEDORIGINS=localhost:5173`.
+
+        Optional initial `plc` and `tag` query parameters filter the stream.
+        Clients can later send `{ "type": "subscribe", "plc": "...", "tag": "..." }`,
+        `{ "type": "unsubscribe" }`, or `{ "type": "ping" }`. The server replies
+        with `subscribed`, `unsubscribed`, `pong`, periodic `ping`, and
         `tag_update` messages.
       parameters:
         - name: plc
@@ -469,20 +485,15 @@ paths:
           in: query
           schema:
             type: string
-        - name: token
-          in: query
-          description: JWT bearer token for browser clients that cannot set Authorization during upgrade.
-          schema:
-            type: string
       responses:
         "101":
-          description: WebSocket upgrade accepted.
-        "401":
-          description: Missing or invalid JWT token.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          description: WebSocket upgrade accepted. Client must send auth frame as first message when auth is enabled.
+        "403":
+          description: Origin not allowed (cross-origin upgrade rejected).
+        "4001":
+          description: |
+            WebSocket close code 4001 — authentication failed. Sent when no auth
+            frame is received within 5 seconds, or the token is missing/invalid.
 
   /api/historian/query:
     get:

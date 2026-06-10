@@ -25,16 +25,19 @@ type Client interface {
 	Disconnect(quiesce uint)
 	Publish(ctx context.Context, topic string, qos byte, retained bool, payload []byte) error
 	Subscribe(ctx context.Context, topic string, qos byte, handler MessageHandler) error
+	Unsubscribe(ctx context.Context, topic string) error
 	IsConnected() bool
 	SetOnConnect(fn func())
+	SetConnectionLost(fn func(error))
 }
 
 // PahoClient wraps paho.mqtt.golang. Exported for compile-time interface
 // assertion in tests; construct via NewClient.
 type PahoClient struct {
-	client      paho.Client
-	mu          sync.Mutex
-	onConnectFn func()
+	client         paho.Client
+	mu             sync.Mutex
+	onConnectFn    func()
+	onConnLostFn   func(error)
 }
 
 // NewClient creates a PahoClient with the given options.
@@ -73,6 +76,15 @@ func NewClient(opts Options) *PahoClient {
 		pc.mu.Unlock()
 		if fn != nil {
 			fn()
+		}
+	})
+
+	pahoOpts.SetConnectionLostHandler(func(_ paho.Client, err error) {
+		pc.mu.Lock()
+		fn := pc.onConnLostFn
+		pc.mu.Unlock()
+		if fn != nil {
+			fn(err)
 		}
 	})
 
@@ -173,4 +185,32 @@ func (c *PahoClient) SetOnConnect(fn func()) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.onConnectFn = fn
+}
+
+// SetConnectionLost registers a callback invoked when the broker connection
+// is lost unexpectedly. Mirrors the SetOnConnect mutex pattern.
+func (c *PahoClient) SetConnectionLost(fn func(error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onConnLostFn = fn
+}
+
+// Unsubscribe removes the subscription for the given topic filter.
+func (c *PahoClient) Unsubscribe(ctx context.Context, topic string) error {
+	token := c.client.Unsubscribe(topic)
+	done := make(chan struct{})
+	go func() {
+		token.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if token.Error() != nil {
+			return fmt.Errorf("mqtt: unsubscribe %q: %w: %w", topic, ErrMQTTSubscribe, token.Error())
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("mqtt: unsubscribe %q: %w: %w", topic, ErrMQTTSubscribe, ctx.Err())
+	}
 }

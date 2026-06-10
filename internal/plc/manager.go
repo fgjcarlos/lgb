@@ -44,6 +44,7 @@ type plcWorker struct {
 	driver Driver
 	cfg    config.PLC
 	cancel context.CancelFunc
+	done   chan struct{} // closed by runWorker when it returns
 }
 
 // Manager owns the lifecycle of all PLC Drivers: start, stop, lookup, and
@@ -56,10 +57,16 @@ type Manager struct {
 	tagCb     TagCallback
 	callbacks []TagCallback
 
-	mu      sync.RWMutex
-	workers map[string]*plcWorker // keyed by PLC name
-	current map[string]map[string]TagValue
-	wg      sync.WaitGroup
+	mu       sync.RWMutex
+	workers  map[string]*plcWorker // keyed by PLC name
+	current  map[string]map[string]TagValue
+	wg       sync.WaitGroup
+	stopped  bool // set to true after Stop; guards Reload-after-Stop
+
+	// reloadMu serializes concurrent Reload calls.
+	// Lock order: reloadMu (outer, Reload-only) → mu (inner).
+	// Stop takes only mu, so there is no inverse path and no deadlock.
+	reloadMu sync.Mutex
 }
 
 // NewManager constructs a Manager and eagerly creates one Driver per PLC entry
@@ -85,7 +92,7 @@ func NewManager(cfg *config.Config, log *slog.Logger, factory DriverFactory, tag
 	// Eagerly create drivers so Driver(name) works before Start.
 	for _, plcCfg := range cfg.PLCs {
 		d := factory(plcCfg)
-		m.workers[plcCfg.Name] = &plcWorker{driver: d, cfg: plcCfg}
+		m.workers[plcCfg.Name] = &plcWorker{driver: d, cfg: plcCfg, done: make(chan struct{})}
 	}
 
 	return m
@@ -104,15 +111,18 @@ func (m *Manager) Start(ctx context.Context) error {
 	for name, w := range m.workers {
 		plcCtx, cancel := context.WithCancel(ctx)
 		w.cancel = cancel
+		w.done = make(chan struct{})
 
 		// Capture loop variables before goroutine launch.
 		workerName := name
 		d := w.driver
 		plcCfg := w.cfg
+		doneCh := w.done
 
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
+			defer close(doneCh)
 			m.runWorker(plcCtx, workerName, d, plcCfg)
 		}()
 	}
@@ -124,6 +134,7 @@ func (m *Manager) Start(ctx context.Context) error {
 // for all goroutines to exit. It is safe to call Stop more than once.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
+	m.stopped = true
 	// Cancel every per-PLC context.
 	for _, w := range m.workers {
 		if w.cancel != nil {
@@ -198,9 +209,25 @@ func (m *Manager) CurrentSnapshot() map[string]map[string]TagValue {
 //   - Unchanged PLCs: left untouched, no restart.
 //   - New PLCs (name not yet in workers): added.
 //
+// Concurrent Reload calls are serialized by reloadMu. Reload after Stop is a
+// safe no-op. Only drained workers are waited on; m.wg (owned by Stop) is
+// never waited inside Reload.
+//
 // The parent ctx must be the same context passed to Start.
-// Design §6.3 (hot-reload sequence), PLC-DRV-2.3.
+// Design §6.3 (hot-reload sequence), PLC-DRV-2.3, R67-1–R67-4.
 func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
+	// Serialize concurrent Reload calls. Lock order: reloadMu → m.mu.
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
+	// Reload-after-Stop is a safe no-op (R67-4).
+	m.mu.RLock()
+	isStopped := m.stopped
+	m.mu.RUnlock()
+	if isStopped {
+		return nil
+	}
+
 	// Build a quick lookup of the incoming config by name.
 	newCfgByName := make(map[string]config.PLC, len(cfg.PLCs))
 	for _, plcCfg := range cfg.PLCs {
@@ -224,22 +251,29 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	// Cancel and remove drained workers.
+	// Cancel drained workers and collect their done channels.
+	// Done channels are read here under m.mu so they cannot be replaced
+	// by a concurrent Start; we wait them outside the lock below.
 	drainedDrivers := make([]Driver, 0, len(toDrain))
+	drainedDone := make([]chan struct{}, 0, len(toDrain))
 	for _, name := range toDrain {
 		w := m.workers[name]
 		if w.cancel != nil {
 			w.cancel()
 		}
 		drainedDrivers = append(drainedDrivers, w.driver)
+		drainedDone = append(drainedDone, w.done)
 		delete(m.workers, name)
 		delete(m.current, name)
 	}
 
 	m.mu.Unlock()
 
-	// Wait for all drained goroutines to exit.
-	m.wg.Wait()
+	// Wait ONLY for drained workers' goroutines to exit (R67-2, R67-3).
+	// m.wg is NOT waited here — it is owned exclusively by Stop.
+	for _, doneCh := range drainedDone {
+		<-doneCh
+	}
 
 	// Close drained drivers after goroutines have stopped.
 	for _, d := range drainedDrivers {
@@ -255,7 +289,8 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		if _, exists := m.workers[plcCfg.Name]; !exists {
 			d := m.factory(plcCfg)
 			plcCtx, cancel := context.WithCancel(ctx)
-			w := &plcWorker{driver: d, cfg: plcCfg, cancel: cancel}
+			doneCh := make(chan struct{})
+			w := &plcWorker{driver: d, cfg: plcCfg, cancel: cancel, done: doneCh}
 			m.workers[plcCfg.Name] = w
 
 			workerName := plcCfg.Name
@@ -263,6 +298,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 			m.wg.Add(1)
 			go func() {
 				defer m.wg.Done()
+				defer close(doneCh)
 				m.runWorker(plcCtx, workerName, d, capturedCfg)
 			}()
 		}

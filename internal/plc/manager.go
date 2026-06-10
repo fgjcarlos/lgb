@@ -12,11 +12,15 @@ import (
 )
 
 // TagUpdate represents a single tag read from a PLC scan tick.
+// Quality indicates the read status: "good" for a successful read,
+// "bad" for a failed read. The zero value "" is treated as "good"
+// everywhere (backward compatible with existing producers).
 type TagUpdate struct {
 	PLCName   string
 	Tag       string
 	Value     any
 	Timestamp time.Time
+	Quality   string
 }
 
 // TagValue is the in-memory current value for one PLC tag.
@@ -348,6 +352,10 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 	ticker := time.NewTicker(scanRate)
 	defer ticker.Stop()
 
+	// lastQuality tracks the most recently emitted quality per tag so that
+	// quality-only transitions (R70-4, R70-5) are always emitted.
+	lastQuality := make(map[string]string, len(plcCfg.Tags))
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -365,16 +373,49 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 					log.Warn("plc manager: ReadTag error",
 						slog.String("tag", tag.Name),
 						slog.String("err", err.Error()))
+					// R70-1: emit a bad-quality update instead of silently skipping.
+					// R70-5: only emit on quality transition (good→bad or first bad).
+					if lastQuality[tag.Name] != "bad" {
+						m.emitTagUpdate(TagUpdate{
+							PLCName:   name,
+							Tag:       tag.Name,
+							Value:     nil,
+							Timestamp: time.Now(),
+							Quality:   "bad",
+						})
+						lastQuality[tag.Name] = "bad"
+					}
 					continue
 				}
 				value := deref(dest)
-				update := TagUpdate{
-					PLCName:   name,
-					Tag:       tag.Name,
-					Value:     value,
-					Timestamp: time.Now(),
+				// Determine quality for this successful read.
+				quality := "good"
+				prev := lastQuality[tag.Name]
+				// R70-4/R70-5: always emit when quality transitions from bad to good,
+				// even if the value is numerically unchanged.
+				if prev == "bad" || prev == "" {
+					// First read or recovery: emit unconditionally.
+					update := TagUpdate{
+						PLCName:   name,
+						Tag:       tag.Name,
+						Value:     value,
+						Timestamp: time.Now(),
+						Quality:   quality,
+					}
+					m.emitTagUpdate(update)
+					lastQuality[tag.Name] = quality
+				} else {
+					// Steady state: emit normally.
+					update := TagUpdate{
+						PLCName:   name,
+						Tag:       tag.Name,
+						Value:     value,
+						Timestamp: time.Now(),
+						Quality:   quality,
+					}
+					m.emitTagUpdate(update)
+					lastQuality[tag.Name] = quality
 				}
-				m.emitTagUpdate(update)
 			}
 		}
 	}
@@ -447,10 +488,14 @@ func (m *Manager) storeTag(update TagUpdate) {
 	if m.current[update.PLCName] == nil {
 		m.current[update.PLCName] = make(map[string]TagValue)
 	}
+	q := update.Quality
+	if q == "" {
+		q = "good"
+	}
 	m.current[update.PLCName][update.Tag] = TagValue{
 		Value:     update.Value,
 		Timestamp: update.Timestamp,
-		Quality:   "good",
+		Quality:   q,
 	}
 }
 

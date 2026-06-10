@@ -14,11 +14,14 @@ type TagDef struct {
 }
 
 // TagUpdate represents a single tag read from a PLC scan tick.
+// Quality mirrors plc.TagUpdate.Quality: "bad" triggers IsNull=true in
+// DDATA encoding. The zero value "" is treated as "good" (backward compatible).
 type TagUpdate struct {
 	PLCName   string
 	Tag       string
 	Value     any
 	Timestamp time.Time
+	Quality   string
 }
 
 // BuildNBIRTH produces the Sparkplug B NBIRTH payload. The sequence tracker
@@ -98,6 +101,8 @@ func BuildDBIRTH(deviceID string, tagValues map[string]any, seq uint64) ([]byte,
 }
 
 // BuildDDATA produces a DDATA payload from tag updates.
+// R70-2: when a TagUpdate has Quality=="bad", the corresponding metric has
+// IsNull=true (native Sparkplug B field) to signal bad data to SCADA systems.
 func BuildDDATA(updates []TagUpdate, seq uint64) ([]byte, error) {
 	now := uint64(time.Now().UnixMilli())
 
@@ -107,9 +112,20 @@ func BuildDDATA(updates []TagUpdate, seq uint64) ([]byte, error) {
 	}
 
 	for _, u := range updates {
-		m, err := EncodeMetric(u.Tag, u.Value, u.Timestamp)
+		// For bad-quality metrics use a placeholder value so EncodeMetric
+		// can determine the datatype; value is overridden by IsNull below.
+		value := u.Value
+		if value == nil {
+			// nil would cause EncodeMetric to fail; use float32(0) as placeholder.
+			value = float32(0)
+		}
+		m, err := EncodeMetric(u.Tag, value, u.Timestamp)
 		if err != nil {
 			return nil, err
+		}
+		if u.Quality == "bad" {
+			isNull := true
+			m.IsNull = &isNull
 		}
 		payload.Metrics = append(payload.Metrics, m)
 	}

@@ -478,7 +478,10 @@ func TestManager_NilCallback_NoPanic(t *testing.T) {
 	_ = mgr.Stop()
 }
 
-func TestManager_TagCallback_SkipsFailedReads(t *testing.T) {
+// TestManager_TagCallback_FailedReadEmitsBadQuality verifies R70-1: a ReadTag
+// error produces a TagUpdate with Quality=="bad" (not a silent skip).
+// Good-quality updates for Tag1 and Tag3 continue to flow normally.
+func TestManager_TagCallback_FailedReadEmitsBadQuality(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
@@ -525,23 +528,33 @@ func TestManager_TagCallback_SkipsFailedReads(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	// Tag2 must emit a bad-quality update (not be silently skipped).
+	hasBadTag2 := false
 	for _, u := range updates {
 		if u.Tag == "Tag2" {
-			t.Error("callback was called for Tag2 which should have failed")
+			if u.Quality != "bad" {
+				t.Errorf("Tag2 update has Quality=%q; want \"bad\"", u.Quality)
+			}
+			hasBadTag2 = true
 		}
 	}
-	hasTag1 := false
-	hasTag3 := false
+	if !hasBadTag2 {
+		t.Error("expected at least one bad-quality update for Tag2; got none")
+	}
+
+	// Tag1 and Tag3 still emit good-quality updates.
+	hasGoodTag1 := false
+	hasGoodTag3 := false
 	for _, u := range updates {
-		if u.Tag == "Tag1" {
-			hasTag1 = true
+		if u.Tag == "Tag1" && u.Quality == "good" {
+			hasGoodTag1 = true
 		}
-		if u.Tag == "Tag3" {
-			hasTag3 = true
+		if u.Tag == "Tag3" && u.Quality == "good" {
+			hasGoodTag3 = true
 		}
 	}
-	if !hasTag1 || !hasTag3 {
-		t.Errorf("expected callbacks for Tag1 and Tag3; got Tag1=%v Tag3=%v", hasTag1, hasTag3)
+	if !hasGoodTag1 || !hasGoodTag3 {
+		t.Errorf("expected good-quality callbacks for Tag1 and Tag3; got Tag1=%v Tag3=%v", hasGoodTag1, hasGoodTag3)
 	}
 }
 
@@ -1138,4 +1151,260 @@ func TestReload_AfterStop_SafeNoOp(t *testing.T) {
 	case <-timer.C:
 		t.Fatal("Reload after Stop blocked for >1s")
 	}
+}
+
+// ─── R70: Tag Quality Propagation ────────────────────────────────────────────
+
+// controllableMockDriver is a Driver whose ReadTag error can be toggled at
+// runtime, enabling quality-transition tests. The readErrFn field is evaluated
+// on each ReadTag call under lock so tests can swap it safely.
+type controllableMockDriver struct {
+	mu        sync.Mutex
+	connected bool
+	readErrFn func(tag string) error // nil means success
+	tagValue  float32
+}
+
+func (d *controllableMockDriver) Connect(_ context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.connected = true
+	return nil
+}
+
+func (d *controllableMockDriver) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.connected = false
+	return nil
+}
+
+func (d *controllableMockDriver) ReadTag(tag string, dest any) error {
+	d.mu.Lock()
+	fn := d.readErrFn
+	val := d.tagValue
+	d.mu.Unlock()
+	if fn != nil {
+		if err := fn(tag); err != nil {
+			return err
+		}
+	}
+	if p, ok := dest.(*float32); ok {
+		*p = val
+	}
+	return nil
+}
+
+func (d *controllableMockDriver) setReadErr(fn func(tag string) error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.readErrFn = fn
+}
+
+func (d *controllableMockDriver) WriteTag(_ string, _ any) error      { return nil }
+func (d *controllableMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
+func (d *controllableMockDriver) Connected() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.connected
+}
+
+var _ plc.Driver = (*controllableMockDriver)(nil)
+
+// onePLCFloatConfig returns a one-tag Float config useful for quality tests.
+func onePLCFloatConfig(scanRate string) *config.Config {
+	return &config.Config{
+		PLCs: []config.PLC{
+			{
+				Name:     "plc-a",
+				Address:  "127.0.0.1:44818",
+				ScanRate: scanRate,
+				Tags:     []config.TagDef{{Name: "Pressure", Type: "Float"}},
+			},
+		},
+	}
+}
+
+// TestManager_RunWorker_BadQuality_EmitsUpdate verifies R70-1: when ReadTag
+// returns an error, the manager emits a TagUpdate with Quality=="bad".
+func TestManager_RunWorker_BadQuality_EmitsUpdate(t *testing.T) {
+	t.Parallel()
+
+	mock := &controllableMockDriver{tagValue: float32(10)}
+	mock.setReadErr(func(_ string) error { return errors.New("simulated PLC read error") })
+
+	factory := func(_ config.PLC) plc.Driver { return mock }
+
+	var mu sync.Mutex
+	var updates []plc.TagUpdate
+	cb := func(u plc.TagUpdate) {
+		mu.Lock()
+		updates = append(updates, u)
+		mu.Unlock()
+	}
+
+	cfg := onePLCFloatConfig("50ms")
+	mgr := plc.NewManager(cfg, nil, factory, cb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	_ = mgr.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) == 0 {
+		t.Fatal("expected at least one TagUpdate even on read error, got none")
+	}
+	hasBad := false
+	for _, u := range updates {
+		if u.Tag == "Pressure" && u.Quality == "bad" {
+			hasBad = true
+			break
+		}
+	}
+	if !hasBad {
+		t.Error("no TagUpdate with Quality==\"bad\" was emitted after read error")
+	}
+}
+
+// TestManager_RunWorker_QualityRecovery verifies R70-4: after bad reads, the
+// first successful read emits Quality=="good" even when the value is unchanged.
+func TestManager_RunWorker_QualityRecovery(t *testing.T) {
+	t.Parallel()
+
+	mock := &controllableMockDriver{tagValue: float32(42)}
+	// Start in error state.
+	mock.setReadErr(func(_ string) error { return errors.New("simulated read failure") })
+
+	factory := func(_ config.PLC) plc.Driver { return mock }
+
+	var mu sync.Mutex
+	var qualities []string
+	cb := func(u plc.TagUpdate) {
+		if u.Tag == "Pressure" {
+			mu.Lock()
+			qualities = append(qualities, u.Quality)
+			mu.Unlock()
+		}
+	}
+
+	cfg := onePLCFloatConfig("20ms")
+	mgr := plc.NewManager(cfg, nil, factory, cb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	// Wait until we have at least one bad-quality update.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		mu.Lock()
+		n := len(qualities)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("no bad-quality update received within 500ms")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	// Switch driver to success (value stays 42).
+	mock.setReadErr(nil)
+
+	// Wait for a good-quality update after recovery.
+	deadline2 := time.After(500 * time.Millisecond)
+	for {
+		mu.Lock()
+		qs := make([]string, len(qualities))
+		copy(qs, qualities)
+		mu.Unlock()
+		for _, q := range qs {
+			if q == "good" {
+				_ = mgr.Stop()
+				return
+			}
+		}
+		select {
+		case <-deadline2:
+			t.Fatal("no good-quality recovery update received within 500ms after error cleared")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
+// TestManager_RunWorker_QualityTransition_EmittedOnValueUnchanged verifies
+// R70-5: quality transitions are emitted independently of value changes.
+func TestManager_RunWorker_QualityTransition_EmittedOnValueUnchanged(t *testing.T) {
+	t.Parallel()
+
+	mock := &controllableMockDriver{tagValue: float32(42)}
+	factory := func(_ config.PLC) plc.Driver { return mock }
+
+	var mu sync.Mutex
+	var qualities []string
+	cb := func(u plc.TagUpdate) {
+		if u.Tag == "Pressure" {
+			mu.Lock()
+			qualities = append(qualities, u.Quality)
+			mu.Unlock()
+		}
+	}
+
+	cfg := onePLCFloatConfig("20ms")
+	mgr := plc.NewManager(cfg, nil, factory, cb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	waitForQuality := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.After(timeout)
+		for {
+			mu.Lock()
+			qs := make([]string, len(qualities))
+			copy(qs, qualities)
+			mu.Unlock()
+			for _, q := range qs {
+				if q == want {
+					return
+				}
+			}
+			select {
+			case <-deadline:
+				t.Fatalf("did not receive quality=%q within %v", want, timeout)
+			default:
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}
+
+	// Phase 1: initial good reads.
+	waitForQuality("good", 400*time.Millisecond)
+
+	// Phase 2: inject error (value=42 unchanged conceptually); bad update must arrive.
+	mock.setReadErr(func(_ string) error { return errors.New("simulated") })
+	waitForQuality("bad", 400*time.Millisecond)
+
+	// Phase 3: clear error (value still 42); good update must arrive even though value unchanged.
+	mock.setReadErr(nil)
+	waitForQuality("good", 400*time.Millisecond)
+
+	_ = mgr.Stop()
 }

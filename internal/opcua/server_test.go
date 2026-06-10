@@ -111,3 +111,76 @@ func TestServer_StopBeforeStart(t *testing.T) {
 		t.Fatalf("Stop on unstarted server returned error: %v", err)
 	}
 }
+
+// TestOpcUA_BadQuality_ReturnsBadStatusCode verifies R70-3: the address-space
+// node reader returns a DataValue with a bad StatusCode when the stored tag has
+// Quality=="bad".  We call the exported DataValueForTag test-helper to
+// exercise the branch without starting the full server.
+func TestOpcUA_BadQuality_ReturnsBadStatusCode(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		OPCUA: config.OPCUASection{Enabled: true, Host: "127.0.0.1", Port: 0},
+		PLCs: []config.PLC{
+			{
+				Name: "sim",
+				Tags: []config.TagDef{{Name: "Pressure", Type: "Float"}},
+			},
+		},
+	}
+
+	tags := &mockTagSource{
+		tags: map[string]map[string]plc.TagValue{
+			"sim": {
+				"Pressure": {Value: float32(42), Quality: "bad", Timestamp: time.Now()},
+			},
+		},
+	}
+
+	srv := opcua.New(cfg, tags, nil)
+
+	dv := srv.DataValueForTag("sim", "Pressure")
+	if dv == nil {
+		t.Fatal("DataValueForTag returned nil for bad-quality tag")
+		return
+	}
+	// StatusCode 0 == StatusOK — bad quality must produce a non-zero (bad) status.
+	if dv.Status == 0 {
+		t.Errorf("DataValueForTag returned StatusCode=0 (StatusOK) for bad-quality tag; want non-zero bad StatusCode")
+	}
+}
+
+// TestOpcUA_GoodQuality_ReturnsGoodStatusCode verifies the inverse: good
+// quality returns a DataValue with StatusCode==0 (StatusOK / Good).
+func TestOpcUA_GoodQuality_ReturnsGoodStatusCode(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		OPCUA: config.OPCUASection{Enabled: true, Host: "127.0.0.1", Port: 0},
+		PLCs: []config.PLC{
+			{
+				Name: "sim",
+				Tags: []config.TagDef{{Name: "Pressure", Type: "Float"}},
+			},
+		},
+	}
+
+	tags := &mockTagSource{
+		tags: map[string]map[string]plc.TagValue{
+			"sim": {
+				"Pressure": {Value: float32(42), Quality: "good", Timestamp: time.Now()},
+			},
+		},
+	}
+
+	srv := opcua.New(cfg, tags, nil)
+
+	dv := srv.DataValueForTag("sim", "Pressure")
+	if dv == nil {
+		t.Fatal("DataValueForTag returned nil for good-quality tag")
+		return
+	}
+	if dv.Status != 0 {
+		t.Errorf("DataValueForTag returned StatusCode=%v for good-quality tag; want 0 (StatusOK)", dv.Status)
+	}
+}

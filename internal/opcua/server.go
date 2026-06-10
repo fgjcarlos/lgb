@@ -124,6 +124,16 @@ func (s *Server) Stop() error {
 	return nil
 }
 
+// dataValueForTV converts a TagValue to a ua.DataValue, returning a bad
+// StatusCode when Quality is "bad". Used by populateAddressSpace and
+// DataValueForTag (test helper).
+func dataValueForTV(tv plc.TagValue) *ua.DataValue {
+	if tv.Quality == "bad" {
+		return &ua.DataValue{Status: ua.StatusBad}
+	}
+	return opcserver.DataValueFromValue(tv.Value)
+}
+
 func (s *Server) populateAddressSpace() {
 	for _, plcCfg := range s.cfg.PLCs {
 		ns := opcserver.NewNodeNameSpace(s.srv, fmt.Sprintf("urn:lgb:plc:%s", plcCfg.Name))
@@ -137,10 +147,20 @@ func (s *Server) populateAddressSpace() {
 				if !ok {
 					return opcserver.DataValueFromValue(nil)
 				}
-				return opcserver.DataValueFromValue(tv.Value)
+				return dataValueForTV(tv)
 			})
 		}
 	}
+}
+
+// DataValueForTag returns the ua.DataValue that the OPC UA address space would
+// serve for the named tag. Exported for testing without starting the server.
+func (s *Server) DataValueForTag(plcName, tag string) *ua.DataValue {
+	tv, ok := s.tags.CurrentTag(plcName, tag)
+	if !ok {
+		return opcserver.DataValueFromValue(nil)
+	}
+	return dataValueForTV(tv)
 }
 
 func (s *Server) refreshLoop(ctx context.Context) {

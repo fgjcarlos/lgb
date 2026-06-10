@@ -295,30 +295,52 @@ Scan rate precision: the loop MUST use `time.Ticker` (not `time.Sleep`) to maint
 
 ---
 
-### [PLC-DRV-2.3] Hot-reload — drain-and-swap
+### [PLC-DRV-2.3] Hot-reload — field-level drain-and-swap
 
-When the gateway receives a config reload event (via `internal/config.Watch`), the `Manager` MUST:
+When the gateway receives a config reload event (via `internal/config.Watch`) OR when the store mutation path calls `Reload` directly, the `Manager` MUST:
 
-1. Detect which PLCs were added, removed, or changed.
-2. For removed or changed PLCs: call `Disconnect` on the old driver, signal the goroutine to stop, wait for it to exit.
-3. For added or changed PLCs: create a new driver, start a new goroutine.
-4. In-flight `ReadTag`/`WriteTag` operations on the old driver see the disconnect and return an error; callers MUST handle this.
-5. The swap MUST complete without data races. Use context cancellation to signal goroutines, then wait via `WaitGroup`.
+1. Detect which PLCs were added, removed, or changed, comparing the full `config.PLC` (name, address, slot, socketTimeout, scanRate, keepAlive, path, AND all tags) via `reflect.DeepEqual`.
+2. For removed or changed PLCs: call `Disconnect` on the old driver, signal the goroutine to stop via context cancellation, and wait for it to exit (`WaitGroup`).
+3. For added or changed PLCs: create a new driver and start a new goroutine. A changed PLC is treated as remove-then-add, so its worker is fully drained before a fresh worker with the new config starts.
+4. PLCs whose full config is identical MUST NOT be restarted.
+5. In-flight `ReadTag`/`WriteTag` operations on a drained driver see the disconnect and return an error; callers MUST handle this.
+6. The swap MUST complete without data races.
+7. `Reload` MUST accept a `*config.Config` whose `PLCs` slice may be sourced from the store (not a file), so it can be called from the mutation path without the file watcher. `Reload(ctx, &config.Config{PLCs: storePLCs})` is the contract used by `reloadPLCsFromStore` (see PCS-RELOAD-3.1).
 
 #### Scenario: PLC address change triggers drain-and-swap
 
 - GIVEN a `Manager` running one PLC
-- WHEN the config reload changes the PLC's address
-- THEN the old driver is disconnected
+- WHEN `Reload` is called with the same PLC name but a different `address`
+- THEN the old driver is disconnected and its goroutine stops
 - AND a new driver is started with the updated address
 - AND `go test -race` reports no data races
+
+#### Scenario: PLC scanRate change triggers drain-and-swap
+
+- GIVEN a `Manager` running PLC "Silo-1" with `scanRate="1s"`
+- WHEN `Reload` is called with "Silo-1" having `scanRate="500ms"`
+- THEN the old worker for "Silo-1" is stopped
+- AND a new worker is started with the updated scanRate
+
+#### Scenario: Unchanged PLC is not restarted
+
+- GIVEN a `Manager` running PLCs "A" and "B"
+- WHEN `Reload` is called and only PLC "A"'s config changes
+- THEN PLC "A"'s worker is restarted
+- AND PLC "B"'s worker continues running without interruption
 
 #### Scenario: PLC removal stops its goroutine
 
 - GIVEN a `Manager` running PLCs A and B
-- WHEN a config reload removes PLC B
+- WHEN `Reload` is called with PLC B absent from the list
 - THEN PLC B's goroutine stops and `Disconnect` is called for B
 - AND PLC A's goroutine continues unaffected
+
+#### Scenario: Reload called directly from the mutation path
+
+- GIVEN a `Manager` is running (always non-nil; may hold zero workers)
+- WHEN the store mutation handler calls `plcMgr.Reload(ctx, &config.Config{PLCs: storePLCs})` directly (no file watcher involved)
+- THEN Reload applies the same drain-and-swap logic as a file-watcher-triggered reload
 
 ---
 
@@ -373,3 +395,104 @@ The following are explicitly OUT OF SCOPE for this change and MUST NOT be implem
 - OPC UA driver
 
 Any attempt to pass a UDT pointer as `dest` to `ReadTag` results in undefined behaviour. The package godoc MUST state this explicitly.
+
+---
+
+### [PCS-CFG-5.1] `writable` field on TagDef — enforced master switch
+
+The `TagDef` struct in `internal/config/config.go` MUST include a `Writable` field:
+
+| Field (Go) | YAML key | Type | Default | Description |
+|------------|----------|------|---------|-------------|
+| `Writable` | `writable` | `bool` | `false` | Engineering master switch for writes; `false` means NO write for ANY role, including admin |
+
+`Writable` MUST be persisted in `plc_tags.writable` (integer 0/1) and round-tripped through the `/api/plcs` JSON shape. `Writable=false` is an absolute engineering-level prohibition: no access-control rule, no role, and no API call can override it. The `AuthorizeHTTP` and `AuthorizeDCMD` enforcement functions (see TWA-ENFORCE-2.1 in `openspec/specs/tag-write-acl/spec.md`) MUST each consult this field as Layer 1 before any further gate. `Writable` is excluded from `ValidatePLC` (presence/absence is always valid).
+
+(Previously: stored in `plc_tags.writable` and round-tripped, but NOT enforced — no access-control logic depended on it. Enforcement was added in the `write-acl` change.)
+
+#### Scenario: writable field loads from YAML
+
+- GIVEN a YAML config with a tag entry containing `writable: true`
+- WHEN `Load(path)` is called
+- THEN `cfg.PLCs[0].Tags[0].Writable` is `true`
+
+#### Scenario: writable defaults to false when absent
+
+- GIVEN a YAML config with a tag entry that omits `writable`
+- WHEN `Load(path)` is called
+- THEN `cfg.PLCs[0].Tags[0].Writable` is `false`
+
+#### Scenario: writable field does not affect config validation
+
+- GIVEN a tag with `writable: true` and all other fields valid
+- WHEN `ValidatePLC` (or `Validate()`) is called
+- THEN it returns nil (writable has no validation constraint at config parse time)
+
+#### Scenario: Writable=false blocks write regardless of ACL or role
+
+- GIVEN tag `Emergency.Stop` has `Writable=false` in the plc_tags store
+- AND a valid ACL rule grants `admin` write on `Emergency.Stop`
+- WHEN any write attempt is made via HTTP or DCMD for any role including `admin`
+- THEN the write is DENIED before the ACL is consulted
+- AND the audit event records `reason="tag not writable"`
+
+#### Scenario: Writable=true permits the ACL to be consulted (HTTP)
+
+- GIVEN tag `Feed.Rate` has `Writable=true` in the plc_tags store
+- WHEN an HTTP write attempt is made
+- THEN the enforcement core proceeds to Layer 2 (ACL lookup)
+- AND the final allow/deny outcome is determined by the ACL, not by the master switch
+
+---
+
+### [PCS-CFG-5.2] `dcmd_enabled` field on TagDef — per-tag DCMD opt-in
+
+The `TagDef` struct in `internal/config/config.go` MUST include a `DCMDEnabled` field:
+
+| Field (Go) | YAML key | Type | Default | Description |
+|------------|----------|------|---------|-------------|
+| `DCMDEnabled` | `dcmd_enabled` | `bool` | `false` | Engineering per-tag opt-in for Sparkplug DCMD writes; `false` means DCMD writes to this tag are DROPPED regardless of any ACL rule |
+
+`DCMDEnabled` MUST be persisted in `plc_tags.dcmd_enabled` (integer 0/1) and round-tripped through the `/api/plcs` JSON shape. It is an engineering-set safety switch, set alongside `Writable`. Its default is `false` (DCMD off by default — a tag must be explicitly opted in). `DCMDEnabled=false` is an absolute prohibition for the DCMD path: no ACL rule, no role, and no MQTT credential overrides it. The `AuthorizeDCMD` enforcement function MUST consult this field as Layer 2 after the `Writable` master switch. `DCMDEnabled` is excluded from `ValidatePLC` (presence/absence is always valid). The `dcmd_enabled` flag is entirely independent of the HTTP role×tag ACL — the two systems share only the `Writable` master switch.
+
+Note on koanf tag: the field uses `koanf:"dcmd_enabled"` (snake_case), matching the YAML key and all other koanf tags in `config.go`. The design note that suggested `koanf:"dcmdEnabled"` was in error; the implementation uses snake_case consistently.
+
+#### Scenario: dcmd_enabled field loads from YAML
+
+- GIVEN a YAML config with a tag entry containing `dcmd_enabled: true`
+- WHEN `Load(path)` is called
+- THEN `cfg.PLCs[0].Tags[0].DCMDEnabled` is `true`
+
+#### Scenario: dcmd_enabled defaults to false when absent
+
+- GIVEN a YAML config with a tag entry that omits `dcmd_enabled`
+- WHEN `Load(path)` is called
+- THEN `cfg.PLCs[0].Tags[0].DCMDEnabled` is `false`
+
+#### Scenario: dcmd_enabled is persisted and round-tripped
+
+- GIVEN a tag is created or updated via `POST /api/plcs/{plc}/tags` with `dcmd_enabled: true`
+- WHEN the tag is retrieved via `GET /api/plcs/{plc}/tags/{tag}`
+- THEN the response JSON contains `"dcmd_enabled": true`
+- AND `plc_tags.dcmd_enabled` in the SQLite store is `1`
+
+#### Scenario: dcmd_enabled field does not affect config validation
+
+- GIVEN a tag with `dcmd_enabled: true` and all other fields valid
+- WHEN `ValidatePLC` (or `Validate()`) is called
+- THEN it returns nil (dcmd_enabled has no validation constraint at config parse time)
+
+#### Scenario: dcmd_enabled=false blocks DCMD regardless of ACL
+
+- GIVEN tag `Feed.Rate` has `Writable=true` and `DCMDEnabled=false` in the plc_tags store
+- AND a valid ACL rule grants `operator` write on `Feed.Rate` (HTTP access permitted)
+- WHEN a DCMD metric for `Feed.Rate` is received
+- THEN the write is DROPPED before the ACL is consulted
+- AND the audit event records `reason="dcmd not enabled"` and `source="dcmd"`
+
+#### Scenario: Both Writable=true and dcmd_enabled=true required for DCMD writes
+
+- GIVEN tag `Setpoint.Temp` has `Writable=true` and `DCMDEnabled=true`
+- WHEN a DCMD metric for `Setpoint.Temp` is received
+- THEN `AuthorizeDCMD` returns `Allowed=true`
+- AND `Driver.WriteTag` is called

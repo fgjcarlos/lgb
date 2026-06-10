@@ -200,6 +200,29 @@ The `PLC` struct in `internal/config/config.go` MUST include the following field
 
 All new fields MUST use camelCase YAML keys consistent with the project's case-preservation convention (MVP-FND-2.1).
 
+YAML `plcs[]` entries are a BOOTSTRAP SEED only: they are read once when the `plcstore` is empty (see PCS-STORE-1.2) and ignored thereafter. The runtime source of truth for PLC definitions is `plcstore.Store`. YAML `plcs[]` MUST NOT be written back by any code path.
+
+#### Scenario: Existing config without optional fields loads successfully
+
+- GIVEN a YAML config with PLC entries having only `name` and `address`
+- WHEN `Load(path)` is called
+- THEN it returns without error and defaults apply for omitted fields
+
+#### Scenario: YAML plcs ignored after store is seeded
+
+- GIVEN the store already contains PLCs
+- AND the YAML `plcs[]` section differs from the store contents
+- WHEN the gateway starts (or the file watcher fires)
+- THEN the non-PLC YAML fields are applied (gateway, server, etc.)
+- AND the PLC set is sourced from the store, not from YAML
+
+#### Scenario: Non-PLC YAML reload still applies
+
+- GIVEN the store has PLCs and the gateway is running
+- WHEN the YAML file is modified (e.g. `gateway.logLevel` changes)
+- THEN the watcher fires and the non-PLC fields are updated
+- AND the PLC list used by the Manager comes from the store
+
 ---
 
 ### [PLC-CFG-1.2] Validation — address is required
@@ -234,4 +257,48 @@ Violations across multiple PLC entries and across multiple fields within a singl
 
 ### [PLC-CFG-1.7] Backward compatibility
 
-Existing YAML configs that define `plcs[]` entries with only `name` and `address` MUST load and validate without error. No existing field is removed or renamed.
+Existing YAML configs that define `plcs[]` entries with only `name` and `address` MUST load and validate without error. No existing field is removed or renamed. The `Tags[].Writable` field is optional — absent entries are valid and default to `false`. The YAML `plcs[]` section is treated as a seed-only input (see PLC-CFG-1.1 and PCS-STORE-1.2); presence of `plcs[]` in YAML does not cause an error and does not override the store after first boot.
+
+#### Scenario: Config with only name and address is valid
+
+- GIVEN a PLC entry with only `name` and `address` populated
+- WHEN `Validate()` is called
+- THEN it returns nil for that entry
+
+#### Scenario: Config without writable field is valid
+
+- GIVEN a tag entry in YAML that has no `writable` key
+- WHEN `Load(path)` is called and `Validate()` is run
+- THEN no error is returned for the missing field
+
+---
+
+### [PCS-CFG-5.1] `writable` field on TagDef — enforced master switch
+
+The `TagDef` struct in `internal/config/config.go` MUST include a `Writable` field:
+
+| Field (Go) | YAML key | Type | Default | Description |
+|------------|----------|------|---------|-------------|
+| `Writable` | `writable` | `bool` | `false` | Engineering master switch for writes; `false` means NO write for ANY role, including admin |
+
+`Writable` MUST be persisted in `plc_tags.writable` (integer 0/1) and round-tripped through the `/api/plcs` JSON shape. `Writable=false` is an absolute engineering-level prohibition: no access-control rule, no role, and no API call can override it. Both `AuthorizeHTTP` and `AuthorizeDCMD` (see `openspec/specs/tag-write-acl/spec.md` — TWA-ENFORCE-2.1) consult this field as Layer 1 before any further gate. `Writable` is excluded from `ValidatePLC` (presence/absence is always valid).
+
+(Previously: stored in `plc_tags.writable` and round-tripped, but NOT enforced. Enforcement was added in the `write-acl` change.)
+
+#### Scenario: writable field loads from YAML
+
+- GIVEN a YAML config with a tag entry containing `writable: true`
+- WHEN `Load(path)` is called
+- THEN `cfg.PLCs[0].Tags[0].Writable` is `true`
+
+#### Scenario: writable defaults to false when absent
+
+- GIVEN a YAML config with a tag entry that omits `writable`
+- WHEN `Load(path)` is called
+- THEN `cfg.PLCs[0].Tags[0].Writable` is `false`
+
+#### Scenario: writable field does not affect validation
+
+- GIVEN a tag with `writable: true` and all other fields valid
+- WHEN `ValidatePLC` (or `Validate()`) is called
+- THEN it returns nil (writable has no validation constraint)

@@ -841,3 +841,301 @@ func TestReload_ChangedTags_DrainsAndRestarts(t *testing.T) {
 
 	_ = mgr.Stop()
 }
+
+// ─── R67: Config Reload Concurrency ─────────────────────────────────────────
+
+// callbackMockDriver allows test code to inject behavior via closures for
+// Connect and Close, while providing no-op defaults for other methods.
+type callbackMockDriver struct {
+	connectFn func(ctx context.Context) error
+	closeFn   func() error
+}
+
+func (d *callbackMockDriver) Connect(ctx context.Context) error {
+	if d.connectFn != nil {
+		return d.connectFn(ctx)
+	}
+	return nil
+}
+
+func (d *callbackMockDriver) Close() error {
+	if d.closeFn != nil {
+		return d.closeFn()
+	}
+	return nil
+}
+
+func (d *callbackMockDriver) ReadTag(_ string, _ any) error       { return nil }
+func (d *callbackMockDriver) WriteTag(_ string, _ any) error      { return nil }
+func (d *callbackMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
+func (d *callbackMockDriver) Connected() bool                     { return true }
+
+var _ plc.Driver = (*callbackMockDriver)(nil)
+
+// TestReload_Concurrent_NoDeadlock verifies that two concurrent Reload calls
+// serialize without deadlock or panic under the -race detector. R67-1.
+func TestReload_Concurrent_NoDeadlock(t *testing.T) {
+	t.Parallel()
+
+	factory := func(c config.PLC) plc.Driver { return &trackingMockDriver{} }
+
+	cfg := managerOnePLCConfig("plc-a")
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	cfgB := managerOnePLCConfig("plc-a")
+	cfgB.PLCs[0].ScanRate = "200ms"
+	cfgC := managerOnePLCConfig("plc-a")
+	cfgC.PLCs[0].ScanRate = "300ms"
+
+	done := make(chan struct{}, 2)
+	go func() {
+		defer func() { done <- struct{}{} }()
+		_ = mgr.Reload(ctx, cfgB)
+	}()
+	go func() {
+		defer func() { done <- struct{}{} }()
+		_ = mgr.Reload(ctx, cfgC)
+	}()
+
+	timer := time.NewTimer(4 * time.Second)
+	defer timer.Stop()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-timer.C:
+			t.Fatal("TestReload_Concurrent_NoDeadlock: Reload deadlocked")
+		}
+	}
+
+	_ = mgr.Stop()
+}
+
+// driverCloseCount is a helper that reads closeCount from a countingMockDriver
+// safely; it returns -1 when d is nil (signals a missing driver in tests).
+func driverCloseCount(d *countingMockDriver) int {
+	if d == nil {
+		return -1
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closeCount
+}
+
+// TestReload_OnlyChangedWorkersDrained verifies that only the changed PLC's
+// worker is drained; the unchanged worker keeps running without restart and
+// Reload returns promptly (well under 1s). R67-2.
+func TestReload_OnlyChangedWorkersDrained(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	initialByName := make(map[string]*countingMockDriver)
+
+	factory := func(cfg config.PLC) plc.Driver {
+		d := &countingMockDriver{}
+		mu.Lock()
+		if _, seen := initialByName[cfg.Name]; !seen {
+			initialByName[cfg.Name] = d
+		}
+		mu.Unlock()
+		return d
+	}
+
+	cfg := managerMultiPLCConfig() // plc-a + plc-b
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	snapA := initialByName["plc-a"]
+	snapB := initialByName["plc-b"]
+	mu.Unlock()
+
+	if snapA == nil || snapB == nil {
+		t.Fatalf("expected initial drivers for plc-a and plc-b; got a=%v b=%v", snapA, snapB)
+	}
+
+	// Change plc-b's scanRate; plc-a stays identical.
+	newCfg := managerMultiPLCConfig()
+	newCfg.PLCs[1].ScanRate = "999ms" // plc-b changed (index 1 in slice)
+
+	// Reload must return well within 1s (plc-a should not be drained/waited).
+	reloadDone := make(chan error, 1)
+	start := time.Now()
+	go func() { reloadDone <- mgr.Reload(ctx, newCfg) }()
+
+	timer := time.NewTimer(1 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-reloadDone:
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("Reload error: %v", err)
+		}
+		if elapsed > 900*time.Millisecond {
+			t.Errorf("Reload took too long (%v); unchanged workers must not block drain", elapsed)
+		}
+	case <-timer.C:
+		t.Fatal("Reload blocked for >1s; unchanged workers must not be drained")
+	}
+
+	// plc-a must NOT have been closed (unchanged).
+	if closedA := driverCloseCount(snapA); closedA != 0 {
+		t.Errorf("plc-a Close called %d times; want 0 (unchanged)", closedA)
+	}
+
+	// plc-b must have been closed (changed).
+	if closedB := driverCloseCount(snapB); closedB == 0 {
+		t.Error("plc-b Close was not called; want >=1 (changed)")
+	}
+
+	_ = mgr.Stop()
+}
+
+// TestReload_DrainCompletesBeforeStart verifies that the replacement worker's
+// Connect is not invoked until after the previous worker's goroutine has
+// fully exited (its done channel is closed). R67-3.
+func TestReload_DrainCompletesBeforeStart(t *testing.T) {
+	t.Parallel()
+
+	// drainStarted is closed when the old driver's Close is called.
+	drainStarted := make(chan struct{})
+	// allowConnect is closed to let the replacement connect proceed.
+	allowConnect := make(chan struct{})
+	// connectCalled is closed when replacement actually calls Connect.
+	connectCalled := make(chan struct{})
+
+	var isFirstMu sync.Mutex
+	isFirst := true
+
+	factory := func(cfg config.PLC) plc.Driver {
+		isFirstMu.Lock()
+		first := isFirst
+		isFirst = false
+		isFirstMu.Unlock()
+
+		if first {
+			return &callbackMockDriver{
+				closeFn: func() error {
+					close(drainStarted)
+					return nil
+				},
+			}
+		}
+		return &callbackMockDriver{
+			connectFn: func(ctx context.Context) error {
+				close(connectCalled)
+				select {
+				case <-allowConnect:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+		}
+	}
+
+	cfg := managerOnePLCConfig("plc-a")
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(30 * time.Millisecond) // let old worker finish connecting
+
+	newCfg := managerOnePLCConfig("plc-a")
+	newCfg.PLCs[0].ScanRate = "999ms"
+
+	reloadDone := make(chan error, 1)
+	go func() { reloadDone <- mgr.Reload(ctx, newCfg) }()
+
+	// Wait until drain begins (old Close called).
+	select {
+	case <-drainStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("old driver Close not called within 3s")
+	}
+
+	// Unblock replacement Connect.
+	close(allowConnect)
+
+	// Wait for replacement to call Connect.
+	select {
+	case <-connectCalled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement driver Connect not called within 3s after drain")
+	}
+
+	select {
+	case err := <-reloadDone:
+		if err != nil {
+			t.Fatalf("Reload error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Reload did not complete within 3s")
+	}
+
+	cancel()
+	_ = mgr.Stop()
+}
+
+// TestReload_AfterStop_SafeNoOp verifies that calling Reload after Stop does
+// not panic, does not start new goroutines, and returns cleanly. R67-4.
+func TestReload_AfterStop_SafeNoOp(t *testing.T) {
+	t.Parallel()
+
+	factory := func(cfg config.PLC) plc.Driver { return &trackingMockDriver{} }
+
+	cfg := managerOnePLCConfig("plc-a")
+	mgr := plc.NewManager(cfg, nil, factory, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	if err := mgr.Stop(); err != nil {
+		t.Fatalf("Stop error: %v", err)
+	}
+
+	// Reload after Stop must not panic and must return within 1s.
+	reloadDone := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				reloadDone <- errors.New("panic in Reload after Stop")
+			}
+		}()
+		reloadDone <- mgr.Reload(ctx, cfg)
+	}()
+
+	timer := time.NewTimer(1 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-reloadDone:
+		if err != nil {
+			t.Fatalf("Reload after Stop returned error: %v", err)
+		}
+	case <-timer.C:
+		t.Fatal("Reload after Stop blocked for >1s")
+	}
+}

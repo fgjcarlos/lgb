@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/historian"
 	"github.com/fgjcarlos/lgb/internal/plc"
@@ -23,8 +24,10 @@ import (
 
 // GitGuardian-safe: use const indirection for credential env var values.
 const (
-	fixtureJwtValue  = "fixture-server-test-jwt"
-	fixtureJwtEnvKey = "LGB_AUTH_JWTSECRET"
+	fixtureJwtValue       = "fixture-server-test-jwt"
+	fixtureJwtEnvKey      = "LGB_AUTH_JWTSECRET"
+	fixtureAdminPwEnvKey  = "LGB_AUTH_ADMIN_PASSWORD"
+	fixtureAdminPwValue   = "fixture-admin-password"
 )
 
 // TestServerCmd_NoJwtSecretExits1 verifies that the server command refuses to
@@ -62,7 +65,8 @@ func TestServerCmd_JwtFromEnv(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -95,7 +99,8 @@ func TestServerCmd_DataDirBootstrapped(t *testing.T) {
 
 	var bootstrapCalled bool
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		DataDirEnsureFn: func(path string) (string, error) {
 			bootstrapCalled = true
 			return path, nil
@@ -149,7 +154,8 @@ func TestServerCmd_WithPLCs_CreatesPLCManager(t *testing.T) {
 	var factoryCalled bool
 
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
 			factoryCalled = true
 			return mgr
@@ -181,7 +187,8 @@ func TestServerCmd_NoPLCs_EmptyManager(t *testing.T) {
 
 	var factoryCalled bool
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		PLCManagerFactory: func(c *config.Config, _ plc.TagCallback) server.PLCManager {
 			factoryCalled = true
 			return &mockServerPLCManager{}
@@ -222,7 +229,8 @@ func TestServerCmd_PLCStoreSeed_FirstBoot(t *testing.T) {
 	factoryCh := make(chan []string, 1)
 
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		PLCStoreFactory: func(ctx context.Context, path string) (*plcstore.Store, error) {
 			return plcstore.Open(ctx, ":memory:")
 		},
@@ -277,7 +285,8 @@ func TestServerCmd_PLCStoreSeed_Idempotent(t *testing.T) {
 	factoryCh := make(chan []string, 1)
 
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		PLCStoreFactory: func(ctx context.Context, path string) (*plcstore.Store, error) {
 			s, err := plcstore.Open(ctx, ":memory:")
 			if err != nil {
@@ -349,7 +358,8 @@ func TestServerCmd_WithGroupID_CreatesSparkplugNode(t *testing.T) {
 	var factoryCalled bool
 
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		SparkplugNodeFactory: func(c *config.Config) server.SparkplugNode {
 			factoryCalled = true
 			return node
@@ -379,7 +389,8 @@ func TestServerCmd_WithHistorian_CreatesStoreAndWriter(t *testing.T) {
 
 	var storeOpened bool
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		HistorianStoreFactory: func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error) {
 			storeOpened = true
 			if opts.RetentionDays != 30 {
@@ -417,7 +428,8 @@ func TestServerCmd_NoHistorian_WhenRetentionZero(t *testing.T) {
 
 	var storeOpened bool
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		HistorianStoreFactory: func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error) {
 			storeOpened = true
 			return historian.Open(ctx, ":memory:", opts)
@@ -447,7 +459,8 @@ func TestServerCmd_NoGroupID_NilSparkplugNode(t *testing.T) {
 
 	var factoryCalled bool
 	d := &Deps{
-		Config: cfg,
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
 		SparkplugNodeFactory: func(c *config.Config) server.SparkplugNode {
 			factoryCalled = true
 			return nil
@@ -466,4 +479,130 @@ func TestServerCmd_NoGroupID_NilSparkplugNode(t *testing.T) {
 	if factoryCalled {
 		t.Error("expected SparkplugNodeFactory NOT to be called when GroupID is empty")
 	}
+}
+
+// openMemoryUserStore is a test helper that opens an in-memory UserStore and
+// registers cleanup. Used by TestServer_AdminSeeded to isolate from disk.
+func openMemoryUserStore(t *testing.T) *auth.UserStore {
+	t.Helper()
+	s, err := auth.OpenUserStore(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("OpenUserStore: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// seededUserStoreFactory returns a UserStoreFactory that ignores the path and
+// always returns a pre-populated in-memory store with one admin user. Use this
+// in cmd-level tests that need runServerTo to start cleanly without setting
+// LGB_AUTH_ADMIN_PASSWORD.
+func seededUserStoreFactory(t *testing.T) func(context.Context, string) (*auth.UserStore, error) {
+	t.Helper()
+	s := openMemoryUserStore(t)
+	if _, err := s.Create(context.Background(), "admin", "adminpass", auth.RoleAdmin); err != nil {
+		t.Fatalf("seed admin user: %v", err)
+	}
+	return func(_ context.Context, _ string) (*auth.UserStore, error) { return s, nil }
+}
+
+// TestServer_AdminSeeded verifies that runServerTo calls EnsureAdminExists
+// right after the user store opens. Covers three scenarios from R66-1:
+//  1. Fresh DB + env var set → admin user created.
+//  2. Fresh DB without env var → server returns a fatal error.
+//  3. Pre-populated DB → EnsureAdminExists is a no-op, server starts cleanly.
+//
+// Requirements: R66-1. Design: #66 admin bootstrap wiring.
+func TestServer_AdminSeeded(t *testing.T) {
+	t.Run("fresh DB with env var creates admin", func(t *testing.T) {
+		t.Setenv(fixtureAdminPwEnvKey, fixtureAdminPwValue) // GitGuardian-safe: const indirection
+
+		store := openMemoryUserStore(t)
+
+		cfg := testutil.MinimalConfig(t)
+		cfg.Auth.JwtSecret = fixtureJwtValue
+		cfg.Historian.RetentionDays = 0
+		cfg.MQTT.GroupID = ""
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- runServerTo(ctx, &Deps{
+				Config:           cfg,
+				UserStoreFactory: func(_ context.Context, _ string) (*auth.UserStore, error) { return store, nil },
+			}, &bytes.Buffer{}, &bytes.Buffer{})
+		}()
+
+		// Give the server a moment to complete admin seeding and start.
+		// Cancel immediately to keep the test fast.
+		cancel()
+		if err := <-errCh; err != nil {
+			t.Fatalf("expected clean start, got: %v", err)
+		}
+
+		count, err := store.Count(context.Background())
+		if err != nil {
+			t.Fatalf("Count: %v", err)
+		}
+		if count == 0 {
+			t.Error("expected admin user to be created in the store, got 0 users")
+		}
+	})
+
+	t.Run("fresh DB without env var returns fatal error", func(t *testing.T) {
+		t.Setenv(fixtureAdminPwEnvKey, "") // explicitly absent
+
+		store := openMemoryUserStore(t)
+
+		cfg := testutil.MinimalConfig(t)
+		cfg.Auth.JwtSecret = fixtureJwtValue
+		cfg.Historian.RetentionDays = 0
+		cfg.MQTT.GroupID = ""
+
+		err := runServerTo(context.Background(), &Deps{
+			Config:           cfg,
+			UserStoreFactory: func(_ context.Context, _ string) (*auth.UserStore, error) { return store, nil },
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+
+		if err == nil {
+			t.Fatal("expected fatal error when LGB_AUTH_ADMIN_PASSWORD is unset on fresh DB, got nil")
+		}
+		if !strings.Contains(err.Error(), "admin") && !strings.Contains(err.Error(), "LGB_AUTH_ADMIN_PASSWORD") {
+			t.Errorf("expected error message to mention admin or env var, got: %v", err)
+		}
+	})
+
+	t.Run("populated DB is a no-op", func(t *testing.T) {
+		t.Setenv(fixtureAdminPwEnvKey, "") // env var absent — irrelevant when users already exist
+
+		store := openMemoryUserStore(t)
+		// Pre-populate with an admin user so EnsureAdminExists is a no-op.
+		if _, err := store.Create(context.Background(), "existing-admin", "pass", auth.RoleAdmin); err != nil {
+			t.Fatalf("pre-create admin: %v", err)
+		}
+
+		cfg := testutil.MinimalConfig(t)
+		cfg.Auth.JwtSecret = fixtureJwtValue
+		cfg.Historian.RetentionDays = 0
+		cfg.MQTT.GroupID = ""
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- runServerTo(ctx, &Deps{
+				Config:           cfg,
+				UserStoreFactory: func(_ context.Context, _ string) (*auth.UserStore, error) { return store, nil },
+			}, &bytes.Buffer{}, &bytes.Buffer{})
+		}()
+
+		cancel()
+		if err := <-errCh; err != nil {
+			t.Fatalf("expected clean start when store is pre-populated, got: %v", err)
+		}
+
+		count, _ := store.Count(context.Background())
+		if count != 1 {
+			t.Errorf("expected store to still have exactly 1 user (no-op), got %d", count)
+		}
+	})
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -92,7 +93,25 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newToken, err := s.authTokens.Issue(claims.UserID, claims.Username, claims.Role)
+	// DB revalidation: ensure the user still exists and pick up current role.
+	// Guard: skip if userStore is not wired (partial/test configuration).
+	issueUsername := claims.Username
+	issueRole := claims.Role
+	if s.userStore != nil {
+		user, err := s.userStore.GetByID(r.Context(), claims.UserID)
+		if err != nil {
+			if errors.Is(err, auth.ErrUserNotFound) {
+				writeAPIError(w, http.StatusUnauthorized, "unauthorized", "user no longer exists")
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not revalidate user")
+			return
+		}
+		issueUsername = user.Username
+		issueRole = user.Role
+	}
+
+	newToken, err := s.authTokens.Issue(claims.UserID, issueUsername, issueRole)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not issue token")
 		return

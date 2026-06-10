@@ -216,7 +216,7 @@ func (s *UserStore) migrate(ctx context.Context) error {
 }
 
 func isUniqueViolation(err error) bool {
-	return err != nil && (errors.Is(err, sql.ErrNoRows) || containsStr(err.Error(), "UNIQUE constraint failed"))
+	return err != nil && containsStr(err.Error(), "UNIQUE constraint failed")
 }
 
 func containsStr(s, substr string) bool {

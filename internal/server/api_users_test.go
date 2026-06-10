@@ -151,7 +151,7 @@ func TestHandleCreateUser_AdminCreatesViewer201(t *testing.T) {
 	tok := adminToken(t, tokens, admin.ID, admin.Username)
 
 	resp := doRequest(t, http.MethodPost, baseURL+"/api/users",
-		`{"username":"bob","password":"pw","role":"viewer"}`, tok)
+		`{"username":"bob","password":"correctpassword","role":"viewer"}`, tok)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
@@ -189,7 +189,7 @@ func TestHandleCreateUser_DuplicateUsername409(t *testing.T) {
 	tok := adminToken(t, tokens, admin.ID, admin.Username)
 
 	resp := doRequest(t, http.MethodPost, baseURL+"/api/users",
-		`{"username":"alice","password":"pw","role":"viewer"}`, tok)
+		`{"username":"alice","password":"correctpassword","role":"viewer"}`, tok)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusConflict {
@@ -214,6 +214,87 @@ func TestHandleCreateUser_InvalidRole400(t *testing.T) {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
 	assertHTTPErrorCode(t, resp, "invalid_role")
+}
+
+func TestHandleCreateUser_PasswordTooShort400(t *testing.T) {
+	store, tokens, baseURL, stop := newUsersTestServerFull(t)
+	defer stop()
+	ctx := context.Background()
+
+	admin, _ := store.Create(ctx, "admin1", "pass", auth.RoleAdmin)
+	tok := adminToken(t, tokens, admin.ID, admin.Username)
+
+	// 11-char password — one short of the 12-char minimum.
+	resp := doRequest(t, http.MethodPost, baseURL+"/api/users",
+		`{"username":"bob","password":"tooshortpwd","role":"viewer"}`, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for short password, got %d", resp.StatusCode)
+	}
+	assertHTTPErrorCode(t, resp, "weak_password")
+}
+
+func TestHandleCreateUser_PasswordTooLong400(t *testing.T) {
+	store, tokens, baseURL, stop := newUsersTestServerFull(t)
+	defer stop()
+	ctx := context.Background()
+
+	admin, _ := store.Create(ctx, "admin1", "pass", auth.RoleAdmin)
+	tok := adminToken(t, tokens, admin.ID, admin.Username)
+
+	// 73-byte password — one byte over the 72-byte bcrypt limit.
+	longPwd := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	body := fmt.Sprintf(`{"username":"bob","password":%q,"role":"viewer"}`, longPwd)
+	resp := doRequest(t, http.MethodPost, baseURL+"/api/users", body, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for long password, got %d", resp.StatusCode)
+	}
+	assertHTTPErrorCode(t, resp, "weak_password")
+}
+
+func TestHandleUpdateUserPassword_PasswordTooShort400(t *testing.T) {
+	store, tokens, baseURL, stop := newUsersTestServerFull(t)
+	defer stop()
+	ctx := context.Background()
+
+	admin, _ := store.Create(ctx, "admin1", "pass", auth.RoleAdmin)
+	target, _ := store.Create(ctx, "viewer1", "pass", auth.RoleViewer)
+	tok := adminToken(t, tokens, admin.ID, admin.Username)
+
+	resp := doRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/api/users/%d/password", baseURL, target.ID),
+		`{"password":"tooshortpwd"}`, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for short password update, got %d", resp.StatusCode)
+	}
+	assertHTTPErrorCode(t, resp, "weak_password")
+}
+
+func TestHandleUpdateUserPassword_PasswordTooLong400(t *testing.T) {
+	store, tokens, baseURL, stop := newUsersTestServerFull(t)
+	defer stop()
+	ctx := context.Background()
+
+	admin, _ := store.Create(ctx, "admin1", "pass", auth.RoleAdmin)
+	target, _ := store.Create(ctx, "viewer1", "pass", auth.RoleViewer)
+	tok := adminToken(t, tokens, admin.ID, admin.Username)
+
+	longPwd := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	body := fmt.Sprintf(`{"password":%q}`, longPwd)
+	resp := doRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/api/users/%d/password", baseURL, target.ID),
+		body, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for long password update, got %d", resp.StatusCode)
+	}
+	assertHTTPErrorCode(t, resp, "weak_password")
 }
 
 // ─── GET /api/users/{id} ─────────────────────────────────────────────────────
@@ -348,7 +429,7 @@ func TestHandleUpdateUserPassword_Admin204(t *testing.T) {
 
 	resp := doRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/api/users/%d/password", baseURL, target.ID),
-		`{"password":"newpass"}`, tok)
+		`{"password":"newpassword123"}`, tok)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
@@ -365,7 +446,7 @@ func TestHandleUpdateUserPassword_NotFound404(t *testing.T) {
 	tok := adminToken(t, tokens, admin.ID, admin.Username)
 
 	resp := doRequest(t, http.MethodPut, baseURL+"/api/users/999/password",
-		`{"password":"newpass"}`, tok)
+		`{"password":"newpassword123"}`, tok)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -394,17 +475,52 @@ func TestHandleDeleteUser_Admin204(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteUser_SelfDelete409(t *testing.T) {
+	store, tokens, baseURL, stop := newUsersTestServerFull(t)
+	defer stop()
+	ctx := context.Background()
+
+	// Create a second admin so the last-admin guard doesn't trigger.
+	admin1, _ := store.Create(ctx, "admin1", "password123456", auth.RoleAdmin)
+	_, _ = store.Create(ctx, "admin2", "password123456", auth.RoleAdmin)
+
+	// Authenticate as admin1 and try to delete their own account.
+	tok := adminToken(t, tokens, admin1.ID, admin1.Username)
+	resp := doRequest(t, http.MethodDelete,
+		fmt.Sprintf("%s/api/users/%d", baseURL, admin1.ID), "", tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 for self-delete, got %d", resp.StatusCode)
+	}
+	assertHTTPErrorCode(t, resp, "self_delete")
+
+	// Verify the user still exists.
+	if _, err := store.GetByID(ctx, admin1.ID); err != nil {
+		t.Errorf("user should still exist after rejected self-delete, got: %v", err)
+	}
+}
+
 func TestHandleDeleteUser_LastAdmin409(t *testing.T) {
 	store, tokens, baseURL, stop := newUsersTestServerFull(t)
 	defer stop()
 	ctx := context.Background()
 
-	// Only one admin in the system.
-	admin, _ := store.Create(ctx, "admin1", "pass", auth.RoleAdmin)
-	tok := adminToken(t, tokens, admin.ID, admin.Username)
+	// Create two admins so we can obtain a valid admin token for the caller
+	// without triggering the self-delete guard.
+	admin1, _ := store.Create(ctx, "admin1", "pass", auth.RoleAdmin)
+	admin2, _ := store.Create(ctx, "admin2", "pass", auth.RoleAdmin)
 
+	// Remove admin1 from the DB directly so admin2 is now the last admin.
+	// admin1's token is still valid (JWT not expired), so the middleware lets
+	// the request through.
+	if err := store.Delete(ctx, admin1.ID); err != nil {
+		t.Fatalf("delete admin1 from store: %v", err)
+	}
+
+	tok := adminToken(t, tokens, admin1.ID, admin1.Username)
 	resp := doRequest(t, http.MethodDelete,
-		fmt.Sprintf("%s/api/users/%d", baseURL, admin.ID), "", tok)
+		fmt.Sprintf("%s/api/users/%d", baseURL, admin2.ID), "", tok)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusConflict {

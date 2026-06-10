@@ -12,7 +12,7 @@ func TestEnsureAdminExists_CreatesFromEnv(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("LGB_AUTH_ADMIN_USER", "superadmin")
-	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "s3cret")
+	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "s3cret-long-enough")
 
 	created, err := EnsureAdminExists(ctx, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
@@ -36,7 +36,7 @@ func TestEnsureAdminExists_DefaultUsername(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("LGB_AUTH_ADMIN_USER", "")
-	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "s3cret")
+	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "s3cret-long-enough")
 
 	_, _ = EnsureAdminExists(ctx, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	_, err := store.GetByUsername(ctx, "admin")
@@ -50,7 +50,7 @@ func TestEnsureAdminExists_SkipsWhenUsersExist(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = store.Create(ctx, "existing", "pass", RoleAdmin)
-	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "s3cret")
+	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "s3cret-long-enough")
 
 	created, err := EnsureAdminExists(ctx, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
@@ -58,6 +58,20 @@ func TestEnsureAdminExists_SkipsWhenUsersExist(t *testing.T) {
 	}
 	if created {
 		t.Error("expected no user creation when users already exist")
+	}
+}
+
+func TestEnsureAdminExists_ShortPasswordFails(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	// 11 chars — one short of the 12-character minimum.
+	t.Setenv("LGB_AUTH_ADMIN_USER", "admin")
+	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "tooshortpwd") // 11 chars
+
+	_, err := EnsureAdminExists(ctx, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	if err == nil {
+		t.Fatal("expected error for short admin password, got nil")
 	}
 }
 

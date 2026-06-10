@@ -28,6 +28,10 @@ func EnsureAdminExists(ctx context.Context, store *UserStore, log *slog.Logger) 
 		return false, fmt.Errorf("auth wizard: no users exist and LGB_AUTH_ADMIN_PASSWORD is not set — cannot create admin user")
 	}
 
+	if err := ValidatePassword(password); err != nil {
+		return false, fmt.Errorf("auth wizard: password policy: %w", err)
+	}
+
 	user, err := store.Create(ctx, username, password, RoleAdmin)
 	if err != nil {
 		return false, fmt.Errorf("auth wizard: create admin: %w", err)

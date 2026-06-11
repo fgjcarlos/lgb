@@ -14,13 +14,10 @@ import (
 // TestSelfSignedTLSConfig_ReturnsTLSConfig asserts that SelfSignedTLSConfig
 // returns a non-nil *tls.Config with at least one certificate loaded.
 func TestSelfSignedTLSConfig_ReturnsTLSConfig(t *testing.T) {
-	t.Helper()
 	cfg := testutil.SelfSignedTLSConfig(t)
-	if cfg == nil {
-		t.Fatal("SelfSignedTLSConfig returned nil *tls.Config")
-	}
-	if len(cfg.Certificates) == 0 {
-		t.Fatal("SelfSignedTLSConfig returned TLSConfig with no certificates")
+	// SelfSignedTLSConfig calls t.Fatal on failure, so cfg is always non-nil here.
+	if n := len(cfg.Certificates); n == 0 {
+		t.Fatalf("SelfSignedTLSConfig returned TLSConfig with no certificates; want >= 1")
 	}
 }
 

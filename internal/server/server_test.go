@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -669,6 +670,48 @@ func TestBuildHTTPServerPlaintext(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("server did not shut down within 3s")
+	}
+}
+
+// TestRunFailsFastOnMissingTLSCert asserts that Run() returns a descriptive error
+// immediately when TLSEnabled=true but TLSCertFile or TLSKeyFile is empty, even
+// when the caller bypasses Validate() and Opts.TLSConfig is nil (production path).
+// This is the fail-fast guard required by the transport-hardening spec (W1).
+func TestRunFailsFastOnMissingTLSCert(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		certFile string
+		keyFile  string
+	}{
+		{"empty cert and key", "", ""},
+		{"empty cert only", "", "/some/key.pem"},
+		{"empty key only", "/some/cert.pem", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testutil.MinimalConfig(t)
+			cfg.Server.HTTPAddr = "127.0.0.1:0"
+			cfg.Server.TLSEnabled = true
+			cfg.Server.TLSCertFile = tt.certFile
+			cfg.Server.TLSKeyFile = tt.keyFile
+			// No TLSConfig seam — exercises the production fail-fast guard.
+
+			srv := New(cfg, testutil.NewLogger(t), nil, Opts{})
+			ctx := context.Background()
+
+			err := srv.Run(ctx)
+			if err == nil {
+				t.Fatal("expected Run to return an error for missing TLS files, got nil")
+			}
+			// The error must be descriptive — not a cryptic stdlib error.
+			errMsg := err.Error()
+			if !strings.Contains(errMsg, "TLS") && !strings.Contains(errMsg, "not configured") {
+				t.Errorf("error message %q does not mention 'TLS' or 'not configured'", errMsg)
+			}
+		})
 	}
 }
 

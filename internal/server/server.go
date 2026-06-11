@@ -255,6 +255,15 @@ func (s *Server) buildHTTPServer(mux *http.ServeMux) *http.Server {
 // Per design §4.5 and §20.1, Run does NOT handle OS signals — the caller
 // (cmd/lgb/cmd/server.go) wires signal.NotifyContext before calling Run.
 func (s *Server) Run(ctx context.Context) error {
+	// Fail fast: TLS is enabled but cert/key paths are missing (R72 guard).
+	// This check is independent of Validate() so that callers that bypass
+	// config validation cannot reach ServeTLS with empty paths and receive a
+	// cryptic stdlib error.
+	if s.cfg.Server.TLSEnabled && s.tlsConfig == nil &&
+		(s.cfg.Server.TLSCertFile == "" || s.cfg.Server.TLSKeyFile == "") {
+		return fmt.Errorf("server: TLS is enabled but TLSCertFile or TLSKeyFile is not configured")
+	}
+
 	ln, err := net.Listen("tcp", s.cfg.Server.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("server: listen %q: %w", s.cfg.Server.HTTPAddr, err)

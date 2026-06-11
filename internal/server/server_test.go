@@ -509,6 +509,65 @@ func TestServer_WithBackupScheduler_StartStop(t *testing.T) {
 	}
 }
 
+// ─── R75-1: buildHTTPServer timeout wiring ──────────────────────────────────
+
+// TestBuildHTTPServerTimeouts asserts R75-1b: explicitly set timeout config
+// strings are parsed and applied to the returned *http.Server.
+func TestBuildHTTPServerTimeouts(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+	cfg.Server.ReadHeaderTimeout = "10s"
+	cfg.Server.ReadTimeout = "20s"
+	cfg.Server.WriteTimeout = "40s"
+	cfg.Server.IdleTimeout = "80s"
+
+	srv := New(cfg, testutil.NewLogger(t), nil, Opts{})
+	mux := http.NewServeMux()
+	httpSrv := srv.buildHTTPServer(mux)
+
+	if httpSrv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v; want 10s", httpSrv.ReadHeaderTimeout)
+	}
+	if httpSrv.ReadTimeout != 20*time.Second {
+		t.Errorf("ReadTimeout = %v; want 20s", httpSrv.ReadTimeout)
+	}
+	if httpSrv.WriteTimeout != 40*time.Second {
+		t.Errorf("WriteTimeout = %v; want 40s", httpSrv.WriteTimeout)
+	}
+	if httpSrv.IdleTimeout != 80*time.Second {
+		t.Errorf("IdleTimeout = %v; want 80s", httpSrv.IdleTimeout)
+	}
+}
+
+// TestBuildHTTPServerTimeoutDefaults asserts R75-1a: when all timeout strings
+// are empty, defaults of 5s/30s/60s/120s are applied.
+func TestBuildHTTPServerTimeoutDefaults(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+	// Leave all timeout strings at zero value (empty string).
+	cfg.Server.ReadHeaderTimeout = ""
+	cfg.Server.ReadTimeout = ""
+	cfg.Server.WriteTimeout = ""
+	cfg.Server.IdleTimeout = ""
+
+	srv := New(cfg, testutil.NewLogger(t), nil, Opts{})
+	mux := http.NewServeMux()
+	httpSrv := srv.buildHTTPServer(mux)
+
+	if httpSrv.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("default ReadHeaderTimeout = %v; want 5s", httpSrv.ReadHeaderTimeout)
+	}
+	if httpSrv.ReadTimeout != 30*time.Second {
+		t.Errorf("default ReadTimeout = %v; want 30s", httpSrv.ReadTimeout)
+	}
+	if httpSrv.WriteTimeout != 60*time.Second {
+		t.Errorf("default WriteTimeout = %v; want 60s", httpSrv.WriteTimeout)
+	}
+	if httpSrv.IdleTimeout != 120*time.Second {
+		t.Errorf("default IdleTimeout = %v; want 120s", httpSrv.IdleTimeout)
+	}
+}
+
 func TestServer_NilSparkplugNode_NoOp(t *testing.T) {
 	cfg := testutil.MinimalConfig(t)
 	cfg.Server.HTTPAddr = "127.0.0.1:0"

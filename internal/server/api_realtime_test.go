@@ -445,6 +445,79 @@ func isCloseError(err error, out *websocket.CloseError) bool {
 	return false
 }
 
+// ─── R75-5: WS connection outlives WriteTimeout ──────────────────────────────
+
+// TestWSStreamSurvivesWriteTimeout asserts R75-5: a WebSocket connection
+// remains alive past the server's WriteTimeout because the HTTP connection is
+// hijacked by the WS upgrade and is no longer subject to http.Server timeouts.
+//
+// The test sets WriteTimeout = 1s, holds the connection open for 2s, then
+// verifies the connection is still alive by sending a ping and receiving a pong.
+func TestWSStreamSurvivesWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, baseURL, stop := startAPITestServerWithOptsAndCfgFn(
+		t,
+		&snapshotPLCManager{},
+		Opts{AuthTokens: tokens},
+		func(cfg *config.Config) {
+			cfg.Server.WriteTimeout = "1s" // very short, to exercise the hijack guarantee
+		},
+	)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	// Authenticate.
+	tok, err := tokens.Issue(1, "operator", auth.RoleOperator)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	if err := wsjson.Write(ctx, conn, wsAuthFrame{Type: "auth", Token: tok}); err != nil {
+		t.Fatalf("write auth frame: %v", err)
+	}
+	var authAck struct{ Type string }
+	if err := wsjson.Read(ctx, conn, &authAck); err != nil {
+		t.Fatalf("read auth_ok: %v", err)
+	}
+	if authAck.Type != "auth_ok" {
+		t.Fatalf("expected auth_ok, got %q", authAck.Type)
+	}
+	// Read subscribed ack.
+	var subAck struct{ Type string }
+	if err := wsjson.Read(ctx, conn, &subAck); err != nil {
+		t.Fatalf("read subscribed: %v", err)
+	}
+	if subAck.Type != "subscribed" {
+		t.Fatalf("expected subscribed, got %q", subAck.Type)
+	}
+
+	// Sleep longer than WriteTimeout (1s) to let it elapse.
+	// If WriteTimeout applied to hijacked connections the server would close us.
+	time.Sleep(2 * time.Second)
+
+	// Assert alive: send a ping, expect a pong.
+	if err := wsjson.Write(ctx, conn, tagWSClientMessage{Type: "ping"}); err != nil {
+		t.Fatalf("write ping after WriteTimeout elapsed: %v", err)
+	}
+	var pong struct{ Type string }
+	if err := wsjson.Read(ctx, conn, &pong); err != nil {
+		t.Fatalf("read pong after WriteTimeout elapsed: %v — connection should be alive (hijack guarantee)", err)
+	}
+	if pong.Type != "pong" {
+		t.Errorf("expected pong, got %q", pong.Type)
+	}
+}
+
 func startAPITestServer(t *testing.T, mgr PLCManager) (*Server, string, func()) {
 	t.Helper()
 	return startAPITestServerWithOpts(t, mgr, Opts{})

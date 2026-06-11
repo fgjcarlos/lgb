@@ -57,6 +57,24 @@ Use certificates issued by your site CA in production and distribute trust to OP
 UA clients according to your plant's trust-list process. Keep the private key
 readable only by the LGB process user.
 
+## HTTP Security Headers
+
+Every HTTP response from LGB includes the following security headers, applied by
+`internal/server/middleware_security.go` regardless of route (API, SPA, health,
+metrics, WebSocket upgrade):
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `X-Content-Type-Options` | `nosniff` | Prevents browsers from MIME-sniffing a response away from the declared Content-Type, mitigating drive-by download attacks. |
+| `X-Frame-Options` | `DENY` | Blocks the LGB UI from being embedded in an iframe, preventing clickjacking attacks. |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Limits the Referer header to the origin only when crossing security boundaries, reducing referrer-based information leakage. |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self'; object-src 'none'; frame-ancestors 'none'` | Restricts resource loading to the same origin, permits WebSocket connections (ws:/wss:), and denies frame embedding via `frame-ancestors 'none'`. |
+
+These headers are set unconditionally — they apply to both plaintext and TLS
+deployments alike. No opt-in or configuration is required.
+
+Implementation: `internal/server/middleware_security.go` — `securityHeadersMiddleware`.
+
 ## Reporting a vulnerability
 
 Please do not open a public GitHub issue for security vulnerabilities.

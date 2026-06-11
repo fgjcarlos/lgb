@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -565,6 +566,109 @@ func TestBuildHTTPServerTimeoutDefaults(t *testing.T) {
 	}
 	if httpSrv.IdleTimeout != 120*time.Second {
 		t.Errorf("default IdleTimeout = %v; want 120s", httpSrv.IdleTimeout)
+	}
+}
+
+// ─── R72: TLS server wiring ─────────────────────────────────────────────────
+
+// TestBuildHTTPServerTLS asserts R72: when TLSEnabled=true and Opts.TLSConfig is
+// set, the server binds a TLS listener and an HTTPS client can connect.
+func TestBuildHTTPServerTLS(t *testing.T) {
+	t.Parallel()
+
+	tlsCfg := testutil.SelfSignedTLSConfig(t)
+
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+	cfg.Server.TLSEnabled = true
+	cfg.Server.TLSCertFile = "/unused-in-test-seam" // seam: Opts.TLSConfig takes precedence
+	cfg.Server.TLSKeyFile = "/unused-in-test-seam"
+
+	logger := testutil.NewLogger(t)
+	srv := New(cfg, logger, nil, Opts{TLSConfig: tlsCfg})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Run(ctx)
+	}()
+
+	addr := srv.Addr()
+	if addr == "" {
+		t.Fatal("TLS server did not bind within timeout")
+	}
+
+	// HTTPS client with InsecureSkipVerify because the cert is self-signed.
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test only
+		},
+		Timeout: 3 * time.Second,
+	}
+
+	resp, err := client.Get(fmt.Sprintf("https://%s/health", addr))
+	if err != nil {
+		t.Fatalf("HTTPS GET /health failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("Run returned non-nil error on TLS shutdown: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("TLS server did not shut down within 3s")
+	}
+}
+
+// TestBuildHTTPServerPlaintext asserts R72: when TLSEnabled=false the server
+// continues to serve plaintext HTTP (existing behaviour is preserved).
+func TestBuildHTTPServerPlaintext(t *testing.T) {
+	t.Parallel()
+
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+	cfg.Server.TLSEnabled = false
+
+	srv := New(cfg, testutil.NewLogger(t), nil, Opts{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Run(ctx)
+	}()
+
+	addr := srv.Addr()
+	if addr == "" {
+		t.Fatal("server did not bind")
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/health", addr))
+	if err != nil {
+		t.Fatalf("HTTP GET /health failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("Run returned non-nil error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("server did not shut down within 3s")
 	}
 }
 

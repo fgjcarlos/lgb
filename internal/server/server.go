@@ -9,6 +9,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -94,8 +95,12 @@ type Server struct {
 	histStore  *historian.Store
 	bkpMgr     *backup.Manager
 	plcStore   *plcstore.Store
-	aclStore   *aclstore.Store    // nil until PR4 wires the admin CRUD API
-	writeGuard *writeguard.Guard  // nil-safe; operative as soon as set (PR2+)
+	aclStore   *aclstore.Store   // nil until PR4 wires the admin CRUD API
+	writeGuard *writeguard.Guard // nil-safe; operative as soon as set (PR2+)
+
+	// tlsConfig is the test seam injected via Opts.TLSConfig. When non-nil and
+	// cfg.Server.TLSEnabled is true, Run uses tls.NewListener instead of ServeTLS.
+	tlsConfig *tls.Config
 
 	bkpStatus backupStatus // mutex-guarded backup status cell
 
@@ -124,6 +129,15 @@ type Opts struct {
 	// Checks is the list of doctor.Check instances run by GET /api/doctor.
 	// When nil, the server starts with no checks registered.
 	Checks []doctor.Check
+
+	// TLSConfig is the test seam for TLS. When non-nil and cfg.Server.TLSEnabled
+	// is true, Run wraps the listener with tls.NewListener(ln, TLSConfig) instead
+	// of calling srv.ServeTLS with cert/key files. This allows tests to inject an
+	// in-memory self-signed cert without disk access (R72 seam).
+	//
+	// In production (TLSConfig == nil, TLSEnabled == true): Run calls
+	// srv.ServeTLS(ln, cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile).
+	TLSConfig *tls.Config
 }
 
 // New creates a new Server. All optional dependencies in opts may be nil;
@@ -169,6 +183,7 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		plcStore:   opts.PLCStore,
 		aclStore:   opts.ACLStore,
 		writeGuard: guard,
+		tlsConfig:  opts.TLSConfig,
 		bkpStatus:  backupStatus{status: "idle"},
 	}
 }
@@ -279,9 +294,11 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	// PR1 stub: warn when running without TLS (PR2 will move this into the
-	// non-TLS branch once the TLS ServeTLS path is implemented).
-	s.log.Warn("server running WITHOUT TLS — plaintext HTTP", "addr", s.cfg.Server.HTTPAddr)
+	// Warn only on the non-TLS path (R72): when TLSEnabled is true the warning
+	// is suppressed — the server is about to serve TLS (PR2 WARN gating).
+	if !s.cfg.Server.TLSEnabled {
+		s.log.Warn("server running WITHOUT TLS — plaintext HTTP", "addr", s.cfg.Server.HTTPAddr)
+	}
 
 	srv := s.buildHTTPServer(mux)
 
@@ -324,10 +341,29 @@ func (s *Server) Run(ctx context.Context) error {
 	s.log.Info("server listening", "addr", ln.Addr().String())
 
 	// Serve in a goroutine; wait for ctx to cancel then gracefully shut down.
+	//
+	// TLS dispatch (R72):
+	//   - TLSEnabled=true + Opts.TLSConfig (test seam): wrap ln with tls.NewListener
+	//     and call srv.Serve — no disk access, no cert/key files needed.
+	//   - TLSEnabled=true + no seam (production): call srv.ServeTLS with the
+	//     cert/key files from config (Validate already confirmed they are non-empty).
+	//   - TLSEnabled=false: plaintext srv.Serve (existing path).
 	serveErr := make(chan error, 1)
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			serveErr <- err
+		var serveErrInner error
+		switch {
+		case s.cfg.Server.TLSEnabled && s.tlsConfig != nil:
+			// Test seam: in-memory TLS config, no disk I/O.
+			tlsLn := tls.NewListener(ln, s.tlsConfig)
+			serveErrInner = srv.Serve(tlsLn)
+		case s.cfg.Server.TLSEnabled:
+			// Production: cert/key from config (already validated non-empty).
+			serveErrInner = srv.ServeTLS(ln, s.cfg.Server.TLSCertFile, s.cfg.Server.TLSKeyFile)
+		default:
+			serveErrInner = srv.Serve(ln)
+		}
+		if serveErrInner != nil && serveErrInner != http.ErrServerClosed {
+			serveErr <- serveErrInner
 		}
 		close(serveErr)
 	}()

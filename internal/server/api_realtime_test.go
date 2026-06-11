@@ -141,44 +141,207 @@ func TestServer_TagsWebSocketStreamsMatchingUpdates(t *testing.T) {
 	}
 }
 
+// TestServer_TagsWebSocketRequiresValidJWTWhenConfigured verifies R71-3:
+// - Connecting without sending an auth frame within the deadline → close 4001.
+// - Connecting and sending a valid auth frame → auth_ok then subscribed.
+// - Connecting and sending an invalid token frame → close 4001.
+// - Connecting with ?token= query param (old mechanism) → no longer accepted; close 4001.
 func TestServer_TagsWebSocketRequiresValidJWTWhenConfigured(t *testing.T) {
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{AuthTokens: tokens})
+	defer stop()
+
+	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags?plc=packaging&tag=Speed"
+
+	t.Run("no auth frame within deadline — close 4001", func(t *testing.T) {
+		// Use a context longer than the server's 5s frame deadline so we can
+		// actually observe the close code rather than timing out ourselves.
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+
+		// Read until the server closes — expect 4001.
+		var m struct{ Type string }
+		if err := wsjson.Read(ctx, conn, &m); err == nil {
+			t.Fatal("expected server to close the connection; got a message instead")
+		}
+		var closeErr websocket.CloseError
+		if !isCloseError(err, &closeErr) {
+			t.Logf("connection closed (non-CloseError is also acceptable): %v", err)
+		} else if closeErr.Code != websocket.StatusCode(4001) {
+			t.Errorf("expected close code 4001, got %d: %s", closeErr.Code, closeErr.Reason)
+		}
+	})
+
+	t.Run("valid auth frame — auth_ok then subscribed", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		token, err := tokens.Issue(1, "operator", auth.RoleOperator)
+		if err != nil {
+			t.Fatalf("issue token: %v", err)
+		}
+
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+
+		if err := wsjson.Write(ctx, conn, wsAuthFrame{Type: "auth", Token: token}); err != nil {
+			t.Fatalf("write auth frame: %v", err)
+		}
+
+		var ack struct {
+			Type string `json:"type"`
+		}
+		if err := wsjson.Read(ctx, conn, &ack); err != nil {
+			t.Fatalf("read auth_ok: %v", err)
+		}
+		if ack.Type != "auth_ok" {
+			t.Fatalf("expected auth_ok, got %q", ack.Type)
+		}
+
+		if err := wsjson.Read(ctx, conn, &ack); err != nil {
+			t.Fatalf("read subscribed: %v", err)
+		}
+		if ack.Type != "subscribed" {
+			t.Fatalf("expected subscribed after auth_ok, got %q", ack.Type)
+		}
+	})
+
+	t.Run("invalid token frame — close 4001", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+
+		if err := wsjson.Write(ctx, conn, wsAuthFrame{Type: "auth", Token: "not-a-valid-token"}); err != nil {
+			t.Fatalf("write invalid auth frame: %v", err)
+		}
+
+		var m struct{ Type string }
+		if err := wsjson.Read(ctx, conn, &m); err == nil {
+			t.Fatal("expected server to close on bad token; got a message")
+		}
+		var closeErr websocket.CloseError
+		if !isCloseError(err, &closeErr) {
+			t.Logf("connection closed (non-CloseError is also acceptable): %v", err)
+		} else if closeErr.Code != websocket.StatusCode(4001) {
+			t.Errorf("expected close code 4001, got %d: %s", closeErr.Code, closeErr.Reason)
+		}
+	})
+
+	t.Run("query param token no longer accepted — close 4001", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+
+		token, err := tokens.Issue(1, "operator", auth.RoleOperator)
+		if err != nil {
+			t.Fatalf("issue token: %v", err)
+		}
+
+		// Old mechanism: connect and send NO auth frame — should be closed 4001.
+		conn, _, err := websocket.Dial(ctx, wsURL+"&token="+token, nil)
+		if err != nil {
+			// If the upgrade itself fails, that's also an acceptable security outcome.
+			t.Logf("upgrade rejected (old ?token= mechanism): %v", err)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+
+		// If upgrade succeeded, the server must close with 4001 (no frame sent).
+		var m struct{ Type string }
+		if err := wsjson.Read(ctx, conn, &m); err == nil {
+			t.Fatal("expected server to close the connection; got a message instead")
+		}
+		var closeErr websocket.CloseError
+		if !isCloseError(err, &closeErr) {
+			t.Logf("connection closed (non-CloseError is also acceptable): %v", err)
+		} else if closeErr.Code != websocket.StatusCode(4001) {
+			t.Errorf("expected close code 4001, got %d: %s", closeErr.Code, closeErr.Reason)
+		}
+	})
+}
+
+// TestServer_TagsWebSocket_CrossOriginRejected verifies R71-2:
+// when AllowedOrigins is nil the server rejects cross-origin upgrade requests.
+func TestServer_TagsWebSocket_CrossOriginRejected(t *testing.T) {
 	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
 	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{AuthTokens: tokens})
 	defer stop()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags?plc=packaging&tag=Speed"
-	_, resp, err := websocket.Dial(ctx, wsURL, nil)
+
+	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags"
+	_, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"http://attacker.example.com"}},
+	})
 	if err == nil {
-		t.Fatal("expected websocket dial without token to fail")
+		t.Fatal("expected cross-origin WS upgrade to fail; it succeeded")
 	}
-	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
-		got := 0
-		if resp != nil {
-			got = resp.StatusCode
-		}
-		t.Fatalf("expected 401 response, got %d (err=%v)", got, err)
+	// Acceptable: any non-101 response or a connection error.
+	if resp != nil && resp.StatusCode == http.StatusSwitchingProtocols {
+		t.Errorf("expected non-101 response for cross-origin; got 101")
 	}
+	t.Logf("cross-origin rejected as expected: status=%v err=%v",
+		func() int {
+			if resp != nil {
+				return resp.StatusCode
+			}
+			return 0
+		}(), err)
+}
+
+// TestServer_TagsWebSocket_AllowedOriginAccepted verifies R71-2:
+// when AllowedOrigins contains "localhost:5173" that origin is accepted.
+func TestServer_TagsWebSocket_AllowedOriginAccepted(t *testing.T) {
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, baseURL, stop := startAPITestServerWithOptsAndCfgFn(t, &snapshotPLCManager{}, Opts{AuthTokens: tokens}, func(cfg *config.Config) {
+		cfg.Server.AllowedOrigins = []string{"localhost:5173"}
+	})
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + baseURL[len("http"):] + "/api/ws/tags"
 
 	token, err := tokens.Issue(1, "operator", auth.RoleOperator)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
-	conn, _, err := websocket.Dial(ctx, wsURL+"&token="+token, nil)
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"http://localhost:5173"}},
+	})
 	if err != nil {
-		t.Fatalf("dial websocket with token: %v", err)
+		t.Fatalf("expected allowed-origin upgrade to succeed: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
 
+	// Complete the auth handshake.
+	if err := wsjson.Write(ctx, conn, wsAuthFrame{Type: "auth", Token: token}); err != nil {
+		t.Fatalf("write auth frame: %v", err)
+	}
 	var ack struct {
 		Type string `json:"type"`
 	}
 	if err := wsjson.Read(ctx, conn, &ack); err != nil {
-		t.Fatalf("read subscription ack: %v", err)
+		t.Fatalf("read auth_ok: %v", err)
 	}
-	if ack.Type != "subscribed" {
-		t.Fatalf("unexpected subscription ack: %#v", ack)
+	if ack.Type != "auth_ok" {
+		t.Fatalf("expected auth_ok, got %q", ack.Type)
 	}
 }
 
@@ -260,6 +423,28 @@ func TestServer_TagsWebSocketSupportsSubscribeUnsubscribeAndPing(t *testing.T) {
 	}
 }
 
+// isCloseError checks whether err is a websocket.CloseError and populates out.
+// coder/websocket surfaces CloseError directly on the error value.
+func isCloseError(err error, out *websocket.CloseError) bool {
+	if err == nil {
+		return false
+	}
+	type unwrapper interface{ Unwrap() error }
+	cur := err
+	for cur != nil {
+		if ce, ok := cur.(websocket.CloseError); ok {
+			*out = ce
+			return true
+		}
+		u, ok := cur.(unwrapper)
+		if !ok {
+			return false
+		}
+		cur = u.Unwrap()
+	}
+	return false
+}
+
 func startAPITestServer(t *testing.T, mgr PLCManager) (*Server, string, func()) {
 	t.Helper()
 	return startAPITestServerWithOpts(t, mgr, Opts{})
@@ -267,9 +452,17 @@ func startAPITestServer(t *testing.T, mgr PLCManager) (*Server, string, func()) 
 
 func startAPITestServerWithOpts(t *testing.T, mgr PLCManager, opts Opts) (*Server, string, func()) {
 	t.Helper()
+	return startAPITestServerWithOptsAndCfgFn(t, mgr, opts, nil)
+}
+
+func startAPITestServerWithOptsAndCfgFn(t *testing.T, mgr PLCManager, opts Opts, cfgFn func(*config.Config)) (*Server, string, func()) {
+	t.Helper()
 	cfg := testutil.MinimalConfig(t)
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 	cfg.PLCs = []config.PLC{{Name: "packaging", Tags: []config.TagDef{{Name: "Speed", Type: "Float"}}}}
+	if cfgFn != nil {
+		cfgFn(cfg)
+	}
 	logger := testutil.NewLogger(t)
 	opts.PLCMgr = mgr
 	srv := New(cfg, logger, nil, opts)

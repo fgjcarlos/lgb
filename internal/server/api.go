@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -222,16 +221,45 @@ func (s *Server) handleCurrentTags(w http.ResponseWriter, r *http.Request) {
 	}{Data: rows[start:end], Pagination: paginationResponse{Limit: limit, Offset: offset, Count: count}})
 }
 
-func (s *Server) handleTagsWebSocket(w http.ResponseWriter, r *http.Request) {
-	if s.authTokens != nil && !s.authorizeAPIRequest(w, r) {
-		return
-	}
+// wsAuthFrame is the first message the client must send after a WS upgrade
+// when authentication is enabled. The server reads it with a 5-second deadline;
+// on success it replies with {"type":"auth_ok"} before registering the
+// subscriber. Invalid/missing/timeout → close 4001.
+type wsAuthFrame struct {
+	Type  string `json:"type"`
+	Token string `json:"token"`
+}
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+func (s *Server) handleTagsWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: s.cfg.Server.AllowedOrigins,
+	})
 	if err != nil {
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	// When authentication is enabled, the client must send an auth frame as the
+	// very first message before any tag data is streamed. (R71-3)
+	if s.authTokens != nil {
+		authCtx, authCancel := context.WithTimeout(r.Context(), 5*time.Second)
+		var frame wsAuthFrame
+		readErr := wsjson.Read(authCtx, conn, &frame)
+		authCancel()
+		if readErr != nil || frame.Type != "auth" || frame.Token == "" {
+			_ = conn.Close(websocket.StatusCode(4001), "auth failed")
+			return
+		}
+		if _, err := s.authTokens.Validate(frame.Token); err != nil {
+			_ = conn.Close(websocket.StatusCode(4001), "auth failed")
+			return
+		}
+		if err := wsjson.Write(r.Context(), conn, struct {
+			Type string `json:"type"`
+		}{Type: "auth_ok"}); err != nil {
+			return
+		}
+	}
 
 	sub := &tagSubscriber{ch: make(chan plc.TagUpdate, 16)}
 	sub.setFilter(r.URL.Query().Get("plc"), r.URL.Query().Get("tag"))
@@ -344,27 +372,6 @@ type tagWSClientMessage struct {
 	Type string `json:"type"`
 	PLC  string `json:"plc,omitempty"`
 	Tag  string `json:"tag,omitempty"`
-}
-
-func (s *Server) authorizeAPIRequest(w http.ResponseWriter, r *http.Request) bool {
-	token := extractBearerOrQueryToken(r)
-	if token == "" {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing authorization token")
-		return false
-	}
-	if _, err := s.authTokens.Validate(token); err != nil {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
-		return false
-	}
-	return true
-}
-
-func extractBearerOrQueryToken(r *http.Request) string {
-	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	}
-	return r.URL.Query().Get("token")
 }
 
 func parsePagination(w http.ResponseWriter, r *http.Request) (limit int, offset int, ok bool) {

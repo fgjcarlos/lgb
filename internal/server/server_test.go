@@ -684,9 +684,18 @@ func TestPlaintextStartupWarnLogged(t *testing.T) {
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
 	cfg.Server.TLSEnabled = false // plaintext path
 
-	// Capture log output into a buffer via a text handler.
-	var buf strings.Builder
-	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	// safeBuffer wraps strings.Builder with a mutex so concurrent writes from the
+	// server goroutine and reads from the test goroutine don't race.
+	type safeBuffer struct {
+		mu sync.Mutex
+		sb strings.Builder
+	}
+	var safeBuf safeBuffer
+	handler := slog.NewTextHandler(writerFunc(func(p []byte) (int, error) {
+		safeBuf.mu.Lock()
+		defer safeBuf.mu.Unlock()
+		return safeBuf.sb.Write(p)
+	}), &slog.HandlerOptions{Level: slog.LevelDebug})
 	logger := slog.New(handler)
 
 	srv := New(cfg, logger, nil, Opts{})
@@ -705,9 +714,10 @@ func TestPlaintextStartupWarnLogged(t *testing.T) {
 		t.Fatal("server did not bind within timeout")
 	}
 
-	// The WARN is emitted synchronously in Run() before the serve goroutine starts,
-	// so once Addr() returns the buffer already contains the log record.
-	logged := buf.String()
+	safeBuf.mu.Lock()
+	logged := safeBuf.sb.String()
+	safeBuf.mu.Unlock()
+
 	if !strings.Contains(logged, "WARN") || !strings.Contains(logged, "TLS") {
 		t.Errorf("expected a WARN log record mentioning 'TLS' on plaintext startup, got:\n%s", logged)
 	}
@@ -715,6 +725,11 @@ func TestPlaintextStartupWarnLogged(t *testing.T) {
 	cancel()
 	<-errCh
 }
+
+// writerFunc adapts a func([]byte)(int,error) to io.Writer for use with slog handlers in tests.
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 // TestRunFailsFastOnMissingTLSCert asserts that Run() returns a descriptive error
 // immediately when TLSEnabled=true but TLSCertFile or TLSKeyFile is empty, even

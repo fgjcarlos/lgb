@@ -21,9 +21,13 @@ When TLS is on, set `LGB_SERVER_ALLOWEDORIGINS` to `https://` prefixes only:
 LGB_SERVER_ALLOWEDORIGINS=https://your-dashboard.example.com
 ```
 
+Using `http://` patterns when the server serves `wss://` will cause WebSocket origin
+checks to fail — every upgrade will be rejected.
+
 LGB enforces a fail-fast gate: if `tlsEnabled: true` but either cert or key file is
-empty, the server exits before binding the socket. See
-[docs/deployment.md](docs/deployment.md) for the full TLS setup guide.
+empty, the server exits before binding the socket. For certificate sources (Let's
+Encrypt, internal CA, self-signed for dev) and full setup steps, see
+[docs/deployment.md](docs/deployment.md).
 
 ## OPC UA Certificates
 

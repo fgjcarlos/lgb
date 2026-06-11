@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -671,6 +672,48 @@ func TestBuildHTTPServerPlaintext(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Error("server did not shut down within 3s")
 	}
+}
+
+// TestPlaintextStartupWarnLogged asserts that Run() emits a WARN-level log record
+// containing "TLS" when TLSEnabled=false (plaintext path). This covers the R72
+// spec requirement that operators are notified when TLS is off (W2).
+func TestPlaintextStartupWarnLogged(t *testing.T) {
+	t.Parallel()
+
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = "127.0.0.1:0"
+	cfg.Server.TLSEnabled = false // plaintext path
+
+	// Capture log output into a buffer via a text handler.
+	var buf strings.Builder
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(handler)
+
+	srv := New(cfg, logger, nil, Opts{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Run(ctx)
+	}()
+
+	// Wait for the server to bind — the WARN is emitted before bind completes.
+	addr := srv.Addr()
+	if addr == "" {
+		t.Fatal("server did not bind within timeout")
+	}
+
+	// The WARN is emitted synchronously in Run() before the serve goroutine starts,
+	// so once Addr() returns the buffer already contains the log record.
+	logged := buf.String()
+	if !strings.Contains(logged, "WARN") || !strings.Contains(logged, "TLS") {
+		t.Errorf("expected a WARN log record mentioning 'TLS' on plaintext startup, got:\n%s", logged)
+	}
+
+	cancel()
+	<-errCh
 }
 
 // TestRunFailsFastOnMissingTLSCert asserts that Run() returns a descriptive error

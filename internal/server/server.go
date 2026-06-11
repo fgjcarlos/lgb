@@ -190,6 +190,50 @@ func (s *Server) Addr() string {
 	return ""
 }
 
+// Default HTTP server timeout values (R75-1). These apply when the
+// corresponding config field is empty string (e.g. MinimalConfig in tests).
+const (
+	defaultReadHeaderTimeout = 5 * time.Second
+	defaultReadTimeout       = 30 * time.Second
+	// defaultWriteTimeout is intentionally longer than a typical HTTP response
+	// because WebSocket connections are hijacked before WriteTimeout fires —
+	// once hijacked, http.Server no longer enforces WriteTimeout on that
+	// connection (Go stdlib guarantee, R75-5). So this only bounds non-WS
+	// responses which should always complete well within 60 s.
+	defaultWriteTimeout = 60 * time.Second
+	defaultIdleTimeout  = 120 * time.Second
+)
+
+// buildHTTPServer constructs the *http.Server with all four timeout fields set
+// from config (R75-1). When a field is empty string, the compiled-in default
+// constant is used — this is LOAD-BEARING: MinimalConfig leaves these fields
+// empty, so the fallback prevents zero timeouts in all existing server tests.
+//
+// The returned server's Handler is securityHeadersMiddleware(mux) so that
+// every response carries the required security headers (R75-2).
+func (s *Server) buildHTTPServer(mux *http.ServeMux) *http.Server {
+	parseDur := func(val string, def time.Duration) time.Duration {
+		if val == "" {
+			return def
+		}
+		if d, err := time.ParseDuration(val); err == nil && d > 0 {
+			return d
+		}
+		return def
+	}
+
+	return &http.Server{
+		Handler:           securityHeadersMiddleware(mux),
+		ReadHeaderTimeout: parseDur(s.cfg.Server.ReadHeaderTimeout, defaultReadHeaderTimeout),
+		ReadTimeout:       parseDur(s.cfg.Server.ReadTimeout, defaultReadTimeout),
+		// WriteTimeout does NOT close hijacked WebSocket connections — once the
+		// HTTP layer calls conn.Hijack(), http.Server stops enforcing timeouts on
+		// that connection entirely. (R75-5 guarantee, Go stdlib net/http design.)
+		WriteTimeout: parseDur(s.cfg.Server.WriteTimeout, defaultWriteTimeout),
+		IdleTimeout:  parseDur(s.cfg.Server.IdleTimeout, defaultIdleTimeout),
+	}
+}
+
 // Run binds the configured address, mounts routes, serves until ctx is
 // cancelled, then calls httpx.Shutdown. Returns nil on clean shutdown.
 //
@@ -235,7 +279,11 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	srv := &http.Server{Handler: mux}
+	// PR1 stub: warn when running without TLS (PR2 will move this into the
+	// non-TLS branch once the TLS ServeTLS path is implemented).
+	s.log.Warn("server running WITHOUT TLS — plaintext HTTP", "addr", s.cfg.Server.HTTPAddr)
+
+	srv := s.buildHTTPServer(mux)
 
 	// Start Sparkplug node FIRST (connects MQTT, registers Will). (design §9)
 	if s.spNode != nil {

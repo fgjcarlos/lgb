@@ -918,6 +918,40 @@ func TestServerAllowedOriginsValidateNilIsOK(t *testing.T) {
 	}
 }
 
+// ─── R75-1: HTTP server timeout fields ─────────────────────────────────────
+
+// TestServerTimeouts_InvalidDuration asserts R75-1c: an unparseable duration
+// string in a timeout field is reported as a Validate() violation.
+func TestServerTimeouts_InvalidDuration(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.ReadTimeout = "not-a-duration"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil for invalid ReadTimeout; want error")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ReadTimeout") {
+		t.Errorf("error message does not mention ReadTimeout; got %v", err.Error())
+	}
+}
+
+// TestValidateDefaultsApplyWhenEmpty asserts R75-1a: a Config built from
+// MinimalConfig (all timeout strings empty) passes Validate() without error.
+// The empty-string → default fallback happens in buildHTTPServer, not Validate.
+func TestValidateDefaultsApplyWhenEmpty(t *testing.T) {
+	cfg := validConfig(t)
+	// Timeout fields intentionally empty — must not be a Validate violation.
+	cfg.Server.ReadHeaderTimeout = ""
+	cfg.Server.ReadTimeout = ""
+	cfg.Server.WriteTimeout = ""
+	cfg.Server.IdleTimeout = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() returned error on empty timeout strings: %v", err)
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()

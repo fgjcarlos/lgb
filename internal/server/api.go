@@ -75,13 +75,12 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	}
 
 	// Historian query endpoint — viewer+.
-	if s.histStore != nil {
-		if s.authTokens != nil {
-			mux.Handle("GET /api/historian/query",
-				withMiddleware(http.HandlerFunc(s.handleHistorianQuery), authMiddleware(s.authTokens)))
-		} else {
-			mux.HandleFunc("GET /api/historian/query", s.handleHistorianQuery)
-		}
+	// Auth is applied whenever authTokens != nil, regardless of histStore
+	// nil-ness. The handler itself guards nil histStore and returns 503.
+	// This mirrors the doctor/mappings pattern (R75-4).
+	if s.authTokens != nil {
+		mux.Handle("GET /api/historian/query",
+			withMiddleware(http.HandlerFunc(s.handleHistorianQuery), authMiddleware(s.authTokens)))
 	} else {
 		mux.HandleFunc("GET /api/historian/query", s.handleHistorianQuery)
 	}

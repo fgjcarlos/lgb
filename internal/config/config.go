@@ -84,6 +84,15 @@ type ServerSection struct {
 	// (comma-separated) or the server.allowedOrigins YAML field.
 	// R71-2: origin enforcement.
 	AllowedOrigins []string `koanf:"allowedOrigins"`
+
+	// HTTP server timeouts (R75-1). Duration strings following Go time.ParseDuration
+	// format (e.g. "5s", "30s"). Empty string uses the compiled-in default.
+	// Defaults (applied in loader.go): ReadHeaderTimeout=5s, ReadTimeout=30s,
+	// WriteTimeout=60s, IdleTimeout=120s.
+	ReadHeaderTimeout string `koanf:"readHeaderTimeout"`
+	ReadTimeout       string `koanf:"readTimeout"`
+	WriteTimeout      string `koanf:"writeTimeout"`
+	IdleTimeout       string `koanf:"idleTimeout"`
 }
 
 // AuthSection holds authentication settings.
@@ -174,6 +183,22 @@ func (c *Config) Validate() error {
 	for i, origin := range c.Server.AllowedOrigins {
 		if origin == "" {
 			violations = append(violations, errorf("server.allowedOrigins[%d]: entry must not be empty: %w", i, ErrConfigInvalid))
+		}
+	}
+
+	// server timeout fields: when non-empty, must parse as positive Go durations (R75-1).
+	for _, td := range []struct{ name, val string }{
+		{"ReadHeaderTimeout", c.Server.ReadHeaderTimeout},
+		{"ReadTimeout", c.Server.ReadTimeout},
+		{"WriteTimeout", c.Server.WriteTimeout},
+		{"IdleTimeout", c.Server.IdleTimeout},
+	} {
+		if td.val != "" {
+			if d, err := time.ParseDuration(td.val); err != nil {
+				violations = append(violations, errorf("server.%s: %q is not a valid Go duration: %w", td.name, td.val, ErrConfigInvalid))
+			} else if d <= 0 {
+				violations = append(violations, errorf("server.%s: must be positive, got %q: %w", td.name, td.val, ErrConfigInvalid))
+			}
 		}
 	}
 

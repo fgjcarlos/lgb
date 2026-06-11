@@ -165,6 +165,97 @@ func TestCurrentTagsAuth_NilTokenServiceAllowsAccess(t *testing.T) {
 	}
 }
 
+// ─── R75-2: Security headers on API responses ───────────────────────────────
+
+// TestSecurityHeadersOnAPI asserts R75-2a: all four required security headers
+// are present on an API response, and X-XSS-Protection is absent (R75-2c).
+func TestSecurityHeadersOnAPI(t *testing.T) {
+	_, baseURL, stop := startAPITestServerWithOptsAndCfgFn(t, &snapshotPLCManager{}, Opts{}, nil)
+	defer stop()
+
+	resp, err := http.Get(baseURL + "/api/doctor")
+	if err != nil {
+		t.Fatalf("GET /api/doctor: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertSecurityHeaders(t, resp)
+
+	// R75-2c: X-XSS-Protection MUST NOT be set (deprecated, introduces IE vulns).
+	if v := resp.Header.Get("X-XSS-Protection"); v != "" {
+		t.Errorf("X-XSS-Protection must not be present, got %q", v)
+	}
+}
+
+// ─── R75-4: Historian auth flatten ──────────────────────────────────────────
+
+// TestHistorianAuthFlat asserts R75-4: historian route enforces auth whenever
+// authTokens != nil, regardless of histStore nil-ness.
+func TestHistorianAuthFlat(t *testing.T) {
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+
+	tests := []struct {
+		name       string
+		histStore  bool // true = real store; false = nil
+		withToken  bool
+		wantStatus int
+	}{
+		// R75-4a: no token + histStore nil → 401 (not 503)
+		{name: "no_token_nil_store", histStore: false, withToken: false, wantStatus: http.StatusUnauthorized},
+		// R75-4b: valid token + histStore nil → 503 (historian not configured)
+		{name: "valid_token_nil_store", histStore: false, withToken: true, wantStatus: http.StatusServiceUnavailable},
+		// R75-4c: no token + histStore set → 401
+		{name: "no_token_real_store", histStore: true, withToken: false, wantStatus: http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			opts := Opts{AuthTokens: tokens}
+			_, baseURL, stop := startAPITestServerWithOptsAndCfgFn(
+				t, &snapshotPLCManager{}, opts, nil)
+			defer stop()
+
+			req, _ := http.NewRequest(http.MethodGet, baseURL+"/api/historian/query?tag=Speed", nil)
+			if tt.withToken {
+				tok, err := tokens.Issue(1, "viewer1", auth.RoleViewer)
+				if err != nil {
+					t.Fatalf("issue token: %v", err)
+				}
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("GET historian/query: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("expected %d, got %d", tt.wantStatus, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// assertSecurityHeaders checks the four required headers (R75-2a).
+func assertSecurityHeaders(t *testing.T, resp *http.Response) {
+	t.Helper()
+	const wantCSP = "default-src 'self'; script-src 'self'; style-src 'self'; " +
+		"img-src 'self' data:; connect-src 'self' ws: wss:; " +
+		"font-src 'self'; object-src 'none'; frame-ancestors 'none'"
+
+	checks := []struct{ header, want string }{
+		{"X-Content-Type-Options", "nosniff"},
+		{"X-Frame-Options", "DENY"},
+		{"Referrer-Policy", "strict-origin-when-cross-origin"},
+		{"Content-Security-Policy", wantCSP},
+	}
+	for _, c := range checks {
+		if got := resp.Header.Get(c.header); got != c.want {
+			t.Errorf("header %q = %q; want %q", c.header, got, c.want)
+		}
+	}
+}
+
 // TestWithMiddleware_MiddlewareCanShortCircuit verifies that a middleware can
 // reject a request without calling the inner handler (e.g., auth check).
 func TestWithMiddleware_MiddlewareCanShortCircuit(t *testing.T) {

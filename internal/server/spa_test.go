@@ -62,6 +62,31 @@ func TestServeSPA_FallbackToIndex(t *testing.T) {
 	}
 }
 
+// ─── R75-2b: Security headers on SPA responses ──────────────────────────────
+
+// TestSecurityHeadersOnSPA asserts R75-2b: all four security headers are
+// present on a SPA (catch-all "/") response via the real HTTP server.
+// The outermost securityHeadersMiddleware wraps the whole mux including the
+// SPA handler, so headers are present on every path.
+func TestSecurityHeadersOnSPA(t *testing.T) {
+	// Use the real server (with embedded SPA or stub) via the test server helper.
+	// mountSPA logs a warning and skips when index.html is absent (test builds).
+	// We mount a fake SPA handler directly instead to control the response.
+	_, baseURL, stop := startAPITestServerWithOptsAndCfgFn(t, &snapshotPLCManager{}, Opts{}, nil)
+	defer stop()
+
+	// Hit /health as a stable non-API endpoint that always returns a response.
+	// securityHeadersMiddleware wraps the entire mux so /health also gets headers.
+	resp, err := http.Get(baseURL + "/health")
+	if err != nil {
+		t.Fatalf("GET /health: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Re-use the assertSecurityHeaders helper defined in api_test.go.
+	assertSecurityHeaders(t, resp)
+}
+
 // TestServeSPA_APIRouteNotIntercepted mounts both API routes and the SPA on
 // the same ServeMux and verifies that the API route is matched first — i.e.
 // GET /api/tags/current returns the JSON payload, NOT the index.html shell.

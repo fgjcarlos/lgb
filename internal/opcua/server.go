@@ -2,6 +2,8 @@ package opcua
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -67,22 +69,10 @@ func (s *Server) Start(ctx context.Context) error {
 		port = 4840
 	}
 
-	opts := []opcserver.Option{
-		opcserver.EndPoint(host, port),
-		opcserver.EnableSecurity("None", ua.MessageSecurityModeNone),
-		opcserver.EnableAuthMode(ua.UserTokenTypeAnonymous),
-		opcserver.ServerName("LGB OPC UA Server"),
+	srv, err := newOPCUAServer(s.cfg, host, port)
+	if err != nil {
+		return err
 	}
-
-	if s.cfg.OPCUA.SecurityMode == "Sign" || s.cfg.OPCUA.SecurityMode == "SignAndEncrypt" {
-		mode := ua.MessageSecurityModeSign
-		if s.cfg.OPCUA.SecurityMode == "SignAndEncrypt" {
-			mode = ua.MessageSecurityModeSignAndEncrypt
-		}
-		opts = append(opts, opcserver.EnableSecurity("Basic256Sha256", mode))
-	}
-
-	srv := opcserver.New(opts...)
 	s.srv = srv
 
 	s.populateAddressSpace()
@@ -97,7 +87,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go s.refreshLoop(ctx)
 
-	err := srv.Start(ctx)
+	err = srv.Start(ctx)
 
 	s.mu.Lock()
 	s.running = false
@@ -107,6 +97,64 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("opcua: start: %w", err)
 	}
 	return nil
+}
+
+func newOPCUAServer(cfg *config.Config, host string, port int) (*opcserver.Server, error) {
+	opts, err := serverOptions(cfg, host, port)
+	if err != nil {
+		return nil, err
+	}
+	return opcserver.New(opts...), nil
+}
+
+func serverOptions(cfg *config.Config, host string, port int) ([]opcserver.Option, error) {
+	opts := []opcserver.Option{
+		opcserver.EndPoint(host, port),
+		opcserver.EnableAuthMode(ua.UserTokenTypeAnonymous),
+		opcserver.ServerName("LGB OPC UA Server"),
+	}
+
+	switch cfg.OPCUA.SecurityMode {
+	case "None":
+		opts = append(opts, opcserver.EnableSecurity("None", ua.MessageSecurityModeNone))
+	case "Sign", "SignAndEncrypt":
+		cert, key, err := loadCertificate(cfg.OPCUA.CertFile, cfg.OPCUA.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+
+		mode := ua.MessageSecurityModeSign
+		if cfg.OPCUA.SecurityMode == "SignAndEncrypt" {
+			mode = ua.MessageSecurityModeSignAndEncrypt
+		}
+
+		opts = append(opts,
+			opcserver.Certificate(cert),
+			opcserver.PrivateKey(key),
+			opcserver.EnableSecurity("Basic256Sha256", mode),
+		)
+	default:
+		return nil, fmt.Errorf("opcua: securityMode must be one of None, Sign, or SignAndEncrypt, got %q", cfg.OPCUA.SecurityMode)
+	}
+
+	return opts, nil
+}
+
+func loadCertificate(certFile, keyFile string) ([]byte, *rsa.PrivateKey, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opcua: load certificate: %w", err)
+	}
+	if len(cert.Certificate) == 0 {
+		return nil, nil, fmt.Errorf("opcua: load certificate: no certificate data in %q", certFile)
+	}
+
+	key, ok := cert.PrivateKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("opcua: private key must be RSA for Basic256Sha256")
+	}
+
+	return cert.Certificate[0], key, nil
 }
 
 // Stop gracefully shuts down the OPC UA server.

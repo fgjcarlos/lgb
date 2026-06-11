@@ -6,6 +6,8 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,5 +104,43 @@ func TestConfigValidate_JSONInvalid(t *testing.T) {
 	}
 	if len(out.Errors) == 0 {
 		t.Error("expected errors array to be non-empty")
+	}
+}
+
+func TestConfigValidate_OPCUASecureModeChecksCertKeyPaths(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "lgb.yaml")
+	yaml := []byte(`
+gateway:
+  id: "lgb-test"
+  logLevel: "info"
+  logFormat: "json"
+server:
+  httpAddr: ":8080"
+auth:
+  sessionTTL: "8h"
+mqtt:
+  qos: 1
+  keepAlive: "30s"
+opcua:
+  enabled: true
+  securityMode: "Sign"
+  certFile: "missing.crt"
+  keyFile: "missing.key"
+`)
+	if err := os.WriteFile(cfgPath, yaml, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := runConfigValidateTo(&Deps{ConfigPath: cfgPath}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected error for OPC UA secure mode with missing cert/key paths")
+	}
+
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "opcua.certFile") || !strings.Contains(combined, "opcua.keyFile") {
+		t.Errorf("expected output to mention OPC UA cert/key path errors, got stdout=%q stderr=%q", stdout, stderr)
 	}
 }

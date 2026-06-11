@@ -25,6 +25,38 @@ LGB enforces a fail-fast gate: if `tlsEnabled: true` but either cert or key file
 empty, the server exits before binding the socket. See
 [docs/deployment.md](docs/deployment.md) for the full TLS setup guide.
 
+## OPC UA Certificates
+
+`opcua.securityMode: None` is an explicit insecure opt-in. For networked
+deployments, use `Sign` or `SignAndEncrypt` and provide an RSA certificate/key
+pair. Secure OPC UA modes fail fast when either path is empty or missing.
+
+Example self-signed certificate for local testing:
+
+```bash
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout opcua-server.key \
+  -out opcua-server.crt \
+  -days 365 \
+  -subj "/CN=lgb-opcua"
+```
+
+Then configure LGB:
+
+```yaml
+opcua:
+  enabled: true
+  host: "0.0.0.0"
+  port: 4840
+  securityMode: "SignAndEncrypt"
+  certFile: "/path/to/opcua-server.crt"
+  keyFile: "/path/to/opcua-server.key"
+```
+
+Use certificates issued by your site CA in production and distribute trust to OPC
+UA clients according to your plant's trust-list process. Keep the private key
+readable only by the LGB process user.
+
 ## Reporting a vulnerability
 
 Please do not open a public GitHub issue for security vulnerabilities.

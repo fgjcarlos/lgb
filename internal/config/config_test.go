@@ -1016,6 +1016,73 @@ func TestTLSDisabledWithEmptyCertKeyPassesValidate(t *testing.T) {
 	}
 }
 
+func TestOPCUASecureModeRequiresExistingCertAndKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.OPCUA.Enabled = true
+	cfg.OPCUA.SecurityMode = "Sign"
+	cfg.OPCUA.CertFile = filepath.Join(t.TempDir(), "missing.crt")
+	cfg.OPCUA.KeyFile = filepath.Join(t.TempDir(), "missing.key")
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil when OPC UA secure mode references missing cert/key; want error")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "opcua.certFile") || !strings.Contains(err.Error(), "opcua.keyFile") {
+		t.Errorf("error message does not mention both OPC UA cert/key fields; got %v", err)
+	}
+}
+
+func TestOPCUASecureModeWithExistingCertAndKeyPassesValidate(t *testing.T) {
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "opcua.crt")
+	keyFile := filepath.Join(dir, "opcua.key")
+	if err := os.WriteFile(certFile, []byte("cert"), 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, []byte("key"), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	cfg := validConfig(t)
+	cfg.OPCUA.Enabled = true
+	cfg.OPCUA.SecurityMode = "SignAndEncrypt"
+	cfg.OPCUA.CertFile = certFile
+	cfg.OPCUA.KeyFile = keyFile
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() returned error on OPC UA secure mode with existing cert/key paths: %v", err)
+	}
+}
+
+func TestOPCUAEnabledRequiresExplicitSecurityMode(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.OPCUA.Enabled = true
+	cfg.OPCUA.SecurityMode = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil when OPC UA enabled without explicit securityMode; want error")
+	}
+	if !strings.Contains(err.Error(), "opcua.securityMode") {
+		t.Errorf("error message does not mention opcua.securityMode; got %v", err)
+	}
+}
+
+func TestOPCUANoneModeAllowsEmptyCertAndKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.OPCUA.Enabled = true
+	cfg.OPCUA.SecurityMode = "None"
+	cfg.OPCUA.CertFile = ""
+	cfg.OPCUA.KeyFile = ""
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() returned error for explicit OPC UA None mode with empty cert/key: %v", err)
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()

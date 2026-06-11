@@ -17,6 +17,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"time"
 
@@ -75,15 +76,15 @@ type GatewaySection struct {
 
 // ServerSection holds HTTP server settings.
 type ServerSection struct {
-	HTTPAddr        string   `koanf:"httpAddr"`
-	TLSEnabled      bool     `koanf:"tlsEnabled"`
+	HTTPAddr   string `koanf:"httpAddr"`
+	TLSEnabled bool   `koanf:"tlsEnabled"`
 	// TLSCertFile and TLSKeyFile are the paths to the TLS certificate and private
 	// key files. Both must be non-empty when TLSEnabled is true (R72-1 fail-fast
 	// gate). When TLSEnabled is false, these fields are ignored.
 	// Set via LGB_SERVER_TLSCERTFILE and LGB_SERVER_TLSKEYFILE or the YAML fields.
-	TLSCertFile     string   `koanf:"tlsCertFile"`
-	TLSKeyFile      string   `koanf:"tlsKeyFile"`
-	ShutdownTimeout string   `koanf:"shutdownTimeout"`
+	TLSCertFile     string `koanf:"tlsCertFile"`
+	TLSKeyFile      string `koanf:"tlsKeyFile"`
+	ShutdownTimeout string `koanf:"shutdownTimeout"`
 	// AllowedOrigins is the list of origins permitted to upgrade WebSocket
 	// connections. When nil or empty the server allows same-origin only
 	// (coder/websocket default). Set via LGB_SERVER_ALLOWEDORIGINS
@@ -153,7 +154,7 @@ type PLC struct {
 type TagDef struct {
 	Name        string `koanf:"name"`
 	Type        string `koanf:"type"`
-	Writable    bool   `koanf:"writable"`    // PCS-CFG-5.1 — engineering master switch for writes
+	Writable    bool   `koanf:"writable"`     // PCS-CFG-5.1 — engineering master switch for writes
 	DCMDEnabled bool   `koanf:"dcmd_enabled"` // PCS-CFG-5.2 — per-tag DCMD opt-in; false by default
 }
 
@@ -199,6 +200,26 @@ func (c *Config) Validate() error {
 	for i, origin := range c.Server.AllowedOrigins {
 		if origin == "" {
 			violations = append(violations, errorf("server.allowedOrigins[%d]: entry must not be empty: %w", i, ErrConfigInvalid))
+		}
+	}
+
+	if c.OPCUA.Enabled {
+		switch c.OPCUA.SecurityMode {
+		case "None":
+			// Explicit opt-in to an insecure endpoint.
+		case "Sign", "SignAndEncrypt":
+			if c.OPCUA.CertFile == "" {
+				violations = append(violations, errorf("opcua.certFile: must not be empty when opcua.securityMode is %q: %w", c.OPCUA.SecurityMode, ErrConfigInvalid))
+			} else if err := requireReadableFile(c.OPCUA.CertFile); err != nil {
+				violations = append(violations, errorf("opcua.certFile: %s: %w", err, ErrConfigInvalid))
+			}
+			if c.OPCUA.KeyFile == "" {
+				violations = append(violations, errorf("opcua.keyFile: must not be empty when opcua.securityMode is %q: %w", c.OPCUA.SecurityMode, ErrConfigInvalid))
+			} else if err := requireReadableFile(c.OPCUA.KeyFile); err != nil {
+				violations = append(violations, errorf("opcua.keyFile: %s: %w", err, ErrConfigInvalid))
+			}
+		default:
+			violations = append(violations, errorf("opcua.securityMode: %q is not one of None|Sign|SignAndEncrypt: %w", c.OPCUA.SecurityMode, ErrConfigInvalid))
 		}
 	}
 
@@ -274,6 +295,17 @@ func (c *Config) Validate() error {
 	}
 
 	return errs.Join(violations...)
+}
+
+func requireReadableFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return errorf("%q is a directory", path)
+	}
+	return nil
 }
 
 var sparkplugScalarTypes = map[string]bool{

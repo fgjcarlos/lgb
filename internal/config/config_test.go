@@ -952,6 +952,70 @@ func TestValidateDefaultsApplyWhenEmpty(t *testing.T) {
 	}
 }
 
+// ─── R72: TLS config fields ────────────────────────────────────────────────
+
+// TestTLSEnabledWithCertAndKeyPassesValidate asserts R72-1: TLSEnabled=true with
+// non-empty cert+key files passes Validate().
+func TestTLSEnabledWithCertAndKeyPassesValidate(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.TLSEnabled = true
+	cfg.Server.TLSCertFile = "/path/to/server.crt"
+	cfg.Server.TLSKeyFile = "/path/to/server.key"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() returned error on valid TLS config: %v", err)
+	}
+}
+
+// TestTLSEnabledWithoutCertFailsValidate asserts R72-1: TLSEnabled=true but
+// TLSCertFile empty → Validate() returns ErrConfigInvalid.
+func TestTLSEnabledWithoutCertFailsValidate(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.TLSEnabled = true
+	cfg.Server.TLSCertFile = ""
+	cfg.Server.TLSKeyFile = "/path/to/server.key"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil when TLSEnabled=true but TLSCertFile empty; want error")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "tlsCertFile") {
+		t.Errorf("error message does not mention tlsCertFile; got %v", err.Error())
+	}
+}
+
+// TestTLSEnabledWithoutKeyFailsValidate asserts R72-1: TLSEnabled=true but
+// TLSKeyFile empty → Validate() returns ErrConfigInvalid.
+func TestTLSEnabledWithoutKeyFailsValidate(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.TLSEnabled = true
+	cfg.Server.TLSCertFile = "/path/to/server.crt"
+	cfg.Server.TLSKeyFile = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil when TLSEnabled=true but TLSKeyFile empty; want error")
+	}
+	if !errors.Is(err, errs.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "tlsKeyFile") {
+		t.Errorf("error message does not mention tlsKeyFile; got %v", err.Error())
+	}
+}
+
+// TestTLSDisabledWithEmptyCertKeyPassesValidate asserts R72: TLSEnabled=false
+// with empty cert+key is valid — no TLS validation applies.
+func TestTLSDisabledWithEmptyCertKeyPassesValidate(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Server.TLSEnabled = false
+	cfg.Server.TLSCertFile = ""
+	cfg.Server.TLSKeyFile = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() returned error when TLSEnabled=false with empty cert/key: %v", err)
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()

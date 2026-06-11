@@ -77,6 +77,12 @@ type GatewaySection struct {
 type ServerSection struct {
 	HTTPAddr        string   `koanf:"httpAddr"`
 	TLSEnabled      bool     `koanf:"tlsEnabled"`
+	// TLSCertFile and TLSKeyFile are the paths to the TLS certificate and private
+	// key files. Both must be non-empty when TLSEnabled is true (R72-1 fail-fast
+	// gate). When TLSEnabled is false, these fields are ignored.
+	// Set via LGB_SERVER_TLSCERTFILE and LGB_SERVER_TLSKEYFILE or the YAML fields.
+	TLSCertFile     string   `koanf:"tlsCertFile"`
+	TLSKeyFile      string   `koanf:"tlsKeyFile"`
 	ShutdownTimeout string   `koanf:"shutdownTimeout"`
 	// AllowedOrigins is the list of origins permitted to upgrade WebSocket
 	// connections. When nil or empty the server allows same-origin only
@@ -177,6 +183,16 @@ func (c *Config) Validate() error {
 	// server.httpAddr must be non-empty.
 	if c.Server.HTTPAddr == "" {
 		violations = append(violations, errorf("server.httpAddr: must not be empty: %w", ErrConfigInvalid))
+	}
+
+	// server: TLS fail-fast gate (R72-1) — when TLSEnabled, both cert+key must be set.
+	if c.Server.TLSEnabled {
+		if c.Server.TLSCertFile == "" {
+			violations = append(violations, errorf("server.tlsCertFile: must not be empty when server.tlsEnabled is true: %w", ErrConfigInvalid))
+		}
+		if c.Server.TLSKeyFile == "" {
+			violations = append(violations, errorf("server.tlsKeyFile: must not be empty when server.tlsEnabled is true: %w", ErrConfigInvalid))
+		}
 	}
 
 	// server.allowedOrigins: each entry must be a non-empty string (R71-2).

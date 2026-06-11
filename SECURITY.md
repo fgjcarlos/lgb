@@ -2,6 +2,29 @@
 
 LGB is early-stage software intended for industrial environments. Please avoid using it as the only bridge between PLCs and production IIoT systems until the security model has matured. In particular, do not expose LGB to untrusted networks during early releases.
 
+## Transport Security (TLS)
+
+**Production deployments must enable TLS.** Plaintext HTTP exposes authentication
+tokens and PLC tag data to anyone on the network path.
+
+Enable TLS via environment variables or YAML:
+
+```bash
+LGB_SERVER_TLSENABLED=true
+LGB_SERVER_TLSCERTFILE=/path/to/server.crt
+LGB_SERVER_TLSKEYFILE=/path/to/server.key
+```
+
+When TLS is on, set `LGB_SERVER_ALLOWEDORIGINS` to `https://` prefixes only:
+
+```bash
+LGB_SERVER_ALLOWEDORIGINS=https://your-dashboard.example.com
+```
+
+LGB enforces a fail-fast gate: if `tlsEnabled: true` but either cert or key file is
+empty, the server exits before binding the socket. See
+[docs/deployment.md](docs/deployment.md) for the full TLS setup guide.
+
 ## Reporting a vulnerability
 
 Please do not open a public GitHub issue for security vulnerabilities.

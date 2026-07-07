@@ -1,0 +1,57 @@
+# docker/lgb.dev.yaml — development gateway configuration for the dev stack.
+#
+# Used by docker-compose.dev.yml via `lgb server --config docker/lgb.dev.yaml`.
+# Commit-safe: no secrets, no production values. Override anything sensitive
+# via the shell or docker/.env.dev (see docker/.env.dev.example).
+#
+# Fix for #65 — the previous default `lgb.yaml` did not exist in the repo,
+# so `lgb server --config lgb.yaml` failed with `config: file not found`.
+
+gateway:
+  id: "lgb-dev"
+  logLevel: "info"
+  logFormat: "text"
+  dataDir: "/var/lib/lgb"
+
+server:
+  httpAddr: ":8080"
+  tlsEnabled: false
+  # CORS for the Vite dev server (when frontend is run outside the gateway).
+  allowedOrigins:
+    - "http://localhost:5173"
+
+auth:
+  # Empty here — LGB_AUTH_JWTSECRET (or LGB_AUTH_JWT_SECRET, see loader.go)
+  # MUST be set in the shell or docker/.env.dev. The gateway refuses to
+  # start without it.
+  jwtSecret: ""
+  sessionTTL: "8h"
+  # First-run admin bootstrap. Compose injects these from env with dev-only
+  # defaults overridable in docker/.env.dev. NEVER set them in production.
+  adminUser: "admin"
+  # adminPassword is intentionally empty here — EnsureAdminExists reads
+  # LGB_AUTH_ADMIN_PASSWORD from env. With no env var and an empty users.db
+  # the gateway refuses to start (admin bootstrap is fatal).
+
+mqtt:
+  brokerURL: "tcp://mqtt:1883"
+  clientID: "lgb-dev"
+  groupID: "plant-dev"
+  edgeNodeID: "lgb-dev"
+  qos: 1
+  keepAlive: "30s"
+  cleanSession: true
+
+plcsim:
+  addr: "plcsim:44818"
+
+historian:
+  enabled: true
+  dbPath: "/var/lib/lgb/historian.db"
+  retentionDays: 7
+
+backup:
+  enabled: true
+  interval: "1h"
+  keepLast: 5
+  repoPath: "/var/lib/lgb/backups"

@@ -124,7 +124,7 @@ interface CreateUserCardProps {
 }
 
 function CreateUserCard({ onCreated }: CreateUserCardProps) {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -141,7 +141,7 @@ function CreateUserCard({ onCreated }: CreateUserCardProps) {
     mutationFn: (values: CreateUserValues) =>
       apiFetch<{ data: UserRow }>("/api/users", {
         method: "POST",
-        token,
+        
         body: JSON.stringify(values),
       }),
     onSuccess: () => {
@@ -231,7 +231,7 @@ interface UserRowItemProps {
 }
 
 function UserRowItem({ user, onChanged }: UserRowItemProps) {
-  const { token, user: currentUser } = useAuth();
+  const {  user: currentUser } = useAuth();
   const [role, setRole] = useState<Role>(user.role);
   const [rowError, setRowError] = useState<string | null>(null);
 
@@ -239,7 +239,7 @@ function UserRowItem({ user, onChanged }: UserRowItemProps) {
     mutationFn: (newRole: Role) =>
       apiFetch<{ data: UserRow }>(`/api/users/${user.id}/role`, {
         method: "PUT",
-        token,
+        
         body: JSON.stringify({ role: newRole }),
       }),
     onSuccess: () => {
@@ -256,7 +256,7 @@ function UserRowItem({ user, onChanged }: UserRowItemProps) {
     mutationFn: () =>
       apiFetch<void>(`/api/users/${user.id}`, {
         method: "DELETE",
-        token,
+        
       }),
     onSuccess: () => {
       setRowError(null);

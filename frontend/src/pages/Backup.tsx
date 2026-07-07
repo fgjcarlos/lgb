@@ -45,7 +45,7 @@ function statusBadge(status: BackupStatusResponse["status"]) {
 }
 
 export function Backup() {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   const [polling, setPolling] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
@@ -53,15 +53,15 @@ export function Backup() {
   const statusQuery = useBackupStatus(true);
   const snapshotsQuery = useQuery({
     queryKey: ["backup", "snapshots"],
-    queryFn: () => apiFetch<SnapshotsResponse>("/api/backup/snapshots", { token }),
-    enabled: !!token,
+    queryFn: () => apiFetch<SnapshotsResponse>("/api/backup/snapshots", {}),
+    enabled: !!getWsToken,
   });
 
   const trigger = useMutation({
     mutationFn: () =>
       apiFetch<{ status: string }>("/api/backup/trigger", {
         method: "POST",
-        token,
+        
       }),
     onSuccess: () => {
       setTriggerError(null);

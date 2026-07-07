@@ -47,8 +47,8 @@ function toNumeric(value: unknown): number | null {
 }
 
 export function Dashboard() {
-  const { token } = useAuth();
-  const { status, tags: liveTags } = useTagStream(token);
+  const { getWsToken } = useAuth();
+  const { status, tags: liveTags } = useTagStream(getWsToken);
   const snapshot = useCurrentTags({ limit: 100 });
 
   const series = useMemo<ChartSeries[]>(() => {

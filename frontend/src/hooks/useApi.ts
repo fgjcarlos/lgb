@@ -30,7 +30,7 @@ export interface TagRow {
 export function useCurrentTags(
   params: { limit?: number; offset?: number } = {},
 ): UseQueryResult<PagedResponse<TagRow>, ApiError | Error> {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const limit = params.limit ?? 100;
   const offset = params.offset ?? 0;
   return useQuery({
@@ -38,9 +38,9 @@ export function useCurrentTags(
     queryFn: () =>
       apiFetch<PagedResponse<TagRow>>(
         `/api/tags/current?limit=${limit}&offset=${offset}`,
-        { token },
+        {},
       ),
-    enabled: !!token,
+    enabled: !!getWsToken,
     refetchInterval: 10_000,
   });
 }
@@ -61,12 +61,12 @@ export function useMappings(): UseQueryResult<
   { data: Mapping[] },
   ApiError | Error
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["config", "mappings"],
     queryFn: () =>
-      apiFetch<{ data: Mapping[] }>("/api/config/mappings", { token }),
-    enabled: !!token,
+      apiFetch<{ data: Mapping[] }>("/api/config/mappings", {}),
+    enabled: !!getWsToken,
   });
 }
 
@@ -91,7 +91,7 @@ export interface HistorianQueryParams {
 export function useHistorianQuery(
   params: HistorianQueryParams | null,
 ): UseQueryResult<PagedResponse<HistorianSample>, ApiError | Error> {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["historian", params],
     queryFn: () => {
@@ -104,10 +104,10 @@ export function useHistorianQuery(
       if (params.limit) search.set("limit", String(params.limit));
       return apiFetch<PagedResponse<HistorianSample>>(
         `/api/historian/query?${search.toString()}`,
-        { token },
+        {},
       );
     },
-    enabled: !!token && !!params,
+    enabled: !!getWsToken && !!params,
   });
 }
 
@@ -122,11 +122,11 @@ export function useUsers(): UseQueryResult<
   PagedResponse<UserRow>,
   ApiError | Error
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["users"],
-    queryFn: () => apiFetch<PagedResponse<UserRow>>("/api/users", { token }),
-    enabled: !!token,
+    queryFn: () => apiFetch<PagedResponse<UserRow>>("/api/users", {}),
+    enabled: !!getWsToken,
   });
 }
 
@@ -139,12 +139,12 @@ export interface BackupStatusResponse {
 export function useBackupStatus(
   enabled = true,
 ): UseQueryResult<BackupStatusResponse, ApiError | Error> {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["backup", "status"],
     queryFn: () =>
-      apiFetch<BackupStatusResponse>("/api/backup/status", { token }),
-    enabled: !!token && enabled,
+      apiFetch<BackupStatusResponse>("/api/backup/status", {}),
+    enabled: !!getWsToken && enabled,
   });
 }
 
@@ -163,11 +163,11 @@ export function useDoctorChecks(): UseQueryResult<
   DoctorResponse,
   ApiError | Error
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["doctor"],
-    queryFn: () => apiFetch<DoctorResponse>("/api/doctor", { token }),
-    enabled: !!token,
+    queryFn: () => apiFetch<DoctorResponse>("/api/doctor", {}),
+    enabled: !!getWsToken,
   });
 }
 
@@ -195,25 +195,25 @@ export function usePLCs(): UseQueryResult<
   { data: PLCRow[] },
   ApiError | Error
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["plcs"],
-    queryFn: () => apiFetch<{ data: PLCRow[] }>("/api/plcs", { token }),
-    enabled: !!token,
+    queryFn: () => apiFetch<{ data: PLCRow[] }>("/api/plcs", {}),
+    enabled: !!getWsToken,
   });
 }
 
 export function usePLC(
   name: string | null,
 ): UseQueryResult<{ data: PLCRow }, ApiError | Error> {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["plcs", name],
     queryFn: () =>
       apiFetch<{ data: PLCRow }>(`/api/plcs/${encodeURIComponent(name!)}`, {
-        token,
+        
       }),
-    enabled: !!token && !!name,
+    enabled: !!getWsToken && !!name,
   });
 }
 
@@ -222,13 +222,13 @@ export function useCreatePLC(): UseMutationResult<
   ApiError | Error,
   PLCRow
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (plc: PLCRow) =>
       apiFetch<{ data: PLCRow }>("/api/plcs", {
         method: "POST",
-        token,
+        
         body: JSON.stringify(plc),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
@@ -240,13 +240,13 @@ export function useUpdatePLC(): UseMutationResult<
   ApiError | Error,
   { name: string; plc: PLCRow }
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ name, plc }: { name: string; plc: PLCRow }) =>
       apiFetch<{ data: PLCRow }>(`/api/plcs/${encodeURIComponent(name)}`, {
         method: "PUT",
-        token,
+        
         body: JSON.stringify(plc),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
@@ -258,13 +258,13 @@ export function useDeletePLC(): UseMutationResult<
   ApiError | Error,
   string
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
       apiFetch<void>(`/api/plcs/${encodeURIComponent(name)}`, {
         method: "DELETE",
-        token,
+        
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plcs"] }),
   });
@@ -291,12 +291,12 @@ export function useACLRules(): UseQueryResult<
   { data: ACLRule[] },
   ApiError | Error
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useQuery({
     queryKey: ["acl"],
     queryFn: () =>
-      apiFetch<{ data: ACLRule[] }>("/api/acl/rules", { token }),
-    enabled: !!token,
+      apiFetch<{ data: ACLRule[] }>("/api/acl/rules", {}),
+    enabled: !!getWsToken,
   });
 }
 
@@ -305,13 +305,13 @@ export function useCreateACLRule(): UseMutationResult<
   ApiError | Error,
   ACLRuleInput
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ACLRuleInput) =>
       apiFetch<{ data: ACLRule }>("/api/acl/rules", {
         method: "POST",
-        token,
+        
         body: JSON.stringify(input),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
@@ -323,13 +323,13 @@ export function useUpdateACLRule(): UseMutationResult<
   ApiError | Error,
   { id: number; input: ACLRuleInput }
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: ACLRuleInput }) =>
       apiFetch<{ data: ACLRule }>(`/api/acl/rules/${id}`, {
         method: "PUT",
-        token,
+        
         body: JSON.stringify(input),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
@@ -341,13 +341,13 @@ export function useDeleteACLRule(): UseMutationResult<
   ApiError | Error,
   number
 > {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) =>
       apiFetch<void>(`/api/acl/rules/${id}`, {
         method: "DELETE",
-        token,
+        
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
@@ -359,14 +359,14 @@ export function useWriteTag(
   plcName: string,
   tagName: string,
 ): UseMutationResult<void, ApiError | Error, { value: unknown }> {
-  const { token } = useAuth();
+  const { getWsToken } = useAuth();
   return useMutation({
     mutationFn: ({ value }: { value: unknown }) =>
       apiFetch<void>(
         `/api/plcs/${encodeURIComponent(plcName)}/tags/${encodeURIComponent(tagName)}/write`,
         {
           method: "POST",
-          token,
+          
           body: JSON.stringify({ value }),
         },
       ),

@@ -149,7 +149,7 @@ The following fields are designated secret fields. They MAY appear in YAML as em
 
 | YAML path | Env var override |
 |-----------|-----------------|
-| `auth.jwtSecret` | `LGB_AUTH_JWT_SECRET` |
+| `auth.jwtSecret` | `LGB_AUTH_JWTSECRET` (the legacy spelling `LGB_AUTH_JWT_SECRET` is also accepted — see #65) |
 | `mqtt.password` | `LGB_MQTT_PASSWORD` |
 | `mqtt.passwordFile` | `LGB_MQTT_PASSWORDFILE` |
 | `backup.repos[N].password` | `LGB_BACKUP_REPOS_{N}_PASSWORD` |
@@ -159,14 +159,15 @@ Future secret fields added to the schema MUST follow the same `LGB_{SECTION_UPPE
 #### Scenario: jwtSecret from env overrides empty YAML
 
 - GIVEN YAML has `auth.jwtSecret: ""`
-- AND env var `LGB_AUTH_JWT_SECRET=supersecret` is set
+- AND env var `LGB_AUTH_JWTSECRET=supersecret` is set
 - WHEN the loader runs
 - THEN `cfg.Auth.JwtSecret` is `"supersecret"`
+- AND the legacy spelling `LGB_AUTH_JWT_SECRET` resolves to the same field (#65)
 
 #### Scenario: Missing required secret blocks server start
 
 - GIVEN YAML has `auth.jwtSecret: ""`
-- AND `LGB_AUTH_JWT_SECRET` is not set
+- AND neither `LGB_AUTH_JWTSECRET` nor `LGB_AUTH_JWT_SECRET` is set
 - WHEN `lgb server` is invoked
 - THEN the process exits with code 1
 - AND stderr contains `auth.jwtSecret is required`

@@ -142,6 +142,26 @@ func TestJwtSecretFromEnvOverridesEmptyYAML(t *testing.T) {
 	}
 }
 
+// TestJwtSecretFromEnvAcceptsExtraUnderscore asserts the loader honours the
+// env-var name LGB_AUTH_JWT_SECRET spelled out in README/openspec/docs (fix
+// for #65) in addition to the canonical LGB_AUTH_JWTSECRET name. Without the
+// collapseUnderscores normalisation in the koanf env callback, the spelled-out
+// name falls through to the generic lowercase fallback and never reaches the
+// typed Config field.
+func TestJwtSecretFromEnvAcceptsExtraUnderscore(t *testing.T) {
+	t.Setenv("LGB_AUTH_JWT_SECRET", "fixture-spelled-out-name")
+	t.Cleanup(func() { os.Unsetenv("LGB_AUTH_JWT_SECRET") })
+
+	cfg, err := config.Load(testdataPath("sample.yaml"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Auth.JwtSecret != "fixture-spelled-out-name" {
+		t.Errorf("Auth.JwtSecret = %q; want %q (LGB_AUTH_JWT_SECRET should populate jwtSecret — #65)",
+			cfg.Auth.JwtSecret, "fixture-spelled-out-name")
+	}
+}
+
 // TestRedactedReplacesSecretFields asserts MVP-FND-3.2: Redacted() replaces
 // all secret-tagged fields with "[redacted]".
 func TestRedactedReplacesSecretFields(t *testing.T) {

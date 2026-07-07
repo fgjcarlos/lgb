@@ -81,7 +81,7 @@ The `server` subcommand MUST NOT start if `auth.jwtSecret` resolves to an empty 
 
 #### Scenario: Server starts successfully
 
-- GIVEN a valid config file with `server.httpAddr: ":8080"` and `LGB_AUTH_JWT_SECRET` set in env
+- GIVEN a valid config file with `server.httpAddr: ":8080"` and `LGB_AUTH_JWTSECRET` set in env
 - WHEN the user runs `lgb server --config lgb.yaml`
 - THEN the process binds port 8080
 - AND `GET /health` returns HTTP 200 `{"status":"ok"}`

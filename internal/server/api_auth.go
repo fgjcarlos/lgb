@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/fgjcarlos/lgb/internal/auth"
@@ -20,7 +19,28 @@ type tokenResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// handleLogin authenticates a user and issues a JWT.
+// sessionUserResponse is the body shape returned by /api/auth/me. The
+// browser SPA calls it on mount to populate the auth context from the
+// HttpOnly cookie — the client never sees the raw JWT. Fix for #78.
+type sessionUserResponse struct {
+	User      authUserView `json:"user"`
+	ExpiresAt time.Time    `json:"expires_at"`
+}
+
+// authUserView is the minimal user shape returned to browser sessions.
+// It mirrors the shape used by the JWT payload (id / username / role) so
+// the SPA can drop it straight into its auth context without leaking the
+// password hash or created_at fields of auth.User.
+type authUserView struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+// handleLogin authenticates a user and issues a JWT. The token is
+// returned in the JSON body (kept for CLI / API tooling) AND set as an
+// HttpOnly; SameSite=Strict cookie scoped to /api so browser sessions
+// ride on the cookie without exposing the token to page scripts.
 // POST /api/auth/login (public)
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.userStore == nil || s.authTokens == nil {
@@ -53,6 +73,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set the HttpOnly session cookie. Secure is wired through cfg.Server.TLSEnabled.
+	setSessionCookie(w, token, claims.ExpiresAt.Time, resolveSessionCookieConfig(s))
+
 	if s.auditLog != nil {
 		_ = s.auditLog.Log(auth.AuditEvent{
 			Action:   "login",
@@ -76,12 +99,10 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract the Bearer token from the Authorization header.
-	rawToken := ""
-	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		rawToken = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	}
+	// Extract the Bearer token from the Authorization header OR the
+	// HttpOnly session cookie — middleware has already validated it, so
+	// any of the two transports lets the refresh proceed. (#78)
+	rawToken := auth.ExtractToken(r)
 	if rawToken == "" {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing authorization token")
 		return
@@ -123,8 +144,57 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refresh the HttpOnly session cookie so the browser keeps its
+	// authenticated session alive without ever touching the token in JS. (#78)
+	setSessionCookie(w, newToken, newClaims.ExpiresAt.Time, resolveSessionCookieConfig(s))
+
 	writeJSON(w, http.StatusOK, tokenResponse{
 		Token:     newToken,
 		ExpiresAt: newClaims.ExpiresAt.Time,
+	})
+}
+
+// handleLogout invalidates the session cookie. The JWT itself is stateless
+// (no server-side session store), so the only effect we can have from
+// the server side is asking the browser to drop the cookie. A future
+// improvement could add a token revocation list — out of scope for #78.
+// POST /api/auth/logout (auth-required)
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	clearSessionCookie(w, resolveSessionCookieConfig(s))
+
+	claims, _ := auth.ClaimsFromContext(r.Context())
+	username := ""
+	if claims != nil {
+		username = claims.Username
+	}
+	if s.auditLog != nil {
+		_ = s.auditLog.Log(auth.AuditEvent{
+			Action:   "logout",
+			Username: username,
+			IP:       r.RemoteAddr,
+		})
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMe returns the authenticated user's profile from the session
+// cookie. The SPA calls this on mount so the auth context can be
+// populated without storing the JWT in JS. (#78)
+// GET /api/auth/me (auth-required)
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sessionUserResponse{
+		User: authUserView{
+			ID:       claims.UserID,
+			Username: claims.Username,
+			Role:     string(claims.Role),
+		},
+		ExpiresAt: claims.ExpiresAt.Time,
 	})
 }

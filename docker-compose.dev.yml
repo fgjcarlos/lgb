@@ -5,9 +5,17 @@
 #   plcsim   — deterministic CIP PLC simulator (gologix, port 44818)
 #   mqtt     — Eclipse Mosquitto MQTT broker (port 1883)
 #
-# Usage:
-#   LGB_AUTH_JWT_SECRET=<your-value> docker compose -f docker-compose.dev.yml up
-#   — or — export LGB_AUTH_JWT_SECRET in your shell, or create docker/.env.dev
+# Usage (fix for #65 — onboarding in 4 steps):
+#   1. `cp docker/.env.dev.example docker/.env.dev`
+#   2. `cd frontend && npm ci && npm run build && cd -`
+#        (gateway go:embeds frontend/dist — without this step /  returns 404)
+#   3. Fill in LGB_AUTH_JWTSECRET in docker/.env.dev (openssl rand -hex 32)
+#   4. `docker compose -f docker-compose.dev.yml up`
+#
+# Resetting the admin wizard:
+#   `docker compose -f docker-compose.dev.yml down -v`
+#   removes the lgb-data volume so the next `up` recreates users.db empty and
+#   EnsureAdminExists seeds the user from LGB_AUTH_ADMIN_* env vars.
 #
 # Requirements: MVP-FND-9.1, MVP-FND-9.3. Design: §13.1.
 
@@ -28,10 +36,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # LGB_AUTH_JWT_SECRET must be set in the shell or via a local .env file.
-      # See docker/.env.dev.example for the required variable names.
-      # Do NOT commit real values. Do NOT use any placeholder as a production key.
-      LGB_AUTH_JWT_SECRET: ${LGB_AUTH_JWT_SECRET:?LGB_AUTH_JWT_SECRET must be set — see docker/.env.dev.example}
+      # JWT signing key. Required — exported from docker/.env.dev.
+      LGB_AUTH_JWTSECRET: ${LGB_AUTH_JWTSECRET:?LGB_AUTH_JWTSECRET must be set — see docker/.env.dev.example}
+      # First-run admin bootstrap. Defaults are dev-only and overridable in
+      # docker/.env.dev. NEVER use `changeme-dev` outside the dev stack.
+      LGB_AUTH_ADMIN_USER: ${LGB_AUTH_ADMIN_USER:-admin}
+      LGB_AUTH_ADMIN_PASSWORD: ${LGB_AUTH_ADMIN_PASSWORD:-changeme-dev}
     networks:
       - lgb-dev
     healthcheck:

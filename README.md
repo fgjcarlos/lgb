@@ -124,30 +124,54 @@ The development stack runs the gateway binary, the PLC simulator, and an MQTT br
 ### Prerequisites
 
 - Docker Engine 24+ with the Compose plugin
-- `LGB_AUTH_JWT_SECRET` set in your shell or in a local `.env` file
+- `LGB_AUTH_JWTSECRET` (or the legacy spelling `LGB_AUTH_JWT_SECRET`) set in
+  your shell or in a local `.env` file
 
 ### Quick start
 
 ```sh
-# 1. Copy the example env file and supply a value for LGB_AUTH_JWT_SECRET.
+# 1. Copy the example env file and supply a value for LGB_AUTH_JWTSECRET.
+#    (The legacy spelling LGB_AUTH_JWT_SECRET is also accepted by the
+#    loader — see internal/config/loader.go and #65.)
 #    Do NOT use any placeholder value as a production key.
 #    Do NOT commit the filled-in file.
 cp docker/.env.dev.example docker/.env.dev
 # edit docker/.env.dev and set a real (non-placeholder) value
 
-# 2. Start the stack (gateway + plcsim + mqtt).
+# 2. Build the SPA so gateway go:embed has an index.html to serve at /.
+#    Without this step / returns 404. Required once per clone; re-run after
+#    pulling frontend changes.
+(cd frontend && npm ci && npm run build)
+
+# 3. Start the stack (gateway + plcsim + mqtt).
 make docker-up
 
-# 3. Verify the gateway is healthy.
+# 4. Verify the gateway is healthy.
 curl http://localhost:8080/health
 
-# 4. Stop the stack and remove volumes.
+# 5. Stop the stack and remove volumes (resets users.db so the admin
+#    wizard runs again).
 make docker-down
 ```
 
 ### Authentication requirement
 
-The dev stack **requires** `LGB_AUTH_JWT_SECRET` to be set before starting. The gateway refuses to start without it. Export the variable in your shell or fill in `docker/.env.dev` (copied from `docker/.env.dev.example`). The example file ships with the variable name only — you must generate the value yourself and never commit a real one.
+The dev stack **requires** `LGB_AUTH_JWTSECRET` (or its legacy spelling
+`LGB_AUTH_JWT_SECRET`) to be set before starting. The gateway refuses to
+start without it. Export the variable in your shell or fill in
+`docker/.env.dev` (copied from `docker/.env.dev.example`). The example file
+ships with the variable name only — you must generate the value yourself
+and never commit a real one.
+
+The dev compose also wires `LGB_AUTH_ADMIN_USER` and `LGB_AUTH_ADMIN_PASSWORD`
+into the gateway container with dev-only defaults. These seed the first
+admin user on the first run (only when `users.db` is empty); see
+`docker-compose.dev.yml`. To reset the admin on a dev machine:
+
+```sh
+docker compose -f docker-compose.dev.yml down -v
+docker compose -f docker-compose.dev.yml up
+```
 
 Generate a suitable value with:
 

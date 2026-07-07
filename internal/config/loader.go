@@ -29,19 +29,19 @@ import (
 // defaults contains compiled-in default values for every field.
 // These are applied first so later providers can selectively override.
 var defaults = map[string]interface{}{
-	"gateway.id":              "lgb-1",
-	"gateway.logLevel":        "info",
-	"gateway.logFormat":       "text",
-	"server.httpAddr":            ":8080",
-	"server.tlsEnabled":          false,
-	"server.shutdownTimeout":     "10s",
-	"server.readHeaderTimeout":   "5s",
-	"server.readTimeout":         "30s",
-	"server.writeTimeout":        "60s",
-	"server.idleTimeout":         "120s",
-	"auth.sessionTTL":         "8h",
-	"historian.retentionDays": 90,
-	"backup.interval":        "24h",
+	"gateway.id":               "lgb-1",
+	"gateway.logLevel":         "info",
+	"gateway.logFormat":        "text",
+	"server.httpAddr":          ":8080",
+	"server.tlsEnabled":        false,
+	"server.shutdownTimeout":   "10s",
+	"server.readHeaderTimeout": "5s",
+	"server.readTimeout":       "30s",
+	"server.writeTimeout":      "60s",
+	"server.idleTimeout":       "120s",
+	"auth.sessionTTL":          "8h",
+	"historian.retentionDays":  90,
+	"backup.interval":          "24h",
 	// MQTT/Sparkplug defaults (SPK-CFG-2.1).
 	"mqtt.qos":          1,
 	"mqtt.keepAlive":    "30s",
@@ -58,6 +58,42 @@ var envKeyMap map[string]string
 
 func init() {
 	envKeyMap = buildEnvKeyMap(reflect.TypeOf(Config{}), "")
+}
+
+// envLookup returns the canonical koanf key for an env-var suffix, or ""
+// if no match is found. Looks up the suffix literally first, then tries
+// removing underscores one at a time so that env-var names with extra
+// separators (e.g. JWT_SECRET spelled out in README/openspec/docs) match
+// the canonical key built from camelCase struct tags (e.g. JWTSECRET).
+// Fix for #65.
+func envLookup(suffix string) string {
+	if canonical, ok := envKeyMap[suffix]; ok {
+		return canonical
+	}
+	// Try removing underscores one at a time until a match is found.
+	// Bound the loop to len(suffix) iterations — worst case every underscore
+	// is removed and we end up with the empty key (which won't match).
+	for i := 0; i < len(suffix); i++ {
+		if suffix[i] != '_' {
+			continue
+		}
+		candidate := suffix[:i] + suffix[i+1:]
+		if canonical, ok := envKeyMap[candidate]; ok {
+			return canonical
+		}
+		// If removing this underscore still doesn't match, recurse one level
+		// deeper — but only one level, to keep the bound O(N^2) in the worst
+		// case rather than exponential.
+		for j := i + 1; j < len(candidate); j++ {
+			if candidate[j] != '_' {
+				continue
+			}
+			if canonical, ok := envKeyMap[candidate[:j]+candidate[j+1:]]; ok {
+				return canonical
+			}
+		}
+	}
+	return ""
 }
 
 // buildEnvKeyMap recursively inspects struct tags to build the
@@ -125,8 +161,13 @@ func Load(path string) (*Config, error) {
 	// using the pre-built envKeyMap (generated from struct tags at init).
 	// e.g. LGB_GATEWAY_LOGLEVEL → gateway.logLevel (preserving camelCase).
 	envProvider := env.Provider("LGB_", ".", func(s string) string {
+		// s is the full env-var name (e.g. LGB_AUTH_JWT_SECRET). Strip the
+		// LGB_ prefix and look up the canonical koanf key. The doc-oficial
+		// spelling LGB_AUTH_JWT_SECRET has an extra underscore inside the
+		// camelCase word jwtSecret, so envLookup also tries removing
+		// underscores one at a time before falling through (#65).
 		suffix := strings.TrimPrefix(s, "LGB_")
-		if canonical, ok := envKeyMap[suffix]; ok {
+		if canonical := envLookup(suffix); canonical != "" {
 			return canonical
 		}
 		// Fallback: lowercase with dots (handles unknown/future fields).

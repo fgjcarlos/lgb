@@ -180,3 +180,63 @@ func TestWriter_BuffersAndFlushesSamples(t *testing.T) {
 		t.Fatalf("Query returned %d samples; want 2", len(got))
 	}
 }
+
+// TestStopFlushesBufferedSamplesWithFreshContext verifies that Stop must be called
+// with a fresh background context (not a cancelled context) to ensure buffered samples
+// are flushed. This tests the fix for issue #90: historian batch loss on shutdown when
+// server context is already cancelled. The fix is in server.go:411 where Stop is called
+// with context.WithTimeout(context.Background(), 5s) instead of the cancelled server ctx.
+func TestStopFlushesBufferedSamplesWithFreshContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "lgb.db"), historian.Options{})
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close returned error: %v", err)
+		}
+	}()
+
+	// Use a small batch size to ensure our samples don't auto-flush.
+	writer := historian.NewWriter(store, historian.WriterOptions{BufferSize: 100, BatchSize: 50, FlushInterval: time.Hour})
+	writer.Start(ctx)
+
+	ts := time.Now().UTC()
+	// Buffer 20 samples (less than batch size, so no auto-flush).
+	for i := 0; i < 20; i++ {
+		if err := writer.Enqueue(ctx, historian.Sample{
+			PLCName:   "plc-a",
+			Tag:       "Temp",
+			Timestamp: ts.Add(time.Duration(i) * time.Second),
+			Value:     float64(i),
+		}); err != nil {
+			t.Fatalf("Enqueue %d returned error: %v", i, err)
+		}
+	}
+
+	// Stop with a fresh background context with 5s timeout.
+	// The fix is that this fresh context allows flush to complete even if the
+	// original server context is already cancelled.
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := writer.Stop(stopCtx); err != nil {
+		t.Fatalf("Stop with fresh context returned error: %v", err)
+	}
+
+	// Verify all 20 samples were persisted.
+	got, err := store.Query(ctx, historian.Query{
+		PLCName: "plc-a",
+		Tag:     "Temp",
+		From:    ts.Add(-time.Second),
+		To:      ts.Add(20 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("Query returned error: %v", err)
+	}
+	if len(got) != 20 {
+		t.Fatalf("Query returned %d samples; want 20 (flush failed?)", len(got))
+	}
+}

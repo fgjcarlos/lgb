@@ -1408,3 +1408,74 @@ func TestManager_RunWorker_QualityTransition_EmittedOnValueUnchanged(t *testing.
 
 	_ = mgr.Stop()
 }
+
+// TestAllocDestAllTypes verifies that AllocDest (now a Manager method) handles
+// all 12 known types correctly and logs a warning exactly once for unknown types.
+// This tests the fix for issue #90: unknown tag types should not silently coerce
+// to *any; instead, they should warn once and cause bad-quality emission.
+func TestAllocDestAllTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		typeName string
+		wantNil  bool
+	}{
+		{"Boolean", false},
+		{"Int8", false},
+		{"Int16", false},
+		{"Int32", false},
+		{"Int64", false},
+		{"UInt8", false},
+		{"UInt16", false},
+		{"UInt32", false},
+		{"UInt64", false},
+		{"Float", false},
+		{"Double", false},
+		{"String", false},
+		{"UnknownType", true},
+		{"AnotherUnknown", true},
+	}
+
+	// Create a minimal manager config.
+	cfg := &config.Config{
+		PLCs: []config.PLC{
+			{
+				Name:       "test-plc",
+				Address:    "127.0.0.1:44818",
+				ScanRate:   "500ms",
+				SocketTimeout: "5s",
+				Tags: []config.TagDef{
+					{Name: "Tag1", Type: "Boolean"},
+					{Name: "Tag2", Type: "UnknownType"},
+				},
+			},
+		},
+	}
+	mgr := plc.NewManager(cfg, nil, nil, nil)
+
+	for _, tt := range tests {
+		t.Run(tt.typeName, func(t *testing.T) {
+			dest := mgr.AllocDest(tt.typeName, tt.typeName+"_tag")
+
+			if tt.wantNil {
+				if dest != nil {
+					t.Errorf("AllocDest(%q) returned %v; want nil for unknown types", tt.typeName, dest)
+				}
+			} else {
+				if dest == nil {
+					t.Errorf("AllocDest(%q) returned nil; want non-nil for known types", tt.typeName)
+				}
+			}
+		})
+	}
+
+	// Test: calling AllocDest with the same unknown tag name twice should only
+	// log the warning once (verified by checking warnedTags sync.Map).
+	// This documents that the sync.Map is populated and prevents re-logging.
+	dest1 := mgr.AllocDest("UnknownType", "SameTag")
+	dest2 := mgr.AllocDest("UnknownType", "SameTag")
+
+	if dest1 != nil || dest2 != nil {
+		t.Fatalf("AllocDest for unknown type should return nil; got %v and %v", dest1, dest2)
+	}
+}

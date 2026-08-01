@@ -76,10 +76,6 @@ func BearerToken(r *http.Request) string {
 	return ""
 }
 
-func extractToken(r *http.Request) string {
-	return BearerToken(r)
-}
-
 // CookieToken extracts a JWT from the session cookie set by
 // server.handleLogin. Returns "" when the cookie is absent. The middleware
 // accepts either transport so existing tooling (CLI, tests) that uses

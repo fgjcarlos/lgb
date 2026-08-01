@@ -3,8 +3,6 @@ package server
 import (
 	"net/http"
 	"time"
-
-	"github.com/fgjcarlos/lgb/internal/auth"
 )
 
 // sessionCookieName is the name of the HttpOnly cookie that carries the
@@ -71,11 +69,4 @@ func clearSessionCookie(w http.ResponseWriter, cfg sessionCookieConfig) {
 		Secure:   cfg.Secure,
 		SameSite: cfg.SameSite,
 	})
-}
-
-// sessionCookieToken extracts the bearer token from the session cookie.
-// Wrapper kept for callers that already import only the server package.
-// For middleware / shared code use auth.ExtractToken instead.
-func sessionCookieToken(r *http.Request) string {
-	return auth.CookieToken(r)
 }

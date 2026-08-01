@@ -406,9 +406,13 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	// Stop historian writer THIRD (flushes pending samples).
+	// Stop historian writer FOURTH (flushes pending samples).
+	// Use a fresh background context with timeout to ensure the flush completes
+	// even if the server context is already cancelled (issue #90).
 	if s.histW != nil {
-		if err := s.histW.Stop(ctx); err != nil {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.histW.Stop(flushCtx); err != nil {
 			s.log.Warn("historian writer: Stop returned error", slog.String("error", err.Error()))
 		}
 	}
@@ -420,7 +424,11 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	if err := httpx.Shutdown(ctx, srv, shutdownTimeout); err != nil {
+	// Use a fresh background context for HTTP shutdown to ensure graceful completion
+	// even if the server context is already cancelled (issue #90).
+	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := httpx.Shutdown(shutCtx, srv, shutdownTimeout); err != nil {
 		return fmt.Errorf("server: shutdown: %w", err)
 	}
 	s.log.Info("shutdown complete")

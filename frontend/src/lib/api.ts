@@ -16,24 +16,29 @@ export function setAuthLogout(fn: LogoutFn | null) {
   onUnauthorized = fn;
 }
 
-interface ApiFetchOptions extends RequestInit {
-  token?: string | null;
+interface ApiFetchOptions extends Omit<RequestInit, "body"> {
+  body?: BodyInit | null;
 }
 
 export async function apiFetch<T>(
   path: string,
   options: ApiFetchOptions = {},
 ): Promise<T> {
-  const { token, headers, ...rest } = options;
+  const { headers, body, ...rest } = options;
   const mergedHeaders = new Headers(headers);
-  if (!mergedHeaders.has("Content-Type") && rest.body) {
+  if (!mergedHeaders.has("Content-Type") && body) {
     mergedHeaders.set("Content-Type", "application/json");
   }
-  if (token) {
-    mergedHeaders.set("Authorization", `Bearer ${token}`);
-  }
-
-  const resp = await fetch(path, { ...rest, headers: mergedHeaders });
+  // The browser sends the HttpOnly session cookie on same-origin XHR.
+  // We make the intent explicit here so future maintainers do not add
+  // a header-based fallback that would re-introduce the localStorage
+  // token we are explicitly avoiding (Fix for #78).
+  const resp = await fetch(path, {
+    ...rest,
+    body,
+    credentials: "same-origin",
+    headers: mergedHeaders,
+  });
 
   if (resp.status === 401) {
     onUnauthorized?.();

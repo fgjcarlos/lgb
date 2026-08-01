@@ -65,13 +65,19 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /api/ws/tags", s.handleTagsWebSocket)
 
-	// Auth endpoints — login is public; refresh requires a valid token.
+	// Auth endpoints — login is public; refresh, logout and me require a valid token.
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	if s.authTokens != nil {
 		mux.Handle("POST /api/auth/refresh",
 			withMiddleware(http.HandlerFunc(s.handleRefresh), authMiddleware(s.authTokens)))
+		mux.Handle("POST /api/auth/logout",
+			withMiddleware(http.HandlerFunc(s.handleLogout), authMiddleware(s.authTokens)))
+		mux.Handle("GET /api/auth/me",
+			withMiddleware(http.HandlerFunc(s.handleMe), authMiddleware(s.authTokens)))
 	} else {
 		mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+		mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+		mux.HandleFunc("GET /api/auth/me", s.handleMe)
 	}
 
 	// Historian query endpoint — viewer+.

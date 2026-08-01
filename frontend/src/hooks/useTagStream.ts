@@ -29,9 +29,9 @@ function tagKey(plc: string, tag: string): string {
   return `${plc}:${tag}`;
 }
 
-export function useTagStream(token: string | null): UseTagStreamReturn {
+export function useTagStream(getToken: () => string | null): UseTagStreamReturn {
   const [status, setStatus] = useState<ConnectionStatus>(
-    token ? "connecting" : "disconnected",
+    getToken() ? "connecting" : "disconnected",
   );
   const [tags, setTags] = useState<Map<string, TagPoint[]>>(() => new Map());
   const socketRef = useRef<WebSocket | null>(null);
@@ -40,6 +40,7 @@ export function useTagStream(token: string | null): UseTagStreamReturn {
   const intentionallyClosedRef = useRef(false);
 
   useEffect(() => {
+    const token = getToken();
     if (!token) {
       setStatus("disconnected");
       return;
@@ -56,7 +57,11 @@ export function useTagStream(token: string | null): UseTagStreamReturn {
 
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;
-        // Send auth frame as the very first message. (R71-4)
+        // Send auth frame as the very first message. The token comes
+        // from the auth context's getToken() accessor — it lives in
+        // memory only (never localStorage / sessionStorage), so an
+        // XSS-injected script cannot persist it across reloads.
+        // (#78)
         ws.send(JSON.stringify({ type: "auth", token }));
       };
 
@@ -139,7 +144,7 @@ export function useTagStream(token: string | null): UseTagStreamReturn {
       }
       socketRef.current = null;
     };
-  }, [token]);
+  }, [getToken]);
 
   return { status, tags };
 }

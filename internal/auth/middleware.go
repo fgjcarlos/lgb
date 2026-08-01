@@ -15,10 +15,19 @@ func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
 	return c, ok
 }
 
+// WithClaims returns a copy of ctx that carries the provided claims. It is
+// the symmetric counterpart to ClaimsFromContext and exists so tests (and
+// any future tooling) can attach claims without going through the full
+// Middleware chain. The unexported claimsKey is shared with Middleware so
+// the value is observable via ClaimsFromContext downstream. Fix for #78.
+func WithClaims(ctx context.Context, claims *Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, claims)
+}
+
 func Middleware(ts *TokenService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractToken(r)
+			token := ExtractToken(r)
 			if token == "" {
 				http.Error(w, `{"error":"missing authorization token"}`, http.StatusUnauthorized)
 				return
@@ -67,6 +76,25 @@ func BearerToken(r *http.Request) string {
 	return ""
 }
 
-func extractToken(r *http.Request) string {
-	return BearerToken(r)
+// CookieToken extracts a JWT from the session cookie set by
+// server.handleLogin. Returns "" when the cookie is absent. The middleware
+// accepts either transport so existing tooling (CLI, tests) that uses
+// Authorization: Bearer keeps working without change. Fix for #78.
+func CookieToken(r *http.Request) string {
+	c, err := r.Cookie("lgb_session")
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+// ExtractToken returns the bearer token from any supported transport:
+// Authorization: Bearer header first, then the lgb_session cookie. The
+// cookie path lets browser sessions ride on HttpOnly without changing the
+// server-side validate contract. Fix for #78.
+func ExtractToken(r *http.Request) string {
+	if t := BearerToken(r); t != "" {
+		return t
+	}
+	return CookieToken(r)
 }

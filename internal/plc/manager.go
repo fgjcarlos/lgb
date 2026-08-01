@@ -71,6 +71,11 @@ type Manager struct {
 	// Lock order: reloadMu (outer, Reload-only) → mu (inner).
 	// Stop takes only mu, so there is no inverse path and no deadlock.
 	reloadMu sync.Mutex
+
+	// warnedTags tracks tag names for which we've already logged an unknown-type warning.
+	// Populated by AllocDest when encountering an unknown type. Used to ensure we log
+	// the warning exactly once per tag name, not on every scan tick.
+	warnedTags sync.Map // map[string]struct{} — keyed by tag name
 }
 
 // NewManager constructs a Manager and eagerly creates one Driver per PLC entry
@@ -367,26 +372,41 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 					return
 				}
 			}
-			for _, tag := range plcCfg.Tags {
-				dest := allocDest(tag.Type)
-				if err := d.ReadTag(tag.Name, dest); err != nil {
-					log.Warn("plc manager: ReadTag error",
-						slog.String("tag", tag.Name),
-						slog.String("err", err.Error()))
-					// R70-1: emit a bad-quality update instead of silently skipping.
-					// R70-5: only emit on quality transition (good→bad or first bad).
-					if lastQuality[tag.Name] != "bad" {
-						m.emitTagUpdate(TagUpdate{
-							PLCName:   name,
-							Tag:       tag.Name,
-							Value:     nil,
-							Timestamp: time.Now(),
-							Quality:   "bad",
-						})
-						lastQuality[tag.Name] = "bad"
-					}
-					continue
+		for _, tag := range plcCfg.Tags {
+			dest := m.AllocDest(tag.Type, tag.Name)
+			if dest == nil {
+				// Unknown type: AllocDest already logged warning once.
+				// Emit bad-quality update and skip this tag's read.
+				if lastQuality[tag.Name] != "bad" {
+					m.emitTagUpdate(TagUpdate{
+						PLCName:   name,
+						Tag:       tag.Name,
+						Value:     nil,
+						Timestamp: time.Now(),
+						Quality:   "bad",
+					})
+					lastQuality[tag.Name] = "bad"
 				}
+				continue
+			}
+			if err := d.ReadTag(tag.Name, dest); err != nil {
+				log.Warn("plc manager: ReadTag error",
+					slog.String("tag", tag.Name),
+					slog.String("err", err.Error()))
+				// R70-1: emit a bad-quality update instead of silently skipping.
+				// R70-5: only emit on quality transition (good→bad or first bad).
+				if lastQuality[tag.Name] != "bad" {
+					m.emitTagUpdate(TagUpdate{
+						PLCName:   name,
+						Tag:       tag.Name,
+						Value:     nil,
+						Timestamp: time.Now(),
+						Quality:   "bad",
+					})
+					lastQuality[tag.Name] = "bad"
+				}
+				continue
+			}
 				value := deref(dest)
 				// Determine quality for this successful read.
 				quality := "good"
@@ -499,7 +519,11 @@ func (m *Manager) storeTag(update TagUpdate) {
 	}
 }
 
-func allocDest(typeName string) any {
+// AllocDest returns a typed pointer for the given tag type and tag name.
+// For known types, it returns a typed pointer (e.g., *bool, *int32, *float64).
+// For unknown types, it logs a warning exactly once per tag name and returns nil.
+// The caller must handle nil returns by skipping the ReadTag and emitting bad-quality.
+func (m *Manager) AllocDest(typeName, tagName string) any {
 	switch typeName {
 	case "Boolean":
 		return new(bool)
@@ -526,7 +550,14 @@ func allocDest(typeName string) any {
 	case "String":
 		return new(string)
 	default:
-		return new(any)
+		// Unknown type: log warning once per tag name.
+		if _, loaded := m.warnedTags.LoadOrStore(tagName, struct{}{}); !loaded {
+			m.log.Warn("unknown tag type",
+				slog.String("tag", tagName),
+				slog.String("type", typeName),
+			)
+		}
+		return nil
 	}
 }
 

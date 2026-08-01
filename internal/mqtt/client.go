@@ -92,6 +92,25 @@ func NewClient(opts Options) *PahoClient {
 	return pc
 }
 
+// waitToken waits for token.Done or ctx cancellation, whichever comes first.
+// The goroutine lifetime is bounded by the broker's keepalive/timeout
+// (paho default ~30 seconds). This helper centralizes the pattern and documents
+// the expected goroutine leak bound (issue #90).
+func waitToken(ctx context.Context, token paho.Token) error {
+	done := make(chan struct{})
+	go func() {
+		token.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return token.Error()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // Connect establishes the MQTT connection. Respects context cancellation.
 func (c *PahoClient) Connect(ctx context.Context) error {
 	select {
@@ -101,21 +120,10 @@ func (c *PahoClient) Connect(ctx context.Context) error {
 	}
 
 	token := c.client.Connect()
-	done := make(chan struct{})
-	go func() {
-		token.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		if token.Error() != nil {
-			return fmt.Errorf("mqtt: connect: %w: %w", ErrMQTTConnect, token.Error())
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("mqtt: connect: %w: %w", ErrMQTTConnect, ctx.Err())
+	if err := waitToken(ctx, token); err != nil {
+		return fmt.Errorf("mqtt: connect: %w: %w", ErrMQTTConnect, err)
 	}
+	return nil
 }
 
 // Disconnect gracefully disconnects with the given quiesce period in milliseconds.
@@ -130,21 +138,10 @@ func (c *PahoClient) Publish(ctx context.Context, topic string, qos byte, retain
 	}
 
 	token := c.client.Publish(topic, qos, retained, payload)
-	done := make(chan struct{})
-	go func() {
-		token.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		if token.Error() != nil {
-			return fmt.Errorf("mqtt: publish %q: %w: %w", topic, ErrMQTTPublish, token.Error())
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("mqtt: publish %q: %w: %w", topic, ErrMQTTPublish, ctx.Err())
+	if err := waitToken(ctx, token); err != nil {
+		return fmt.Errorf("mqtt: publish %q: %w: %w", topic, ErrMQTTPublish, err)
 	}
+	return nil
 }
 
 // IsConnected returns true if the MQTT session is active.
@@ -163,21 +160,10 @@ func (c *PahoClient) Subscribe(ctx context.Context, topic string, qos byte, hand
 	}
 
 	token := c.client.Subscribe(topic, qos, callback)
-	done := make(chan struct{})
-	go func() {
-		token.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		if token.Error() != nil {
-			return fmt.Errorf("mqtt: subscribe %q: %w: %w", topic, ErrMQTTSubscribe, token.Error())
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("mqtt: subscribe %q: %w: %w", topic, ErrMQTTSubscribe, ctx.Err())
+	if err := waitToken(ctx, token); err != nil {
+		return fmt.Errorf("mqtt: subscribe %q: %w: %w", topic, ErrMQTTSubscribe, err)
 	}
+	return nil
 }
 
 // SetOnConnect registers a callback invoked on every (re)connect.

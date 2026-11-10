@@ -10,9 +10,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fgjcarlos/lgb/internal/aclstore"
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/historian"
@@ -24,10 +28,10 @@ import (
 
 // GitGuardian-safe: use const indirection for credential env var values.
 const (
-	fixtureJwtValue       = "fixture-server-test-jwt"
-	fixtureJwtEnvKey      = "LGB_AUTH_JWTSECRET"
-	fixtureAdminPwEnvKey  = "LGB_AUTH_ADMIN_PASSWORD"
-	fixtureAdminPwValue   = "fixture-admin-password"
+	fixtureJwtValue      = "fixture-server-test-jwt"
+	fixtureJwtEnvKey     = "LGB_AUTH_JWTSECRET"
+	fixtureAdminPwEnvKey = "LGB_AUTH_ADMIN_PASSWORD"
+	fixtureAdminPwValue  = "fixture-admin-password"
 )
 
 // TestServerCmd_NoJwtSecretExits1 verifies that the server command refuses to
@@ -605,4 +609,133 @@ func TestServer_AdminSeeded(t *testing.T) {
 			t.Errorf("expected store to still have exactly 1 user (no-op), got %d", count)
 		}
 	})
+}
+
+// ─── T6: one shared write guard for every write surface ──────────────────────
+
+// TestNewWriteGuard_AuthorizesOPCUAForOptedInTag verifies that the guard built
+// in cmd — the single instance shared by the HTTP, DCMD and OPC UA surfaces —
+// authorizes an OPC UA write for a tag that is both writable and opted in, and
+// denies it otherwise. (T6, TWA-OPCUA-3.3, TWA-ENFORCE-2.1)
+func TestNewWriteGuard_AuthorizesOPCUAForOptedInTag(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("plcstore.Open: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.Create(ctx, config.PLC{
+		Name:          "Silo-1",
+		Address:       "127.0.0.1:44818",
+		ScanRate:      "1s",
+		SocketTimeout: "5s",
+		Tags: []config.TagDef{
+			{Name: "Feed.Rate", Type: "Float", Writable: true, OPCUAEnabled: true},
+			{Name: "Emergency.Stop", Type: "Boolean", Writable: false, OPCUAEnabled: true},
+			{Name: "Motor.Speed", Type: "Float", Writable: true},
+		},
+	}); err != nil {
+		t.Fatalf("seed PLC: %v", err)
+	}
+
+	aclStore, err := aclstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("aclstore.Open: %v", err)
+	}
+	defer aclStore.Close()
+
+	guard := newWriteGuard(server.NewPLCStoreTagReader(store), aclStore)
+
+	// Writable + opted in → allow.
+	d := guard.AuthorizeOPCUA(ctx, "Silo-1", "Feed.Rate")
+	if !d.Allowed {
+		t.Errorf("AuthorizeOPCUA(Feed.Rate) = %+v; want allow", d)
+	}
+
+	// Master switch off → deny, regardless of the opt-in.
+	d = guard.AuthorizeOPCUA(ctx, "Silo-1", "Emergency.Stop")
+	if d.Allowed {
+		t.Error("AuthorizeOPCUA(Emergency.Stop) allowed; want deny (Writable=false)")
+	}
+	if d.Reason != "tag not writable" {
+		t.Errorf("AuthorizeOPCUA(Emergency.Stop).Reason = %q; want %q", d.Reason, "tag not writable")
+	}
+
+	// Not opted in → deny.
+	d = guard.AuthorizeOPCUA(ctx, "Silo-1", "Motor.Speed")
+	if d.Allowed {
+		t.Error("AuthorizeOPCUA(Motor.Speed) allowed; want deny (opcua_write_enabled=false)")
+	}
+	if d.Reason != "opcua not enabled" {
+		t.Errorf("AuthorizeOPCUA(Motor.Speed).Reason = %q; want %q", d.Reason, "opcua not enabled")
+	}
+}
+
+// TestServerCmd_OPCUAEnabled_StartsWithSharedGuard verifies that the server
+// starts with the OPC UA surface enabled: the OPC UA server is constructed with
+// the shared guard and the PLC manager as its writer, and it starts listening.
+// (T6, TWA-OPCUA-3.3)
+func TestServerCmd_OPCUAEnabled_StartsWithSharedGuard(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
+	cfg.OPCUA = config.OPCUASection{
+		Enabled:      true,
+		Host:         "127.0.0.1",
+		Port:         freeTCPPort(t),
+		SecurityMode: "None",
+	}
+
+	d := &Deps{
+		Config:           cfg,
+		UserStoreFactory: seededUserStoreFactory(t),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	// The OPC UA endpoint must start accepting connections.
+	endpoint := fmt.Sprintf("127.0.0.1:%d", cfg.OPCUA.Port)
+	deadline := time.Now().Add(20 * time.Second)
+	var connected bool
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			t.Fatalf("server exited before the OPC UA endpoint was reachable: %v", err)
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", endpoint, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			connected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !connected {
+		cancel()
+		<-errCh
+		t.Fatalf("OPC UA endpoint %s never accepted a connection", endpoint)
+	}
+
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Errorf("expected clean shutdown, got: %v", err)
+	}
+}
+
+// freeTCPPort returns a free TCP port on the loopback interface.
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on free port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }

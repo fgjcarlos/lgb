@@ -27,7 +27,7 @@ var _ writeguard.TagReadable = (*plcstoreTagReader)(nil)
 // writePLCManager implements PLCManager and records WriteTag calls.
 type writePLCManager struct {
 	fakePLCManager
-	mu           sync.Mutex
+	mu            sync.Mutex
 	writeTagCalls []writeTagCall
 	writeTagErr   error
 }
@@ -400,5 +400,179 @@ func TestHandleWriteTag_Allow_EmitsAuditEventWithSourceHTTP(t *testing.T) {
 	}
 	if ev.Username != "op1" {
 		t.Errorf("expected Username 'op1', got %q", ev.Username)
+	}
+}
+
+// ─── T6: exported store→TagReadable adapter and guard wiring ─────────────────
+
+// TestNewPLCStoreTagReader_ExposesPerTagFlags verifies that the exported
+// store→writeguard.TagReadable adapter reports every per-tag safety switch,
+// including the OPC UA opt-in, so cmd can build the shared write guard without
+// duplicating the adapter. (PCS-CFG-5.2, PCS-CFG-5.3, T6)
+func TestNewPLCStoreTagReader_ExposesPerTagFlags(t *testing.T) {
+	ctx := context.Background()
+	store, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("plcstore.Open: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.Create(ctx, config.PLC{
+		Name:          "Silo-1",
+		Address:       "127.0.0.1:44818",
+		ScanRate:      "1s",
+		SocketTimeout: "5s",
+		Tags: []config.TagDef{
+			{Name: "Feed.Rate", Type: "Float", Writable: true, DCMDEnabled: true, OPCUAEnabled: true},
+			{Name: "Motor.Speed", Type: "Float", Writable: false},
+		},
+	}); err != nil {
+		t.Fatalf("seed PLC: %v", err)
+	}
+
+	reader := NewPLCStoreTagReader(store)
+
+	meta, ok := reader.TagMeta(ctx, "Silo-1", "Feed.Rate")
+	if !ok {
+		t.Fatal("TagMeta returned ok=false for a known tag")
+	}
+	if !meta.Writable {
+		t.Error("meta.Writable = false; want true")
+	}
+	if !meta.DCMDEnabled {
+		t.Error("meta.DCMDEnabled = false; want true")
+	}
+	if !meta.OPCUAEnabled {
+		t.Error("meta.OPCUAEnabled = false; want true")
+	}
+
+	meta, ok = reader.TagMeta(ctx, "Silo-1", "Motor.Speed")
+	if !ok {
+		t.Fatal("TagMeta returned ok=false for a known tag")
+	}
+	if meta.Writable || meta.DCMDEnabled || meta.OPCUAEnabled {
+		t.Errorf("meta = %+v; want all flags false", meta)
+	}
+
+	if _, ok := reader.TagMeta(ctx, "Silo-1", "Ghost.Tag"); ok {
+		t.Error("TagMeta returned ok=true for an unknown tag")
+	}
+}
+
+// fakeTagMetaReader is a writeguard.TagReadable double used to prove that an
+// injected guard takes precedence over the auto-constructed one.
+type fakeTagMetaReader struct {
+	meta writeguard.TagMeta
+}
+
+func (f *fakeTagMetaReader) TagMeta(_ context.Context, _, _ string) (writeguard.TagMeta, bool) {
+	return f.meta, true
+}
+
+// TestNew_InjectedWriteGuardIsUsed verifies that server.New uses the injected
+// write guard instead of auto-constructing one from the stores: the HTTP write
+// path authorizes against the injected guard's metadata even though the store
+// says the tag is not writable. (T6, TWA-ENFORCE-2.1)
+func TestNew_InjectedWriteGuardIsUsed(t *testing.T) {
+	ctx := context.Background()
+
+	pStore, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("plcstore.Open: %v", err)
+	}
+	defer pStore.Close()
+
+	aStore, err := aclstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("aclstore.Open: %v", err)
+	}
+	defer aStore.Close()
+
+	// The store says Feed.Rate is NOT writable…
+	if err := pStore.Create(ctx, config.PLC{
+		Name:          "Silo-1",
+		Address:       "127.0.0.1:44818",
+		ScanRate:      "1s",
+		SocketTimeout: "5s",
+		Tags: []config.TagDef{
+			{Name: "Feed.Rate", Type: "Float", Writable: false},
+		},
+	}); err != nil {
+		t.Fatalf("seed PLC: %v", err)
+	}
+
+	// …but the injected guard says it is.
+	injected := writeguard.NewGuard(&fakeTagMetaReader{meta: writeguard.TagMeta{Writable: true}}, aStore)
+
+	if err := aStore.CreateRule(ctx, aclstore.ACLRule{
+		Role: "operator", PLC: "Silo-1", Tag: "Feed.Rate", AllowWrite: true,
+	}); err != nil {
+		t.Fatalf("create ACL rule: %v", err)
+	}
+
+	mgr := &writePLCManager{}
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+
+	opts := Opts{
+		AuthTokens: tokens,
+		PLCStore:   pStore,
+		PLCMgr:     mgr,
+		ACLStore:   aStore,
+		WriteGuard: injected,
+	}
+	_, url, stopSrv := startAPITestServerWithOpts(t, mgr, opts)
+	defer stopSrv()
+
+	tok, err := tokens.Issue(10, "op1", auth.RoleOperator)
+	if err != nil {
+		t.Fatalf("issue operator token: %v", err)
+	}
+
+	resp := doRequest(t, http.MethodPost, writeURL(url, "Silo-1", "Feed.Rate"), `{"value":2.5}`, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 (the injected guard must be used), got %d", resp.StatusCode)
+	}
+	if call, ok := mgr.lastWrite(); !ok {
+		t.Fatal("expected Manager.WriteTag to be called")
+	} else if call.Tag != "Feed.Rate" {
+		t.Errorf("unexpected write call: %+v", call)
+	}
+}
+
+// ─── PRESERVE: the HTTP write endpoint is unchanged ──────────────────────────
+
+// TestPreserve_HandleWriteTag_HTTPPathUnchanged pins the HTTP write behaviour
+// after the OPC UA surface was added: an operator with an ACL rule gets 200,
+// the PLC manager is called and the audit event carries source=http.
+// (TWA-HTTP-3.1, TWA-AUDIT-4.1 — PRESERVE)
+func TestPreserve_HandleWriteTag_HTTPPathUnchanged(t *testing.T) {
+	ts := newWriteTestServer(t)
+	defer ts.stop()
+	ts.grantOperatorWrite(t)
+
+	tok := ts.operatorToken(t)
+	resp := doRequest(t, http.MethodPost, writeURL(ts.baseURL, "Silo-1", "Feed.Rate"), `{"value":2.5}`, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if call, ok := ts.mgr.lastWrite(); !ok {
+		t.Fatal("expected Manager.WriteTag to be called")
+	} else if call.Val != 2.5 {
+		t.Errorf("written value = %v; want 2.5", call.Val)
+	}
+
+	events := ts.readAuditEvents(t)
+	if len(events) == 0 {
+		t.Fatal("expected at least 1 audit event, got 0")
+	}
+	if !strings.Contains(events[0].Detail, "source=http") {
+		t.Errorf("Detail = %q; want it to contain source=http", events[0].Detail)
+	}
+	if events[0].Username != "op1" {
+		t.Errorf("Username = %q; want op1", events[0].Username)
 	}
 }

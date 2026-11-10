@@ -13,11 +13,11 @@ var _ mqtt.Client = (*mqtt.PahoClient)(nil)
 func TestNewClient_SetOrderMattersFalse(t *testing.T) {
 	t.Parallel()
 	opts := mqtt.Options{
-		BrokerURL:  "tcp://localhost:1883",
-		ClientID:   "test",
-		WillTopic:  "spBv1.0/group/NDEATH/node",
+		BrokerURL:   "tcp://localhost:1883",
+		ClientID:    "test",
+		WillTopic:   "spBv1.0/group/NDEATH/node",
 		WillPayload: []byte{0x01},
-		WillQoS:    1,
+		WillQoS:     1,
 	}
 	c := mqtt.NewClient(opts)
 	if c == nil {

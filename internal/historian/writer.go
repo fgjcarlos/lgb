@@ -5,10 +5,18 @@ import (
 	"time"
 )
 
+// defaultFlushTimeout bounds the final flush performed while the writer shuts
+// down. The final flush runs with a context detached from the caller's, so it
+// needs a deadline of its own.
+const defaultFlushTimeout = 5 * time.Second
+
 type WriterOptions struct {
 	BufferSize    int
 	BatchSize     int
 	FlushInterval time.Duration
+	// FlushTimeout bounds the final flush performed when the writer shuts down.
+	// Defaults to defaultFlushTimeout.
+	FlushTimeout time.Duration
 }
 
 type Writer struct {
@@ -28,6 +36,9 @@ func NewWriter(store *Store, opts WriterOptions) *Writer {
 	}
 	if opts.FlushInterval <= 0 {
 		opts.FlushInterval = time.Second
+	}
+	if opts.FlushTimeout <= 0 {
+		opts.FlushTimeout = defaultFlushTimeout
 	}
 	return &Writer{store: store, opts: opts, ch: make(chan Sample, opts.BufferSize), done: make(chan struct{}), errCh: make(chan error, 1)}
 }
@@ -65,11 +76,11 @@ func (w *Writer) run(ctx context.Context) {
 	ticker := time.NewTicker(w.opts.FlushInterval)
 	defer ticker.Stop()
 	batch := make([]Sample, 0, w.opts.BatchSize)
-	flush := func() bool {
+	flush := func(fctx context.Context) bool {
 		if len(batch) == 0 {
 			return true
 		}
-		if err := w.store.InsertBatch(ctx, batch); err != nil {
+		if err := w.store.InsertBatch(fctx, batch); err != nil {
 			select {
 			case w.errCh <- err:
 			default:
@@ -79,22 +90,50 @@ func (w *Writer) run(ctx context.Context) {
 		batch = batch[:0]
 		return true
 	}
+
+	// drain moves the samples still buffered in the channel into the batch.
+	// It stops at the first empty read, so it never blocks.
+	drain := func() {
+		for {
+			select {
+			case sample, ok := <-w.ch:
+				if !ok {
+					return
+				}
+				batch = append(batch, sample)
+			default:
+				return
+			}
+		}
+	}
+
+	// finalFlush persists the last batch while the writer shuts down. The
+	// writer's context is already cancelled at that point, so the insert runs
+	// with a detached context bounded by FlushTimeout: the final batch must
+	// not be lost (issue #90).
+	finalFlush := func() {
+		drain()
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.opts.FlushTimeout)
+		defer cancel()
+		_ = flush(fctx)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			_ = flush()
+			finalFlush()
 			return
 		case sample, ok := <-w.ch:
 			if !ok {
-				_ = flush()
+				finalFlush()
 				return
 			}
 			batch = append(batch, sample)
-			if len(batch) >= w.opts.BatchSize && !flush() {
+			if len(batch) >= w.opts.BatchSize && !flush(ctx) {
 				return
 			}
 		case <-ticker.C:
-			if !flush() {
+			if !flush(ctx) {
 				return
 			}
 		}

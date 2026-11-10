@@ -1,11 +1,12 @@
 // Package writeguard implements the write enforcement core for the LGB gateway.
 //
 // It is the single authority that decides whether a write attempt is allowed,
-// regardless of the write surface (HTTP or DCMD). It deliberately sits above
-// internal/plc and internal/aclstore to avoid import cycles.
+// regardless of the write surface (HTTP, DCMD or OPC UA). It deliberately sits
+// above internal/plc and internal/aclstore to avoid import cycles.
 //
 // Requirements: TWA-ENFORCE-2.1, TWA-ENFORCE-2.2 (HTTP path).
 // TWA-ENFORCE-2.1 (DCMD path wired here; OnCommand wired in PR3).
+// TWA-ENFORCE-2.1, TWA-OPCUA-3.3 (OPC UA path).
 package writeguard
 
 import (
@@ -26,6 +27,10 @@ const (
 	// SourceDCMD is a write via a Sparkplug DCMD metric. Requires Writable=true
 	// AND DCMDEnabled=true. No ACL lookup, no identity check.
 	SourceDCMD
+
+	// SourceOPCUA is a write via the OPC UA server. Requires Writable=true
+	// AND OPCUAEnabled=true. No ACL lookup, no identity check.
+	SourceOPCUA
 )
 
 // TagMeta carries the per-tag safety switches read from plcstore.
@@ -36,6 +41,11 @@ type TagMeta struct {
 
 	// DCMDEnabled is the per-tag DCMD opt-in. Only relevant for SourceDCMD.
 	DCMDEnabled bool
+
+	// OPCUAEnabled is the per-tag OPC UA opt-in. Only relevant for
+	// SourceOPCUA. The OPC UA server runs anonymous user tokens, so this
+	// flag — not an identity check — is the whole authorization decision.
+	OPCUAEnabled bool
 }
 
 // Actor carries the identity of the HTTP caller.
@@ -49,7 +59,8 @@ type Actor struct {
 type Decision struct {
 	Allowed bool
 	// Reason is set on deny and describes why; used for audit Detail.
-	// Values: "tag not writable" | "acl deny" | "dcmd not enabled" | ""
+	// Values: "tag not writable" | "acl deny" | "dcmd not enabled" |
+	// "opcua not enabled" | ""
 	Reason string
 }
 
@@ -136,6 +147,31 @@ func (g *Guard) AuthorizeDCMD(ctx context.Context, plcName, tagName string) Deci
 
 	if !meta.DCMDEnabled {
 		return Decision{Allowed: false, Reason: "dcmd not enabled"}
+	}
+
+	return Decision{Allowed: true}
+}
+
+// AuthorizeOPCUA enforces the OPC UA write gate. There is NO actor, NO role,
+// and NO ACL lookup for this path — the OPC UA server runs anonymous user
+// tokens, so there is no principal to authorize.
+//
+// Gate 1 — master switch: if tag.Writable == false, deny immediately.
+// Gate 2 — OPC UA flag: if tag.OPCUAEnabled == false, deny.
+//
+// aclStore is NEVER consulted for this path. An operator-level HTTP ACL row
+// granting write on a tag does NOT enable OPC UA writes, and dcmd_enabled does
+// NOT enable OPC UA writes.
+//
+// Requirements: TWA-ENFORCE-2.1 (OPC UA scenarios), TWA-OPCUA-3.3.
+func (g *Guard) AuthorizeOPCUA(ctx context.Context, plcName, tagName string) Decision {
+	meta, ok := g.tags.TagMeta(ctx, plcName, tagName)
+	if !ok || !meta.Writable {
+		return Decision{Allowed: false, Reason: "tag not writable"}
+	}
+
+	if !meta.OPCUAEnabled {
+		return Decision{Allowed: false, Reason: "opcua not enabled"}
 	}
 
 	return Decision{Allowed: true}

@@ -34,10 +34,10 @@ type Client interface {
 // PahoClient wraps paho.mqtt.golang. Exported for compile-time interface
 // assertion in tests; construct via NewClient.
 type PahoClient struct {
-	client         paho.Client
-	mu             sync.Mutex
-	onConnectFn    func()
-	onConnLostFn   func(error)
+	client       paho.Client
+	mu           sync.Mutex
+	onConnectFn  func()
+	onConnLostFn func(error)
 }
 
 // NewClient creates a PahoClient with the given options.
@@ -92,10 +92,13 @@ func NewClient(opts Options) *PahoClient {
 	return pc
 }
 
-// waitToken waits for token.Done or ctx cancellation, whichever comes first.
-// The goroutine lifetime is bounded by the broker's keepalive/timeout
-// (paho default ~30 seconds). This helper centralizes the pattern and documents
-// the expected goroutine leak bound (issue #90).
+// waitToken waits for the token to complete or for ctx to be cancelled,
+// whichever comes first, and returns the token error or the context error.
+//
+// The caller is never held past its own context. The goroutine that waits on
+// the token keeps running until the broker answers or the connection times out
+// (paho default ~30 seconds), so its lifetime is bounded by the broker rather
+// than by the caller's context (issue #90).
 func waitToken(ctx context.Context, token paho.Token) error {
 	done := make(chan struct{})
 	go func() {

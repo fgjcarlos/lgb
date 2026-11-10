@@ -2,91 +2,112 @@ package httpx_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fgjcarlos/lgb/internal/httpx"
 )
 
-// TestShutdown_HonorsCallerContext verifies that Shutdown respects the caller's context.
-// Before the fix, Shutdown used context.Background() internally, ignoring the caller's
-// context and deadline. After the fix, it uses context.WithTimeout(ctx, deadline),
-// ensuring that caller cancellation terminates the shutdown promptly.
+// busyServer is an HTTP server with one in-flight request whose handler blocks
+// until release is called. A server without in-flight work shuts down
+// immediately, whatever the caller's context says, so the caller's context can
+// only be observed while a request is still running.
+type busyServer struct {
+	*httptest.Server
+	release func()
+}
+
+// newBusyServer starts a server and waits until its handler is running.
+func newBusyServer(t *testing.T) *busyServer {
+	t.Helper()
+
+	started := make(chan struct{})
+	releaseCh := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(releaseCh) }) }
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-releaseCh
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(func() {
+		release()
+		srv.Close()
+	})
+
+	go func() {
+		resp, err := http.Get(srv.URL)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never reached the handler")
+	}
+
+	return &busyServer{Server: srv, release: release}
+}
+
+// TestShutdown_HonorsCallerContext verifies that Shutdown respects the caller's
+// context. Before the fix it derived its deadline from context.Background(),
+// so a cancelled caller context was ignored and the shutdown only finished
+// when its own deadline expired.
 func TestShutdown_HonorsCallerContext(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name       string
-		makeCtx    func() (context.Context, func())
-		expectFast bool // true if we expect the operation to complete in <100ms
-		deadline   time.Duration
-	}{
-		{
-			name: "cancelled context returns promptly",
-			makeCtx: func() (context.Context, func()) {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel() // cancel immediately
-				return ctx, func() {}
-			},
-			expectFast: true,
-			deadline:   5 * time.Second,
-		},
-		{
-			name: "already-expired deadline returns promptly",
-			makeCtx: func() (context.Context, func()) {
-				ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-				return ctx, cancel
-			},
-			expectFast: true,
-			deadline:   5 * time.Second,
-		},
-		{
-			name: "live context allows graceful shutdown to complete",
-			makeCtx: func() (context.Context, func()) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				return ctx, cancel
-			},
-			expectFast: false,
-			deadline:   2 * time.Second,
-		},
-	}
+	t.Run("cancelled context releases the caller", func(t *testing.T) {
+		srv := newBusyServer(t)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := tt.makeCtx()
-			defer cancel()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-			// Create a test HTTP server with a no-op handler.
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer srv.Close()
+		start := time.Now()
+		err := httpx.Shutdown(ctx, srv.Config, 5*time.Second)
+		elapsed := time.Since(start)
 
-			httpSrv := srv.Config
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Shutdown returned %v; want context.Canceled", err)
+		}
+		if elapsed > 500*time.Millisecond {
+			t.Fatalf("Shutdown took %v; want it to return as soon as the context is cancelled", elapsed)
+		}
+	})
 
-			// Call Shutdown and measure how long it takes.
-			start := time.Now()
-			err := httpx.Shutdown(ctx, httpSrv, tt.deadline)
-			elapsed := time.Since(start)
+	t.Run("expired deadline releases the caller", func(t *testing.T) {
+		srv := newBusyServer(t)
 
-			// Check that the operation completes (error or not is OK).
-			if err != nil && err.Error() == "server not started" {
-				// Server was already closed; this is OK.
-			}
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
 
-			// If expectFast, verify it completed within a reasonable time (< 500ms).
-			// If not expectFast, just verify it didn't hang indefinitely (< 10s).
-			if tt.expectFast {
-				if elapsed > 500*time.Millisecond {
-					t.Fatalf("Expected fast completion; took %v", elapsed)
-				}
-			} else {
-				if elapsed > 10*time.Second {
-					t.Fatalf("Shutdown took too long: %v", elapsed)
-				}
-			}
-		})
-	}
+		start := time.Now()
+		err := httpx.Shutdown(ctx, srv.Config, 5*time.Second)
+		elapsed := time.Since(start)
+
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Shutdown returned %v; want context.DeadlineExceeded", err)
+		}
+		if elapsed > 500*time.Millisecond {
+			t.Fatalf("Shutdown took %v; want it to return as soon as the deadline expires", elapsed)
+		}
+	})
+
+	t.Run("live context waits for the in-flight request", func(t *testing.T) {
+		srv := newBusyServer(t)
+		srv.release() // let the handler answer
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := httpx.Shutdown(ctx, srv.Config, 5*time.Second); err != nil {
+			t.Fatalf("Shutdown returned %v; want nil", err)
+		}
+	})
 }

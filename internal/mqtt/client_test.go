@@ -15,11 +15,11 @@ var _ mqtt.Client = (*mqtt.PahoClient)(nil)
 func TestNewClient_SetOrderMattersFalse(t *testing.T) {
 	t.Parallel()
 	opts := mqtt.Options{
-		BrokerURL:  "tcp://localhost:1883",
-		ClientID:   "test",
-		WillTopic:  "spBv1.0/group/NDEATH/node",
+		BrokerURL:   "tcp://localhost:1883",
+		ClientID:    "test",
+		WillTopic:   "spBv1.0/group/NDEATH/node",
 		WillPayload: []byte{0x01},
-		WillQoS:    1,
+		WillQoS:     1,
 	}
 	c := mqtt.NewClient(opts)
 	if c == nil {
@@ -113,9 +113,9 @@ func TestWaitTokenBoundedUnderCancel(t *testing.T) {
 	// Each operation starts a goroutine to wait on the token; it must not leak.
 	for i := 0; i < 10; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-		_ = c.Connect(ctx)  // Will fail quickly due to cancelled ctx
-		_ = c.Connect(ctx)  // Repeat
+		cancel()           // Cancel immediately
+		_ = c.Connect(ctx) // Will fail quickly due to cancelled ctx
+		_ = c.Connect(ctx) // Repeat
 	}
 
 	// Give the broker timeout and goroutine cleanup some time (up to 35s per paho default ~30s).

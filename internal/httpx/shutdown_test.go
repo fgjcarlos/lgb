@@ -18,10 +18,10 @@ func TestShutdown_HonorsCallerContext(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		makeCtx     func() (context.Context, func())
-		expectFast  bool // true if we expect the operation to complete in <100ms
-		deadline    time.Duration
+		name       string
+		makeCtx    func() (context.Context, func())
+		expectFast bool // true if we expect the operation to complete in <100ms
+		deadline   time.Duration
 	}{
 		{
 			name: "cancelled context returns promptly",

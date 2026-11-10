@@ -1440,9 +1440,9 @@ func TestAllocDestAllTypes(t *testing.T) {
 	cfg := &config.Config{
 		PLCs: []config.PLC{
 			{
-				Name:       "test-plc",
-				Address:    "127.0.0.1:44818",
-				ScanRate:   "500ms",
+				Name:          "test-plc",
+				Address:       "127.0.0.1:44818",
+				ScanRate:      "500ms",
 				SocketTimeout: "5s",
 				Tags: []config.TagDef{
 					{Name: "Tag1", Type: "Boolean"},

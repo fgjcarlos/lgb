@@ -61,11 +61,11 @@ type Manager struct {
 	tagCb     TagCallback
 	callbacks []TagCallback
 
-	mu       sync.RWMutex
-	workers  map[string]*plcWorker // keyed by PLC name
-	current  map[string]map[string]TagValue
-	wg       sync.WaitGroup
-	stopped  bool // set to true after Stop; guards Reload-after-Stop
+	mu      sync.RWMutex
+	workers map[string]*plcWorker // keyed by PLC name
+	current map[string]map[string]TagValue
+	wg      sync.WaitGroup
+	stopped bool // set to true after Stop; guards Reload-after-Stop
 
 	// reloadMu serializes concurrent Reload calls.
 	// Lock order: reloadMu (outer, Reload-only) → mu (inner).
@@ -372,41 +372,41 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 					return
 				}
 			}
-		for _, tag := range plcCfg.Tags {
-			dest := m.AllocDest(tag.Type, tag.Name)
-			if dest == nil {
-				// Unknown type: AllocDest already logged warning once.
-				// Emit bad-quality update and skip this tag's read.
-				if lastQuality[tag.Name] != "bad" {
-					m.emitTagUpdate(TagUpdate{
-						PLCName:   name,
-						Tag:       tag.Name,
-						Value:     nil,
-						Timestamp: time.Now(),
-						Quality:   "bad",
-					})
-					lastQuality[tag.Name] = "bad"
+			for _, tag := range plcCfg.Tags {
+				dest := m.AllocDest(tag.Type, tag.Name)
+				if dest == nil {
+					// Unknown type: AllocDest already logged warning once.
+					// Emit bad-quality update and skip this tag's read.
+					if lastQuality[tag.Name] != "bad" {
+						m.emitTagUpdate(TagUpdate{
+							PLCName:   name,
+							Tag:       tag.Name,
+							Value:     nil,
+							Timestamp: time.Now(),
+							Quality:   "bad",
+						})
+						lastQuality[tag.Name] = "bad"
+					}
+					continue
 				}
-				continue
-			}
-			if err := d.ReadTag(tag.Name, dest); err != nil {
-				log.Warn("plc manager: ReadTag error",
-					slog.String("tag", tag.Name),
-					slog.String("err", err.Error()))
-				// R70-1: emit a bad-quality update instead of silently skipping.
-				// R70-5: only emit on quality transition (good→bad or first bad).
-				if lastQuality[tag.Name] != "bad" {
-					m.emitTagUpdate(TagUpdate{
-						PLCName:   name,
-						Tag:       tag.Name,
-						Value:     nil,
-						Timestamp: time.Now(),
-						Quality:   "bad",
-					})
-					lastQuality[tag.Name] = "bad"
+				if err := d.ReadTag(tag.Name, dest); err != nil {
+					log.Warn("plc manager: ReadTag error",
+						slog.String("tag", tag.Name),
+						slog.String("err", err.Error()))
+					// R70-1: emit a bad-quality update instead of silently skipping.
+					// R70-5: only emit on quality transition (good→bad or first bad).
+					if lastQuality[tag.Name] != "bad" {
+						m.emitTagUpdate(TagUpdate{
+							PLCName:   name,
+							Tag:       tag.Name,
+							Value:     nil,
+							Timestamp: time.Now(),
+							Quality:   "bad",
+						})
+						lastQuality[tag.Name] = "bad"
+					}
+					continue
 				}
-				continue
-			}
 				value := deref(dest)
 				// Determine quality for this successful read.
 				quality := "good"

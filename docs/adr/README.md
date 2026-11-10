@@ -20,6 +20,7 @@ For new ADRs, copy `0000-template.md` and fill in each section. Number sequentia
 | 0007 | [0007-historian.md](0007-historian.md) | Historian — `modernc.org/sqlite` v1.50.1 (pure-Go) | Proposed |
 | 0008 | [0008-backups.md](0008-backups.md) | Backups — `restic` v0.18.0 as subprocess with `--json` | Proposed |
 | 0009 | [0009-pure-go-no-cgo.md](0009-pure-go-no-cgo.md) | Pure-Go / no CGo — all direct deps must compile `CGO_ENABLED=0` | Proposed |
+| 0010 | [0010-opcua-write-trust-model.md](0010-opcua-write-trust-model.md) | OPC UA write trust model — per-tag opt-in, not session identity | Proposed |
 
 ## Adding a new ADR
 

@@ -24,8 +24,9 @@ Consequences of the decision (all deliberate):
 - The flag is independent from `dcmd_enabled` and from the role×tag ACL. An HTTP ACL rule never authorizes an OPC UA
   write; `dcmd_enabled` never authorizes an OPC UA write.
 - Audit records `source=opcua` with an empty actor, exactly like the DCMD path: there is no principal to record.
-- A deployment that exposes OPC UA writes to the network MUST use `securityMode: Sign|SignAndEncrypt` with
-  certificates. The gateway logs a WARN at startup when OPC UA writes are enabled while `securityMode: None`.
+- Deployments that expose OPC UA writes to a network should use `securityMode: Sign|SignAndEncrypt` with
+  certificates. This change does not enforce that recommendation or emit a dedicated warning; with
+  `securityMode: None`, any client able to reach the port can write opted-in tags.
 
 The path back to identity-based authorization is documented in `docs/adr/0010-opcua-write-trust-model.md`.
 

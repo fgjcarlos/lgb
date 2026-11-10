@@ -9,17 +9,25 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopcua/opcua/id"
 	opcserver "github.com/gopcua/opcua/server"
 	"github.com/gopcua/opcua/ua"
 
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/plc"
+	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
 // TagSource provides read access to current PLC tag values.
 type TagSource interface {
 	CurrentTag(plcName, tag string) (plc.TagValue, bool)
 	CurrentSnapshot() map[string]map[string]plc.TagValue
+}
+
+// tagKey identifies a tag node in the address space.
+type tagKey struct {
+	plc string
+	tag string
 }
 
 // Server wraps a gopcua OPC UA server and populates the address space
@@ -33,21 +41,73 @@ type Server struct {
 	// namespaces tracks per-PLC NodeNameSpace instances for value updates.
 	namespaces map[string]*opcserver.NodeNameSpace
 
+	// nsPLC maps a namespace id to the PLC that owns it. It is recorded while
+	// populating the address space so the write handler can resolve a node id
+	// to its (plc, tag) pair without parsing namespace URIs.
+	nsPLC map[uint16]string
+
+	// tagTypes maps a tag node to its declared type. It is the authoritative
+	// map of the tag nodes exposed by the address space.
+	tagTypes map[tagKey]string
+
+	// Write surface dependencies (see Options). They are nil-safe: without a
+	// guard or a writer every write is denied.
+	guard  *writeguard.Guard
+	writer writeguard.TagWriter
+	audit  writeguard.AuditSink
+
+	// tagMeta exposes the per-tag metadata used to derive the node AccessLevel
+	// attribute. When nil the server's own configuration is used.
+	tagMeta writeguard.TagReadable
+
 	mu      sync.Mutex
 	running bool
 }
 
 // New creates an OPC UA Server. The server is not started until Start is called.
-func New(cfg *config.Config, tags TagSource, log *slog.Logger) *Server {
+//
+// opts carries the optional dependencies of the write surface (guard, PLC
+// writer, audit sink). It is variadic so that the existing call sites
+// (New(cfg, tags, logger)) keep compiling: without options the server is
+// read-only and every write is denied.
+func New(cfg *config.Config, tags TagSource, log *slog.Logger, opts ...Options) *Server {
 	if log == nil {
 		log = slog.Default()
+	}
+	var o Options
+	for _, opt := range opts {
+		o = mergeOptions(o, opt)
 	}
 	return &Server{
 		cfg:        cfg,
 		tags:       tags,
 		log:        log,
 		namespaces: make(map[string]*opcserver.NodeNameSpace),
+		nsPLC:      make(map[uint16]string),
+		tagTypes:   make(map[tagKey]string),
+		guard:      o.Guard,
+		writer:     o.Writer,
+		audit:      o.Audit,
+		tagMeta:    o.Tags,
 	}
+}
+
+// mergeOptions merges two Options values: every non-nil field of next
+// overrides the corresponding field of base.
+func mergeOptions(base, next Options) Options {
+	if next.Guard != nil {
+		base.Guard = next.Guard
+	}
+	if next.Writer != nil {
+		base.Writer = next.Writer
+	}
+	if next.Audit != nil {
+		base.Audit = next.Audit
+	}
+	if next.Tags != nil {
+		base.Tags = next.Tags
+	}
+	return base
 }
 
 // Start initializes the OPC UA server, populates the address space, and begins
@@ -74,6 +134,13 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	s.srv = srv
+
+	// Register the gateway's Write handler BEFORE srv.Start(ctx): gopcua
+	// registers its default Write service inside Server.Start (initHandlers)
+	// and RegisterHandler does NOT override an already-registered handler.
+	// Without this the default service would replace the node's value callback
+	// and silently accept writes that never reach the PLC. (TWA-OPCUA-3.3)
+	srv.RegisterHandler(id.WriteRequest_Encoding_DefaultBinary, s.handleWriteRequest)
 
 	s.populateAddressSpace()
 
@@ -186,19 +253,53 @@ func (s *Server) populateAddressSpace() {
 	for _, plcCfg := range s.cfg.PLCs {
 		ns := opcserver.NewNodeNameSpace(s.srv, fmt.Sprintf("urn:lgb:plc:%s", plcCfg.Name))
 		s.namespaces[plcCfg.Name] = ns
+		s.nsPLC[ns.ID()] = plcCfg.Name
 
 		for _, tag := range plcCfg.Tags {
 			plcName := plcCfg.Name
 			tagName := tag.Name
-			ns.AddNewVariableStringNode(tagName, func() *ua.DataValue {
+			node := ns.AddNewVariableStringNode(tagName, func() *ua.DataValue {
 				tv, ok := s.tags.CurrentTag(plcName, tagName)
 				if !ok {
 					return opcserver.DataValueFromValue(nil)
 				}
 				return dataValueForTV(tv)
 			})
+
+			s.tagTypes[tagKey{plc: plcName, tag: tagName}] = tag.Type
+
+			// The AccessLevel attribute is a client hint that mirrors the
+			// server policy: CurrentRead|CurrentWrite only when the tag is
+			// OPC UA writable, CurrentRead alone otherwise. The guard stays
+			// the enforcement point. (TWA-OPCUA-3.3)
+			level := ua.AccessLevelTypeCurrentRead
+			if s.tagOPCUAWritable(plcName, tagName, tag) {
+				level |= ua.AccessLevelTypeCurrentWrite
+			}
+			// The attribute is set on the node directly: Namespace.SetAttribute
+			// would notify the (not yet started) monitored-item service.
+			_ = node.SetAttribute(ua.AttributeIDAccessLevel, opcserver.DataValueFromValue(uint8(level)))
 		}
 	}
+}
+
+// tagOPCUAWritable reports whether the tag may be written over OPC UA.
+//
+// The answer comes from the same metadata the write guard reads (the PLC
+// config store) so the client-visible AccessLevel matches what the gateway
+// actually accepts. When no metadata reader is wired, the server's own
+// configuration is used.
+//
+// (TWA-OPCUA-3.3 AccessLevel requirement)
+func (s *Server) tagOPCUAWritable(plcName, tagName string, tag config.TagDef) bool {
+	if s.tagMeta != nil {
+		meta, ok := s.tagMeta.TagMeta(context.Background(), plcName, tagName)
+		if !ok {
+			return false
+		}
+		return meta.Writable && meta.OPCUAEnabled
+	}
+	return tag.Writable && tag.OPCUAEnabled
 }
 
 // DataValueForTag returns the ua.DataValue that the OPC UA address space would

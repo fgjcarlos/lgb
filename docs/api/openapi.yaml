@@ -250,6 +250,15 @@ components:
             inbound DCMD commands for this tag are dropped — independent of the
             role×tag ACL, which DCMD never consults. A write via DCMD requires both
             writable=true and dcmd_enabled=true.
+        opcua_write_enabled:
+          type: boolean
+          default: false
+          description: >
+            Per-tag opt-in for OPC UA writes. When false (the default), OPC UA writes
+            to this tag are denied — independent of the role×tag ACL, which the OPC UA
+            surface never consults. A write via OPC UA requires both writable=true and
+            opcua_write_enabled=true; the master writable switch still applies to every
+            surface.
 
     PLCRequest:
       type: object

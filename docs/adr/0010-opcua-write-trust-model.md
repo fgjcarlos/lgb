@@ -54,10 +54,9 @@ audit event records `source=opcua` with an empty actor, exactly like DCMD.
 
 - **Accepted**: OPC UA writes are authorized by `Writable && opcua_write_enabled`; no ACL lookup on this path.
 - **Accepted**: audit events for OPC UA writes carry no actor.
-- **Required**: a deployment that enables OPC UA writes MUST run the OPC UA server with
-  `securityMode: Sign` or `SignAndEncrypt` and real certificates. The gateway logs a WARN at startup when OPC UA
-  writes are enabled while `securityMode: None`, because an anonymous, unencrypted channel lets anyone on the
-  network write to opted-in tags.
+- **Operational security**: deployments that expose OPC UA writes to a network should use
+  `securityMode: Sign` or `SignAndEncrypt` with real certificates. This change does not enforce that recommendation
+  or emit a dedicated warning; with `securityMode: None`, any client able to reach the port can write opted-in tags.
 - **Consequence**: an operator who enables the flag accepts "any client that can reach the OPC UA port may write this
   tag". The per-tag flag is the only control; the flag must be set on as few tags as possible.
 - **Revisit**: when OPC UA user authentication lands, revisit this ADR. The migration path is to add a session→role

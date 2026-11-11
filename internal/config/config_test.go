@@ -1103,6 +1103,93 @@ func TestOPCUANoneModeAllowsEmptyCertAndKey(t *testing.T) {
 	}
 }
 
+// TestTagDefOPCUAEnabled_TrueFromYAML asserts PCS-CFG-5.3: a tag with
+// opcua_write_enabled:true is loaded with OPCUAEnabled == true.
+func TestTagDefOPCUAEnabled_TrueFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "opcua-enabled-tag.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "plc-o"
+    address: "10.0.0.1"
+    tags:
+      - name: "Feed.Rate"
+        type: "Float"
+        writable: true
+        opcua_write_enabled: true
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing opcua-enabled-tag.yaml: %v", err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 || len(cfg.PLCs[0].Tags) == 0 {
+		t.Fatal("expected PLC with tags")
+	}
+	if !cfg.PLCs[0].Tags[0].OPCUAEnabled {
+		t.Errorf("Tags[0].OPCUAEnabled = false; want true (opcua_write_enabled:true in YAML)")
+	}
+}
+
+// TestTagDefOPCUAEnabled_DefaultsFalse asserts PCS-CFG-5.3: a tag omitting
+// opcua_write_enabled defaults to OPCUAEnabled == false (OPC UA writes are off
+// by default).
+func TestTagDefOPCUAEnabled_DefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "no-opcua-tag.yaml")
+	content := `gateway:
+  id: "test"
+  logLevel: "info"
+  logFormat: "text"
+server:
+  httpAddr: ":8080"
+plcs:
+  - name: "plc-p"
+    address: "10.0.0.1"
+    tags:
+      - name: "Feed.Rate"
+        type: "Float"
+        writable: true
+`
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing no-opcua-tag.yaml: %v", err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.PLCs) == 0 || len(cfg.PLCs[0].Tags) == 0 {
+		t.Fatal("expected PLC with tags")
+	}
+	if cfg.PLCs[0].Tags[0].OPCUAEnabled {
+		t.Errorf("Tags[0].OPCUAEnabled = true; want false (opcua_write_enabled omitted in YAML)")
+	}
+}
+
+// TestTagDefOPCUAEnabled_ValidatePLCUnaffected asserts PCS-CFG-5.3:
+// opcua_write_enabled has no validation constraint — presence or absence is
+// always valid.
+func TestTagDefOPCUAEnabled_ValidatePLCUnaffected(t *testing.T) {
+	p := config.PLC{
+		Name:    "plc-v",
+		Address: "10.0.0.1",
+		Tags: []config.TagDef{
+			{Name: "Feed.Rate", Type: "Float", Writable: true, OPCUAEnabled: true},
+			{Name: "Motor.Speed", Type: "Float", Writable: false, OPCUAEnabled: false},
+		},
+	}
+	if err := config.ValidatePLC(p); err != nil {
+		t.Errorf("ValidatePLC returned error for opcua_write_enabled tags: %v", err)
+	}
+}
+
 // validConfig returns a config that passes Validate().
 func validConfig(t *testing.T) *config.Config {
 	t.Helper()

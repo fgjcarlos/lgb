@@ -83,12 +83,13 @@ CREATE TABLE IF NOT EXISTS plcs (
 );
 
 CREATE TABLE IF NOT EXISTS plc_tags (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    plc_id       INTEGER NOT NULL REFERENCES plcs(id) ON DELETE CASCADE,
-    name         TEXT    NOT NULL,
-    type         TEXT    NOT NULL,
-    writable     INTEGER NOT NULL DEFAULT 0,
-    dcmd_enabled INTEGER NOT NULL DEFAULT 0,
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    plc_id              INTEGER NOT NULL REFERENCES plcs(id) ON DELETE CASCADE,
+    name                TEXT    NOT NULL,
+    type                TEXT    NOT NULL,
+    writable            INTEGER NOT NULL DEFAULT 0,
+    dcmd_enabled        INTEGER NOT NULL DEFAULT 0,
+    opcua_write_enabled INTEGER NOT NULL DEFAULT 0,
     UNIQUE(plc_id, name)
 );`)
 	if err != nil {
@@ -101,6 +102,16 @@ CREATE TABLE IF NOT EXISTS plc_tags (
 	// the "duplicate column name" error as a no-op success (idempotent).
 	_, alterErr := s.db.ExecContext(ctx,
 		`ALTER TABLE plc_tags ADD COLUMN dcmd_enabled INTEGER NOT NULL DEFAULT 0`)
+	if alterErr != nil && !containsStr(alterErr.Error(), "duplicate column name") {
+		return alterErr
+	}
+
+	// Idempotent migration: add opcua_write_enabled (PCS-CFG-5.3) using the
+	// same pattern as dcmd_enabled. Existing rows keep their data — the new
+	// column defaults to 0, so every pre-existing tag stays read-only over
+	// OPC UA until an operator opts in.
+	_, alterErr = s.db.ExecContext(ctx,
+		`ALTER TABLE plc_tags ADD COLUMN opcua_write_enabled INTEGER NOT NULL DEFAULT 0`)
 	if alterErr != nil && !containsStr(alterErr.Error(), "duplicate column name") {
 		return alterErr
 	}
@@ -332,7 +343,8 @@ func (s *Store) Seed(ctx context.Context, plcs []config.PLC) error {
 // listTags fetches all tags for the given PLC surrogate ID, ordered by insertion.
 func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, type, writable, dcmd_enabled FROM plc_tags WHERE plc_id = ? ORDER BY id`, plcID)
+		`SELECT name, type, writable, dcmd_enabled, opcua_write_enabled
+		   FROM plc_tags WHERE plc_id = ? ORDER BY id`, plcID)
 	if err != nil {
 		return nil, err
 	}
@@ -341,12 +353,13 @@ func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, err
 	var tags []config.TagDef
 	for rows.Next() {
 		var tag config.TagDef
-		var writable, dcmdEnabled int
-		if err := rows.Scan(&tag.Name, &tag.Type, &writable, &dcmdEnabled); err != nil {
+		var writable, dcmdEnabled, opcuaEnabled int
+		if err := rows.Scan(&tag.Name, &tag.Type, &writable, &dcmdEnabled, &opcuaEnabled); err != nil {
 			return nil, err
 		}
 		tag.Writable = writable != 0
 		tag.DCMDEnabled = dcmdEnabled != 0
+		tag.OPCUAEnabled = opcuaEnabled != 0
 		tags = append(tags, tag)
 	}
 	return tags, rows.Err()
@@ -356,8 +369,10 @@ func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, err
 func insertTags(ctx context.Context, tx *sql.Tx, plcID int64, tags []config.TagDef) error {
 	for _, tag := range tags {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO plc_tags(plc_id, name, type, writable, dcmd_enabled) VALUES (?, ?, ?, ?, ?)`,
-			plcID, tag.Name, tag.Type, boolToInt(tag.Writable), boolToInt(tag.DCMDEnabled)); err != nil {
+			`INSERT INTO plc_tags(plc_id, name, type, writable, dcmd_enabled, opcua_write_enabled)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			plcID, tag.Name, tag.Type, boolToInt(tag.Writable), boolToInt(tag.DCMDEnabled),
+			boolToInt(tag.OPCUAEnabled)); err != nil {
 			return err
 		}
 	}

@@ -49,6 +49,7 @@ type plcWorker struct {
 	cfg    config.PLC
 	cancel context.CancelFunc
 	done   chan struct{} // closed by runWorker when it returns
+	status *workerStatus // operational status, updated by runWorker
 }
 
 // Manager owns the lifecycle of all PLC Drivers: start, stop, lookup, and
@@ -101,7 +102,7 @@ func NewManager(cfg *config.Config, log *slog.Logger, factory DriverFactory, tag
 	// Eagerly create drivers so Driver(name) works before Start.
 	for _, plcCfg := range cfg.PLCs {
 		d := factory(plcCfg)
-		m.workers[plcCfg.Name] = &plcWorker{driver: d, cfg: plcCfg, done: make(chan struct{})}
+		m.workers[plcCfg.Name] = &plcWorker{driver: d, cfg: plcCfg, done: make(chan struct{}), status: newWorkerStatus(plcCfg)}
 	}
 
 	return m
@@ -127,12 +128,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		d := w.driver
 		plcCfg := w.cfg
 		doneCh := w.done
+		status := w.status
 
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
 			defer close(doneCh)
-			m.runWorker(plcCtx, workerName, d, plcCfg)
+			m.runWorker(plcCtx, workerName, d, plcCfg, status)
 		}()
 	}
 
@@ -299,7 +301,8 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 			d := m.factory(plcCfg)
 			plcCtx, cancel := context.WithCancel(ctx)
 			doneCh := make(chan struct{})
-			w := &plcWorker{driver: d, cfg: plcCfg, cancel: cancel, done: doneCh}
+			status := newWorkerStatus(plcCfg)
+			w := &plcWorker{driver: d, cfg: plcCfg, cancel: cancel, done: doneCh, status: status}
 			m.workers[plcCfg.Name] = w
 
 			workerName := plcCfg.Name
@@ -308,7 +311,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 			go func() {
 				defer m.wg.Done()
 				defer close(doneCh)
-				m.runWorker(plcCtx, workerName, d, capturedCfg)
+				m.runWorker(plcCtx, workerName, d, capturedCfg, status)
 			}()
 		}
 	}
@@ -324,7 +327,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 // Exits when ctx is cancelled.
 //
 // Design §6.1 (connection lifecycle), §6.4 (reconnect on failure).
-func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg config.PLC) {
+func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg config.PLC, status *workerStatus) {
 	log := m.log.With(slog.String("plc", name))
 
 	// Phase 1 connection via retry.Do.
@@ -332,9 +335,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 		Initial:     time.Second,
 		Max:         30 * time.Second,
 		MaxAttempts: 0, // unlimited — exit only on ctx cancel
-	}, func(ctx context.Context) error {
-		return d.Connect(ctx)
-	})
+	}, trackedConnect(d, status))
 	if connectErr != nil {
 		// ctx was cancelled or context expired — exit gracefully.
 		if ctx.Err() != nil {
@@ -345,14 +346,10 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 	}
 
 	log.Info("plc manager: connected")
+	status.setConnected(time.Now())
 
 	// Determine scan rate from config; default to 1 second if absent or unparseable.
-	scanRate := time.Second
-	if plcCfg.ScanRate != "" {
-		if dur, err := time.ParseDuration(plcCfg.ScanRate); err == nil && dur > 0 {
-			scanRate = dur
-		}
-	}
+	scanRate := scanRateOf(plcCfg)
 
 	ticker := time.NewTicker(scanRate)
 	defer ticker.Stop()
@@ -368,10 +365,13 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 		case <-ticker.C:
 			if !d.Connected() {
 				log.Warn("plc manager: not connected, attempting reconnect")
-				if err := reconnect(ctx, d, log); err != nil {
+				status.setDisconnected()
+				if err := reconnect(ctx, d, log, status); err != nil {
 					return
 				}
+				status.setConnected(time.Now())
 			}
+			scanStart := time.Now()
 			for _, tag := range plcCfg.Tags {
 				dest := m.AllocDest(tag.Type, tag.Name)
 				if dest == nil {
@@ -389,7 +389,9 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 					}
 					continue
 				}
-				if err := d.ReadTag(tag.Name, dest); err != nil {
+				err := d.ReadTag(tag.Name, dest)
+				status.recordRead(err, time.Now())
+				if err != nil {
 					log.Warn("plc manager: ReadTag error",
 						slog.String("tag", tag.Name),
 						slog.String("err", err.Error()))
@@ -437,13 +439,14 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 					lastQuality[tag.Name] = quality
 				}
 			}
+			status.recordScan(scanStart, time.Now())
 		}
 	}
 }
 
 // reconnect attempts to re-establish the driver connection via retry.Do.
 // Returns nil when connected, or ctx.Err() when the context is cancelled.
-func reconnect(ctx context.Context, d Driver, log *slog.Logger) error {
+func reconnect(ctx context.Context, d Driver, log *slog.Logger, status *workerStatus) error {
 	if err := d.Close(); err != nil {
 		log.Warn("plc manager: reconnect: Close error", slog.String("err", err.Error()))
 	}
@@ -452,9 +455,18 @@ func reconnect(ctx context.Context, d Driver, log *slog.Logger) error {
 		Initial:     time.Second,
 		Max:         30 * time.Second,
 		MaxAttempts: 0,
-	}, func(ctx context.Context) error {
-		return d.Connect(ctx)
-	})
+	}, trackedConnect(d, status))
+}
+
+// trackedConnect wraps d.Connect so every failed attempt is recorded in status.
+func trackedConnect(d Driver, status *workerStatus) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		err := d.Connect(ctx)
+		if err != nil && ctx.Err() == nil {
+			status.recordConnectError(err, time.Now())
+		}
+		return err
+	}
 }
 
 func (m *Manager) emitTagUpdate(update TagUpdate) {

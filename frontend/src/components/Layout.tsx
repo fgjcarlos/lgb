@@ -17,6 +17,7 @@ export function Layout() {
   const { user, logout } = useAuth();
 
   const visibleRoutes = routes.filter((r) => {
+    if (r.hideInNav) return false;
     if (!r.requiredRole) return true;
     if (!user) return false;
     return ROLE_RANK[user.role] >= ROLE_RANK[r.requiredRole];

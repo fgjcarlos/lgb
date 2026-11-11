@@ -5,6 +5,7 @@ import {
   Database,
   Gauge,
   HardDriveDownload,
+  MonitorDot,
   ShieldCheck,
   Stethoscope,
   Tags as TagsIcon,
@@ -19,12 +20,15 @@ import { Backup } from "@/pages/Backup";
 import { Users } from "@/pages/Users";
 import { PLCs } from "@/pages/PLCs";
 import { ACL } from "@/pages/ACL";
+import { PLCStatusDetail, PLCStatusOverview } from "@/pages/PLCStatus";
 
 export interface RouteEntry {
   path: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
   requiredRole?: AuthUser["role"];
+  /** Parameterised routes (e.g. detail pages) are reachable but not listed in the nav. */
+  hideInNav?: boolean;
   element: ReactNode;
 }
 
@@ -52,6 +56,20 @@ export const routes: RouteEntry[] = [
     label: "Diagnostics",
     icon: Stethoscope,
     element: <Diagnostics />,
+  },
+  {
+    path: "/plc-status",
+    label: "PLC Status",
+    icon: MonitorDot,
+    element: <PLCStatusOverview />,
+  },
+  {
+    // Viewer+: read-only status, unlike the admin-only /plcs CRUD page.
+    path: "/plcs/:name/status",
+    label: "PLC Status",
+    icon: MonitorDot,
+    hideInNav: true,
+    element: <PLCStatusDetail />,
   },
   {
     path: "/plcs",

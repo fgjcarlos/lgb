@@ -87,6 +87,7 @@ const plcSchema = z.object({
       type: z.enum(TAG_TYPES),
       writable: z.boolean(),
       dcmd_enabled: z.boolean(), // PCS-CFG-5.2
+      opcua_write_enabled: z.boolean(), // PCS-CFG-5.3
     }),
   ),
 });
@@ -118,6 +119,7 @@ function toFormValues(plc: PLCRow): PLCFormValues {
       type: t.type as (typeof TAG_TYPES)[number],
       writable: t.writable,
       dcmd_enabled: t.dcmd_enabled,
+      opcua_write_enabled: t.opcua_write_enabled,
     })),
   };
 }
@@ -421,7 +423,15 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => append({ name: "", type: "Float", writable: false, dcmd_enabled: false })}
+            onClick={() =>
+              append({
+                name: "",
+                type: "Float",
+                writable: false,
+                dcmd_enabled: false,
+                opcua_write_enabled: false,
+              })
+            }
           >
             <Plus className="mr-2 h-4 w-4" />
             Add tag
@@ -437,7 +447,7 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
             {fields.map((field, index) => (
               <div
                 key={field.id}
-                className="grid grid-cols-[1fr_140px_auto_auto_auto] items-center gap-2"
+                className="grid grid-cols-[1fr_140px_auto_auto_auto_auto] items-center gap-2"
               >
                 <div>
                   <Input
@@ -474,6 +484,13 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                     {...register(`tags.${index}.dcmd_enabled`)}
                   />
                   DCMD Enabled
+                </label>
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    {...register(`tags.${index}.opcua_write_enabled`)}
+                  />
+                  OPC UA Write
                 </label>
                 <Button
                   type="button"

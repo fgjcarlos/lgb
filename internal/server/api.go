@@ -156,6 +156,9 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	// (TWA-API-5.1)
 	s.registerACLRoutes(mux)
 
+	// Per-PLC operational status — manager-backed, viewer+.
+	s.registerPLCStatusRoute(mux)
+
 	// PLC CRUD endpoints — store-backed. Reads are viewer+ (consistent with
 	// GET /api/config/mappings, which exposes the same PLC/tag data); mutations
 	// are admin only.

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: LGB Gateway API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     REST and realtime API surface for the LGB industrial IoT gateway.
 
@@ -295,6 +295,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PLCTag"
+
+    PLCStatus:
+      type: object
+      description: |
+        Point-in-time operational status of one PLC worker. Timestamps that
+        never happened are `null`.
+      required: [name, state, scan_rate, scan_health, scan_count, read_count, read_error_count, connect_error_count, last_error]
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+          enum: [never_connected, connected, disconnected]
+          description: |
+            `never_connected` until the first successful connection;
+            `disconnected` after a lost connection while reconnecting.
+        scan_rate:
+          type: string
+          description: Effective scan period (Go duration, e.g. `500ms`).
+          example: 500ms
+        scan_health:
+          type: string
+          enum: [none, ok, stale]
+          description: |
+            `none` before the first completed scan; `stale` when the last scan
+            finished more than 3× `scan_rate` ago (stalled reads, or no scans
+            while disconnected).
+        connected_since:
+          type: string
+          format: date-time
+          nullable: true
+        last_scan:
+          type: string
+          format: date-time
+          nullable: true
+          description: Completion time of the last scan.
+        last_scan_duration_ms:
+          type: number
+          nullable: true
+        scan_count:
+          type: integer
+          format: int64
+        read_count:
+          type: integer
+          format: int64
+          description: Tag reads attempted (error rate = read_error_count / read_count).
+        read_error_count:
+          type: integer
+          format: int64
+        connect_error_count:
+          type: integer
+          format: int64
+        last_error:
+          type: string
+          description: Last read or connect error; empty when none.
+        last_error_at:
+          type: string
+          format: date-time
+          nullable: true
 
     PLCResponse:
       type: object
@@ -1025,6 +1084,48 @@ paths:
           description: Caller is not an admin.
         "404":
           description: PLC not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/plcs/{name}/status:
+    get:
+      summary: Per-PLC operational status
+      description: |
+        Viewer or higher. Live connection state, scan health and error counters
+        for one PLC, read from the running PLC manager (registered even when no
+        PLC store is wired). Per-tag values come from `/api/tags/current` and
+        `/api/ws/tags`.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Status snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PLCStatus"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller's role is not permitted.
+        "404":
+          description: PLC not configured or not running (`plc_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The PLC manager does not report status (`status_unavailable`).
           content:
             application/json:
               schema:

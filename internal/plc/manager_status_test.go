@@ -224,3 +224,37 @@ func TestManagerStatus_StalledScanIsStale(t *testing.T) {
 
 	waitStatus(t, mgr, func(s plc.Status) bool { return s.ScanHealth == plc.ScanHealthStale })
 }
+
+func TestManagerStatus_ReloadResetsChangedAndDropsRemoved(t *testing.T) {
+	t.Parallel()
+	d := &statusMockDriver{}
+	mgr := plc.NewManager(onePLCFloatConfig("20ms"), nil, func(_ config.PLC) plc.Driver { return d }, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = mgr.Stop() }()
+	waitStatus(t, mgr, func(s plc.Status) bool { return s.ScanCount >= 3 })
+
+	// Changed config: the worker is replaced and its status starts over.
+	changed := onePLCFloatConfig("250ms")
+	if err := mgr.Reload(ctx, changed); err != nil {
+		t.Fatalf("Reload(changed): %v", err)
+	}
+	st, ok := mgr.Status("plc-a")
+	if !ok {
+		t.Fatal("Status(plc-a) not found after Reload")
+	}
+	if st.ScanRate != 250*time.Millisecond || st.ScanCount != 0 || !st.LastScan.IsZero() {
+		t.Fatalf("expected a fresh status at 250ms, got %+v", st)
+	}
+
+	// Removed PLC: status is no longer reported.
+	if err := mgr.Reload(ctx, &config.Config{}); err != nil {
+		t.Fatalf("Reload(empty): %v", err)
+	}
+	if _, ok := mgr.Status("plc-a"); ok {
+		t.Fatal("Status(plc-a) ok = true after removal, want false")
+	}
+}

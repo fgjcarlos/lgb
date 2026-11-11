@@ -45,6 +45,34 @@ export function useCurrentTags(
   });
 }
 
+const CURRENT_TAGS_PAGE = 1000; // server maximum for `limit`
+
+/**
+ * Every current tag value, paging through GET /api/tags/current
+ * (`pagination.count` is the total), so no tag is cut off by the page limit.
+ */
+export function useAllCurrentTags(): UseQueryResult<TagRow[], ApiError | Error> {
+  const { getWsToken } = useAuth();
+  return useQuery({
+    queryKey: ["tags", "current", "all"],
+    queryFn: async () => {
+      const rows: TagRow[] = [];
+      for (let offset = 0; ; offset += CURRENT_TAGS_PAGE) {
+        const page = await apiFetch<PagedResponse<TagRow>>(
+          `/api/tags/current?limit=${CURRENT_TAGS_PAGE}&offset=${offset}`,
+          {},
+        );
+        rows.push(...page.data);
+        if (page.data.length === 0 || offset + CURRENT_TAGS_PAGE >= page.pagination.count) {
+          return rows;
+        }
+      }
+    },
+    enabled: !!getWsToken,
+    refetchInterval: 10_000,
+  });
+}
+
 export interface MappingTag {
   name: string;
   type: string;
@@ -304,12 +332,16 @@ export function usePLCStatus(
         {},
       ),
     enabled: !!getWsToken && !!name,
-    refetchInterval: 2_000,
-    // 404 (unknown PLC) and 503 (no status support) will not fix themselves.
-    retry: (count, err) =>
-      !(err instanceof ApiError && (err.status === 404 || err.status === 503)) &&
-      count < 3,
+    // 404 (unknown PLC) and 503 (no status support) will not fix themselves:
+    // neither retry nor keep polling them.
+    refetchInterval: (query) =>
+      isPermanentStatusError(query.state.error) ? false : 2_000,
+    retry: (count, err) => !isPermanentStatusError(err) && count < 3,
   });
+}
+
+function isPermanentStatusError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 404 || err.status === 503);
 }
 
 // ─── ACL CRUD hooks (admin-only; backed by the SQLite tag_acl store) ────────

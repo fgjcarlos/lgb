@@ -10,6 +10,7 @@ package opcua
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -889,5 +890,101 @@ func TestLiveSession_WriteReachesPLCAndKeepsReadPath(t *testing.T) {
 	}
 	if got != float32(11.5) {
 		t.Errorf("read value = %v; want 11.5 (the live tag value)", got)
+	}
+}
+
+// ─── Bounded correction: numeric range and audit durability ──────────────────
+
+// failingAudit is an AuditSink whose Log always fails, standing in for an
+// audit sink that cannot persist its event (a full disk, a closed file).
+type failingAudit struct{}
+
+func (failingAudit) Log(auth.AuditEvent) error {
+	return fmt.Errorf("audit sink unavailable")
+}
+
+// TestHandleWriteRequest_OutOfRangeNumber_DeniedAndAudited verifies that a
+// numeric value outside the declared type's range is denied with
+// ua.StatusBadTypeMismatch and never reaches the PLC.
+//
+// Two overflow shapes are covered: 2^63 is not representable as an int64 but
+// compares equal to float64(math.MaxInt64), and 1e100 narrows to +Inf as a
+// float32. Either one must be refused rather than written as a wrapped or
+// infinite setpoint.
+func TestHandleWriteRequest_OutOfRangeNumber_DeniedAndAudited(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		declared string
+		written  any
+	}{
+		{"int64 overflow", "Int64", float64(math.Exp2(63))},
+		{"float32 overflow", "Float", 1e100},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{
+				OPCUA: config.OPCUASection{Enabled: true, Host: "127.0.0.1", Port: 0, SecurityMode: "None"},
+				PLCs: []config.PLC{{
+					Name: "Silo-1",
+					Tags: []config.TagDef{{Name: "T", Type: tc.declared}},
+				}},
+			}
+			meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
+				"Silo-1/T": {Writable: true, OPCUAEnabled: true},
+			}}
+			acl := &countingACL{allow: false}
+			writer := &recordingWriter{}
+			audit := &recordingAudit{}
+
+			srv := newWriteTestServer(t, cfg, guardedOptions(meta, acl, writer, audit))
+			resp := srv.HandleWriteRequest(writeRequestFor(srv, "Silo-1", "T", tc.written))
+
+			if len(resp.Results) != 1 || resp.Results[0] != ua.StatusBadTypeMismatch {
+				t.Fatalf("status = %v; want %v (StatusBadTypeMismatch)", resp.Results, ua.StatusBadTypeMismatch)
+			}
+			if writer.count() != 0 {
+				t.Errorf("expected WriteTag NOT called, got %d calls", writer.count())
+			}
+			events := audit.all()
+			if len(events) != 1 {
+				t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+			}
+			if !strings.Contains(events[0].Detail, "outcome=deny") {
+				t.Errorf("Detail = %q; want outcome=deny", events[0].Detail)
+			}
+		})
+	}
+}
+
+// TestHandleWriteRequest_AuditFailure_NotReportedAsSuccess verifies that a
+// write whose audit event cannot be persisted is not reported as a success.
+// The PLC write already happened, so the handler answers with
+// ua.StatusBadInternalError: the client learns that the attempt could not be
+// accounted for instead of receiving a false StatusOK.
+func TestHandleWriteRequest_AuditFailure_NotReportedAsSuccess(t *testing.T) {
+	t.Parallel()
+	meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
+		"Silo-1/Feed.Rate": {Writable: true, OPCUAEnabled: true},
+	}}
+	acl := &countingACL{allow: false}
+	writer := &recordingWriter{}
+
+	srv := newWriteTestServer(t, writeTestConfig(), Options{
+		Guard:  writeguard.NewGuard(meta, acl),
+		Writer: writer,
+		Audit:  failingAudit{},
+	})
+
+	resp := srv.HandleWriteRequest(writeRequestFor(srv, "Silo-1", "Feed.Rate", 3.5))
+
+	if len(resp.Results) != 1 || resp.Results[0] != ua.StatusBadInternalError {
+		t.Fatalf("status = %v; want %v (StatusBadInternalError)", resp.Results, ua.StatusBadInternalError)
+	}
+	if writer.count() != 1 {
+		t.Errorf("expected 1 WriteTag call, got %d", writer.count())
 	}
 }

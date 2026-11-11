@@ -117,20 +117,20 @@ func (s *Server) HandleWriteRequest(req *ua.WriteRequest) *ua.WriteResponse {
 //  7. otherwise              → ua.StatusOK
 func (s *Server) handleWriteValue(wv *ua.WriteValue) ua.StatusCode {
 	if wv == nil || wv.NodeID == nil {
-		s.emitWriteAudit("", "", nil, "deny", "unknown node id")
+		_ = s.emitWriteAudit("", "", nil, "deny", "unknown node id")
 		return ua.StatusBadNodeIDUnknown
 	}
 
 	// (2) Resolve the node id to its (plc, tag) pair and declared type.
 	plcName, tagName, declaredType, ok := s.resolveTag(wv.NodeID)
 	if !ok {
-		s.emitWriteAudit("", "", nil, "deny", "unknown node id")
+		_ = s.emitWriteAudit("", "", nil, "deny", "unknown node id")
 		return ua.StatusBadNodeIDUnknown
 	}
 
 	// (3) Only the Value attribute may be written.
 	if wv.AttributeID != ua.AttributeIDValue {
-		s.emitWriteAudit(plcName, tagName, nil, "deny", "invalid attribute id")
+		_ = s.emitWriteAudit(plcName, tagName, nil, "deny", "invalid attribute id")
 		return ua.StatusBadAttributeIDInvalid
 	}
 
@@ -138,7 +138,7 @@ func (s *Server) handleWriteValue(wv *ua.WriteValue) ua.StatusCode {
 	// Resolve the node first so unknown identifiers still receive the precise
 	// OPC UA status required by the Write service contract.
 	if s.guard == nil || s.writer == nil {
-		s.emitWriteAudit(plcName, tagName, variantValue(wv.Value), "deny", "opcua write surface not configured")
+		_ = s.emitWriteAudit(plcName, tagName, variantValue(wv.Value), "deny", "opcua write surface not configured")
 		return ua.StatusBadUserAccessDenied
 	}
 
@@ -146,25 +146,29 @@ func (s *Server) handleWriteValue(wv *ua.WriteValue) ua.StatusCode {
 	raw := variantValue(wv.Value)
 	val, ok := convertValue(raw, declaredType)
 	if !ok {
-		s.emitWriteAudit(plcName, tagName, raw, "deny", "value type mismatch")
+		_ = s.emitWriteAudit(plcName, tagName, raw, "deny", "value type mismatch")
 		return ua.StatusBadTypeMismatch
 	}
 
 	// (6) Authorize through the shared write guard — no actor, no role, no ACL.
 	decision := s.guard.AuthorizeOPCUA(context.Background(), plcName, tagName)
 	if !decision.Allowed {
-		s.emitWriteAudit(plcName, tagName, val, "deny", decision.Reason)
+		_ = s.emitWriteAudit(plcName, tagName, val, "deny", decision.Reason)
 		return ua.StatusBadUserAccessDenied
 	}
 
 	// (7) Write through the PLC driver.
 	if err := s.writer.WriteTag(plcName, tagName, val); err != nil {
-		s.emitWriteAudit(plcName, tagName, val, "deny", fmt.Sprintf("write error: %v", err))
+		_ = s.emitWriteAudit(plcName, tagName, val, "deny", fmt.Sprintf("write error: %v", err))
 		return ua.StatusBadInternalError
 	}
 
-	// (8) Allow.
-	s.emitWriteAudit(plcName, tagName, val, "allow", "")
+	// (8) Allow. The audit event must be persisted for the attempt to count as
+	// an accounted write: if the sink fails, the write is reported as an
+	// internal error rather than a success nobody can trace.
+	if err := s.emitWriteAudit(plcName, tagName, val, "allow", ""); err != nil {
+		return ua.StatusBadInternalError
+	}
 	return ua.StatusOK
 }
 
@@ -196,22 +200,25 @@ func (s *Server) resolveTag(nodeID *ua.NodeID) (plcName, tagName, declaredType s
 }
 
 // emitWriteAudit emits exactly one tag.write audit event for an OPC UA write
-// attempt. It is nil-safe: with no audit sink configured the call is a no-op.
+// attempt and reports whether the event was persisted.
+//
+// It is nil-safe: with no audit sink configured the call is a no-op that
+// reports success, so a server without an audit sink still serves writes.
 //
 // The OPC UA surface carries no authenticated principal, so the actor username
 // is always empty. The detail uses the same flat key=value format as the HTTP
 // and DCMD paths, with source=opcua.
 //
 // (TWA-AUDIT-4.1)
-func (s *Server) emitWriteAudit(plcName, tagName string, value any, outcome, reason string) {
+func (s *Server) emitWriteAudit(plcName, tagName string, value any, outcome, reason string) error {
 	if s.audit == nil {
-		return
+		return nil
 	}
 	detail := fmt.Sprintf("plc=%s tag=%s value=%v outcome=%s source=opcua", plcName, tagName, value, outcome)
 	if reason != "" {
 		detail += fmt.Sprintf(" reason=%s", reason)
 	}
-	_ = s.audit.Log(auth.AuditEvent{
+	return s.audit.Log(auth.AuditEvent{
 		Action:   "tag.write",
 		Username: "",
 		Detail:   detail,
@@ -296,6 +303,11 @@ func convertValue(raw any, declaredType string) (any, bool) {
 		if !ok {
 			return nil, false
 		}
+		// A double outside the float32 range narrows to ±Inf, which is not the
+		// number the client sent and not a value a PLC should ever receive.
+		if f > math.MaxFloat32 || f < -math.MaxFloat32 {
+			return nil, false
+		}
 		return float32(f), true
 	case "Double":
 		f, ok := toFloat64(raw)
@@ -345,6 +357,11 @@ func toInt64(raw any) (int64, bool) {
 }
 
 // floatToInt64 converts an integral float to an int64.
+//
+// The upper bound is exclusive: float64 cannot represent math.MaxInt64
+// exactly, so it rounds up to 2^63. Comparing against math.MaxInt64 would
+// therefore let 2^63 through, and converting it to int64 overflows into a
+// wrapped negative value instead of the number the client sent.
 func floatToInt64(f float64) (int64, bool) {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, false
@@ -352,7 +369,7 @@ func floatToInt64(f float64) (int64, bool) {
 	if f != math.Trunc(f) {
 		return 0, false
 	}
-	if f < math.MinInt64 || f > math.MaxInt64 {
+	if f < math.MinInt64 || f >= math.Exp2(63) {
 		return 0, false
 	}
 	return int64(f), true

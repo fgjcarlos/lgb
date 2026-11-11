@@ -35,6 +35,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/plcstore"
 	"github.com/fgjcarlos/lgb/internal/server"
 	"github.com/fgjcarlos/lgb/internal/sparkplug"
+	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
 // NewServerCmd returns the server subcommand.
@@ -196,6 +197,14 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		slog.String("component", "acl-store"),
 		slog.String("path", aclStorePath))
 
+	// Build ONE shared write guard for every write surface (HTTP, DCMD and
+	// OPC UA). The guard reads the per-tag safety switches from the PLC store
+	// and the role×tag ACL from the ACL store. The OPC UA path never consults
+	// the ACL — its per-tag opt-in is the whole authorization decision.
+	// (TWA-ENFORCE-2.1, TWA-OPCUA-3.3, T6)
+	tagReader := server.NewPLCStoreTagReader(plcStore)
+	guard := newWriteGuard(tagReader, aclStore)
+
 	// Seed from YAML on first boot (IsEmpty guard makes it idempotent).
 	empty, err := plcStore.IsEmpty(context.Background())
 	if err != nil {
@@ -320,7 +329,15 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	var opcuaSrv server.OPCUAServer
 	if cfg.OPCUA.Enabled && plcMgr != nil {
 		if tagSrc, ok := plcMgr.(opcua.TagSource); ok {
-			opcuaSrv = opcua.New(cfg, tagSrc, logger)
+			// The OPC UA write surface shares the guard with the HTTP and DCMD
+			// surfaces; the PLC manager is the writer and the audit logger is
+			// the audit sink. (TWA-OPCUA-3.3, T6)
+			opcuaSrv = opcua.New(cfg, tagSrc, logger, opcua.Options{
+				Guard:  guard,
+				Writer: plcMgr,
+				Audit:  auditLog,
+				Tags:   tagReader,
+			})
 			logger.Info("opcua server created",
 				slog.String("component", "opcua"),
 				slog.Int("port", cfg.OPCUA.Port))
@@ -340,7 +357,9 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		BkpMgr:     bkpMgr,
 		PLCStore:   plcStore,
 		ACLStore:   aclStore,
-		// WriteGuard is nil — server.New auto-builds it from PLCStore+ACLStore.
+		// WriteGuard is the single shared guard built above — the same
+		// instance the OPC UA server uses. (T6)
+		WriteGuard: guard,
 	})
 
 	// Store server reference for tests.
@@ -398,6 +417,16 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+// newWriteGuard builds the single write guard shared by every write surface.
+//
+// The per-tag metadata comes from the PLC config store (passed in as the
+// TagReadable reader) and the role×tag ACL from the ACL store. The OPC UA path
+// never consults the ACL.
+// (TWA-ENFORCE-2.1, T6)
+func newWriteGuard(tags writeguard.TagReadable, aclStore *aclstore.Store) *writeguard.Guard {
+	return writeguard.NewGuard(tags, aclStore)
 }
 
 // getServerForTest is a test-only helper that returns the running *server.Server

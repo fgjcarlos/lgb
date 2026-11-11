@@ -14,11 +14,22 @@ import (
 )
 
 // plcstoreTagReader adapts *plcstore.Store to writeguard.TagReadable.
-// It reads both Writable and DCMDEnabled from the plc_tags table.
-// DCMDEnabled was added in PR3-pre (PCS-CFG-5.2); it defaults to false
-// on existing rows via the idempotent ALTER TABLE migration.
+// It reads Writable, DCMDEnabled and OPCUAEnabled from the plc_tags table.
+// DCMDEnabled was added in PR3-pre (PCS-CFG-5.2) and OPCUAEnabled in the
+// OPC UA write surface (PCS-CFG-5.3); both default to false on existing rows
+// via the idempotent ALTER TABLE migrations.
 type plcstoreTagReader struct {
 	store *plcstore.Store
+}
+
+// NewPLCStoreTagReader adapts a *plcstore.Store to writeguard.TagReadable.
+//
+// It is exported so cmd/lgb/cmd can build the single shared write guard for
+// the HTTP, DCMD and OPC UA surfaces without duplicating the adapter.
+//
+// (PCS-CFG-5.2, PCS-CFG-5.3, T6)
+func NewPLCStoreTagReader(store *plcstore.Store) writeguard.TagReadable {
+	return &plcstoreTagReader{store: store}
 }
 
 func (r *plcstoreTagReader) TagMeta(ctx context.Context, plcName, tagName string) (writeguard.TagMeta, bool) {
@@ -28,7 +39,11 @@ func (r *plcstoreTagReader) TagMeta(ctx context.Context, plcName, tagName string
 	}
 	for _, t := range p.Tags {
 		if t.Name == tagName {
-			return writeguard.TagMeta{Writable: t.Writable, DCMDEnabled: t.DCMDEnabled}, true
+			return writeguard.TagMeta{
+				Writable:     t.Writable,
+				DCMDEnabled:  t.DCMDEnabled,
+				OPCUAEnabled: t.OPCUAEnabled,
+			}, true
 		}
 	}
 	return writeguard.TagMeta{}, false

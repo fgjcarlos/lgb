@@ -734,5 +734,94 @@ func TestHandleGetPLC_DcmdEnabledInResponse(t *testing.T) {
 	}
 }
 
+// ─── PCS-CFG-5.3: opcua_write_enabled API round-trip ─────────────────────────
+
+// TestHandleCreatePLC_OpcuaWriteEnabledPersists verifies that creating a PLC
+// with a tag having opcua_write_enabled:true persists the flag and returns it
+// as true. (PCS-CFG-5.3)
+func TestHandleCreatePLC_OpcuaWriteEnabledPersists(t *testing.T) {
+	store, _, tokens, baseURL, stop := newPLCTestServer(t)
+	defer stop()
+
+	tok, _ := tokens.Issue(1, "admin", auth.RoleAdmin)
+	body := `{"name":"plc-opcua","address":"10.0.0.3:44818","slot":0,"socket_timeout":"5s","scan_rate":"1s","keep_alive":false,"path":"","tags":[{"name":"Feed.Rate","type":"Float","writable":true,"opcua_write_enabled":true}]}`
+	resp := doRequest(t, http.MethodPost, baseURL+"/api/plcs", body, tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Tags []struct {
+				Name         string `json:"name"`
+				OpcuaEnabled bool   `json:"opcua_write_enabled"`
+			} `json:"tags"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result.Data.Tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(result.Data.Tags))
+	}
+	if !result.Data.Tags[0].OpcuaEnabled {
+		t.Errorf("tag opcua_write_enabled = false; want true (round-trip from POST body)")
+	}
+
+	// The flag must also be persisted in the store.
+	stored, err := store.Get(context.Background(), "plc-opcua")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if len(stored.Tags) != 1 {
+		t.Fatalf("expected 1 stored tag, got %d", len(stored.Tags))
+	}
+	if !stored.Tags[0].OPCUAEnabled {
+		t.Errorf("stored tag OPCUAEnabled = false; want true (persisted)")
+	}
+}
+
+// TestHandleGetPLC_OpcuaWriteEnabledInResponse verifies that retrieving a PLC
+// returns opcua_write_enabled in the tag JSON. (PCS-CFG-5.3)
+func TestHandleGetPLC_OpcuaWriteEnabledInResponse(t *testing.T) {
+	store, _, tokens, baseURL, stop := newPLCTestServer(t)
+	defer stop()
+	ctx := context.Background()
+
+	// Seed the store directly with OPCUAEnabled=true.
+	_ = store.Create(ctx, config.PLC{
+		Name: "plc-opcua2", Address: "10.0.0.4:44818", ScanRate: "1s", SocketTimeout: "5s",
+		Tags: []config.TagDef{{Name: "Setpoint.Temp", Type: "Float", Writable: true, OPCUAEnabled: true}},
+	})
+
+	tok, _ := tokens.Issue(1, "admin", auth.RoleAdmin)
+	resp := doRequest(t, http.MethodGet, baseURL+"/api/plcs/plc-opcua2", "", tok)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Tags []struct {
+				Name         string `json:"name"`
+				OpcuaEnabled bool   `json:"opcua_write_enabled"`
+			} `json:"tags"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result.Data.Tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(result.Data.Tags))
+	}
+	if !result.Data.Tags[0].OpcuaEnabled {
+		t.Errorf("GET response tag opcua_write_enabled = false; want true")
+	}
+}
+
 // compile-time guard: bytes import used by doRequest (defined in api_users_test.go).
 var _ = bytes.NewBuffer

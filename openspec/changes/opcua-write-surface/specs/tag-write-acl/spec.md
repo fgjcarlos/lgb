@@ -32,16 +32,17 @@ The handler MUST:
 2. Convert the written value to the tag's declared type. A value that cannot be converted MUST be rejected with
    `ua.StatusBadTypeMismatch`, audited as a deny, and MUST NOT reach the PLC.
 3. Call `AuthorizeOPCUA(ctx, plcName, tagName)` — no actor, no role, no credential lookup.
-4. On allow: call `Driver.WriteTag`, emit an audit event with `source="opcua"`, and answer `ua.StatusOK`.
+4. On allow: emit the audit event with `source="opcua"` **before** the write, then call `Driver.WriteTag` and answer `ua.StatusOK`. An audit event that cannot be persisted MUST stop the write: the setpoint MUST NOT change and the answer MUST be `ua.StatusBadInternalError`. A physical write therefore always carries its audit trail.
 5. On deny: emit an audit event with `outcome="deny"`, `source="opcua"`, and answer `ua.StatusBadUserAccessDenied`.
-6. On PLC write error: emit an audit event with `outcome="deny"`, `source="opcua"`, and answer
-   `ua.StatusBadInternalError`.
+6. On PLC write error: answer `ua.StatusBadInternalError`. The attempt's single audit event was already persisted
+   before the write, so no second event is emitted.
 
 The handler MUST NOT call `aclStore.CanWrite` or `AuthorizeHTTP`. An operator-level HTTP ACL rule granting write on a
 tag does NOT enable OPC UA writes to that tag, and `dcmd_enabled` does NOT enable OPC UA writes to that tag.
 
-When the OPC UA server is constructed without a write guard or without a PLC writer, every write attempt MUST be
-denied with `ua.StatusBadUserAccessDenied` and audited as a deny. The read-only server MUST keep working.
+When the OPC UA server is constructed without a write guard, without a PLC writer or without an audit sink, every
+write attempt MUST be denied with `ua.StatusBadUserAccessDenied` (and audited as a deny whenever a sink is
+configured). A write that cannot be audited MUST NOT reach the PLC. The read-only server MUST keep working.
 
 Each tag node MUST expose an `AccessLevel` attribute: `CurrentRead` when the tag is not OPC UA-writable,
 `CurrentRead | CurrentWrite` when it is. The level is derived from the same metadata the guard reads.
@@ -94,6 +95,21 @@ Each tag node MUST expose an `AccessLevel` attribute: `CurrentRead` when the tag
 - THEN the write is answered with `ua.StatusBadTypeMismatch`
 - AND `Driver.WriteTag` is NOT called
 - AND an audit event with `outcome="deny"`, `source="opcua"` is recorded
+
+#### Scenario: (h) A write whose audit event cannot be persisted never reaches the PLC
+
+- GIVEN tag `Feed.Rate` has `Writable=true` and `OPCUAEnabled=true`
+- AND the audit sink cannot persist its event
+- WHEN an OPC UA client writes to the `Feed.Rate` node
+- THEN `Driver.WriteTag` is NOT called
+- AND the write is answered with `ua.StatusBadInternalError`
+
+#### Scenario: (i) A write without an audit sink is denied
+
+- GIVEN the OPC UA server is built without an audit sink
+- WHEN an OPC UA client writes to an OPC UA-writable tag
+- THEN `Driver.WriteTag` is NOT called
+- AND the write is answered with `ua.StatusBadUserAccessDenied`
 
 #### Scenario: (g) A denied write never mutates the read path
 

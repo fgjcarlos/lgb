@@ -10,6 +10,7 @@ package opcua
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -534,8 +535,10 @@ func TestHandleWriteRequest_ConversionToDeclaredType(t *testing.T) {
 // ─── TWA-OPCUA-3.3 step 6: PLC write error ──────────────────────────────────
 
 // TestHandleWriteRequest_WriteError_InternalErrorAndAudited verifies that a
-// PLC write failure is answered with ua.StatusBadInternalError and audited as
-// a deny with the reason "write error: ...". (TWA-OPCUA-3.3 step 6)
+// PLC write failure is answered with ua.StatusBadInternalError. The attempt's
+// single audit event was persisted before the write, so it records the allowed
+// decision and no second event is emitted.
+// (TWA-OPCUA-3.3 step 6)
 func TestHandleWriteRequest_WriteError_InternalErrorAndAudited(t *testing.T) {
 	t.Parallel()
 	meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
@@ -557,7 +560,7 @@ func TestHandleWriteRequest_WriteError_InternalErrorAndAudited(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected exactly 1 audit event, got %d", len(events))
 	}
-	for _, want := range []string{"outcome=deny", "source=opcua", "reason=write error: boom"} {
+	for _, want := range []string{"outcome=allow", "source=opcua"} {
 		if !strings.Contains(events[0].Detail, want) {
 			t.Errorf("Detail = %q; want it to contain %q", events[0].Detail, want)
 		}
@@ -626,7 +629,7 @@ func TestHandleWriteRequest_NoWriter_Denied(t *testing.T) {
 // TestHandleWriteRequest_NilAuditSink_NoPanic verifies that the audit sink is
 // optional: with no sink configured the write still succeeds and nothing
 // panics. (TWA-AUDIT-4.1 — audit calls must be nil-safe)
-func TestHandleWriteRequest_NilAuditSink_NoPanic(t *testing.T) {
+func TestHandleWriteRequest_NilAuditSink_Denied(t *testing.T) {
 	t.Parallel()
 	meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
 		"Silo-1/Feed.Rate": {Writable: true, OPCUAEnabled: true},
@@ -640,11 +643,11 @@ func TestHandleWriteRequest_NilAuditSink_NoPanic(t *testing.T) {
 	})
 
 	resp := srv.HandleWriteRequest(writeRequestFor(srv, "Silo-1", "Feed.Rate", 3.5))
-	if len(resp.Results) != 1 || resp.Results[0] != ua.StatusOK {
-		t.Fatalf("status = %v; want %v (StatusOK)", resp.Results, ua.StatusOK)
+	if len(resp.Results) != 1 || resp.Results[0] != ua.StatusBadUserAccessDenied {
+		t.Fatalf("status = %v; want %v (StatusBadUserAccessDenied)", resp.Results, ua.StatusBadUserAccessDenied)
 	}
-	if writer.count() != 1 {
-		t.Errorf("expected 1 WriteTag call, got %d", writer.count())
+	if writer.count() != 0 {
+		t.Errorf("expected WriteTag NOT called, got %d calls", writer.count())
 	}
 }
 
@@ -889,5 +892,152 @@ func TestLiveSession_WriteReachesPLCAndKeepsReadPath(t *testing.T) {
 	}
 	if got != float32(11.5) {
 		t.Errorf("read value = %v; want 11.5 (the live tag value)", got)
+	}
+}
+
+// ─── Bounded correction: numeric range and audit durability ──────────────────
+
+// failingAudit is an AuditSink whose Log always fails, standing in for an
+// audit sink that cannot persist its event (a full disk, a closed file).
+type failingAudit struct{}
+
+func (failingAudit) Log(auth.AuditEvent) error {
+	return fmt.Errorf("audit sink unavailable")
+}
+
+// TestHandleWriteRequest_OutOfRangeNumber_DeniedAndAudited verifies that a
+// numeric value outside the declared type's range is denied with
+// ua.StatusBadTypeMismatch and never reaches the PLC.
+//
+// Two overflow shapes are covered: 2^63 is not representable as an int64 but
+// compares equal to float64(math.MaxInt64), and 1e100 narrows to +Inf as a
+// float32. Either one must be refused rather than written as a wrapped or
+// infinite setpoint.
+func TestHandleWriteRequest_OutOfRangeNumber_DeniedAndAudited(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		declared string
+		written  any
+	}{
+		{"int64 overflow", "Int64", float64(math.Exp2(63))},
+		{"float32 overflow", "Float", 1e100},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{
+				OPCUA: config.OPCUASection{Enabled: true, Host: "127.0.0.1", Port: 0, SecurityMode: "None"},
+				PLCs: []config.PLC{{
+					Name: "Silo-1",
+					Tags: []config.TagDef{{Name: "T", Type: tc.declared}},
+				}},
+			}
+			meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
+				"Silo-1/T": {Writable: true, OPCUAEnabled: true},
+			}}
+			acl := &countingACL{allow: false}
+			writer := &recordingWriter{}
+			audit := &recordingAudit{}
+
+			srv := newWriteTestServer(t, cfg, guardedOptions(meta, acl, writer, audit))
+			resp := srv.HandleWriteRequest(writeRequestFor(srv, "Silo-1", "T", tc.written))
+
+			if len(resp.Results) != 1 || resp.Results[0] != ua.StatusBadTypeMismatch {
+				t.Fatalf("status = %v; want %v (StatusBadTypeMismatch)", resp.Results, ua.StatusBadTypeMismatch)
+			}
+			if writer.count() != 0 {
+				t.Errorf("expected WriteTag NOT called, got %d calls", writer.count())
+			}
+			events := audit.all()
+			if len(events) != 1 {
+				t.Fatalf("expected exactly 1 audit event, got %d", len(events))
+			}
+			if !strings.Contains(events[0].Detail, "outcome=deny") {
+				t.Errorf("Detail = %q; want outcome=deny", events[0].Detail)
+			}
+		})
+	}
+}
+
+// TestHandleWriteRequest_AuditFailure_NoWriteReachesPLC verifies that a write
+// whose audit event cannot be persisted never reaches the PLC and is not
+// reported as a success: the handler answers with ua.StatusBadInternalError.
+//
+// The audit event is persisted BEFORE the write, so a failing sink stops the
+// attempt instead of leaving an untraceable setpoint behind.
+func TestHandleWriteRequest_AuditFailure_NoWriteReachesPLC(t *testing.T) {
+	t.Parallel()
+	meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
+		"Silo-1/Feed.Rate": {Writable: true, OPCUAEnabled: true},
+	}}
+	acl := &countingACL{allow: false}
+	writer := &recordingWriter{}
+
+	srv := newWriteTestServer(t, writeTestConfig(), Options{
+		Guard:  writeguard.NewGuard(meta, acl),
+		Writer: writer,
+		Audit:  failingAudit{},
+	})
+
+	resp := srv.HandleWriteRequest(writeRequestFor(srv, "Silo-1", "Feed.Rate", 3.5))
+
+	if len(resp.Results) != 1 || resp.Results[0] != ua.StatusBadInternalError {
+		t.Fatalf("status = %v; want %v (StatusBadInternalError)", resp.Results, ua.StatusBadInternalError)
+	}
+	if writer.count() != 0 {
+		t.Errorf("expected WriteTag NOT called, got %d calls", writer.count())
+	}
+}
+
+// orderAudit is an AuditSink that records the audit event and how many PLC
+// writes had already happened when the event was persisted. It pins the order
+// of the two side effects: the event is persisted BEFORE the write.
+type orderAudit struct {
+	writer        *recordingWriter
+	events        []auth.AuditEvent
+	writesAtAudit int
+}
+
+func (a *orderAudit) Log(ev auth.AuditEvent) error {
+	a.events = append(a.events, ev)
+	a.writesAtAudit = a.writer.count()
+	return nil
+}
+
+// TestHandleWriteRequest_AuditPersistedBeforeWrite verifies that the allow
+// audit event is persisted BEFORE the PLC write: no write has happened yet
+// when the event is stored, so every physical write carries its audit trail.
+func TestHandleWriteRequest_AuditPersistedBeforeWrite(t *testing.T) {
+	t.Parallel()
+	meta := &fakeTagMeta{tags: map[string]writeguard.TagMeta{
+		"Silo-1/Feed.Rate": {Writable: true, OPCUAEnabled: true},
+	}}
+	acl := &countingACL{allow: false}
+	writer := &recordingWriter{}
+	audit := &orderAudit{writer: writer}
+
+	srv := newWriteTestServer(t, writeTestConfig(), Options{
+		Guard:  writeguard.NewGuard(meta, acl),
+		Writer: writer,
+		Audit:  audit,
+		Tags:   meta,
+	})
+
+	resp := srv.HandleWriteRequest(writeRequestFor(srv, "Silo-1", "Feed.Rate", 3.5))
+
+	if len(resp.Results) != 1 || resp.Results[0] != ua.StatusOK {
+		t.Fatalf("status = %v; want %v (StatusOK)", resp.Results, ua.StatusOK)
+	}
+	if audit.writesAtAudit != 0 {
+		t.Errorf("audit persisted after %d PLC writes; want it persisted before the write", audit.writesAtAudit)
+	}
+	if writer.count() != 1 {
+		t.Errorf("expected 1 WriteTag call, got %d", writer.count())
+	}
+	if len(audit.events) != 1 {
+		t.Fatalf("expected exactly 1 audit event, got %d", len(audit.events))
 	}
 }

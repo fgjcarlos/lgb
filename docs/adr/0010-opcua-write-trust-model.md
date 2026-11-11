@@ -54,6 +54,10 @@ audit event records `source=opcua` with an empty actor, exactly like DCMD.
 
 - **Accepted**: OPC UA writes are authorized by `Writable && opcua_write_enabled`; no ACL lookup on this path.
 - **Accepted**: audit events for OPC UA writes carry no actor.
+- **Accepted**: the OPC UA surface persists its audit event **before** the PLC write, so a physical write always
+  carries its audit trail. A write that cannot be audited is refused (the setpoint does not change) and a server
+  without an audit sink denies every write. This is stricter than the HTTP and DCMD surfaces, which write first and
+  audit afterwards.
 - **Operational security**: deployments that expose OPC UA writes to a network should use
   `securityMode: Sign` or `SignAndEncrypt` with real certificates. This change does not enforce that recommendation
   or emit a dedicated warning; with `securityMode: None`, any client able to reach the port can write opted-in tags.

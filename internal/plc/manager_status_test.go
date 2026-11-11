@@ -182,7 +182,7 @@ func TestManagerStatus_LostConnectionIsDisconnected(t *testing.T) {
 	t.Parallel()
 	d := &statusMockDriver{}
 	mgr := startStatusManager(t, d, "20ms")
-	waitStatus(t, mgr, func(s plc.Status) bool { return s.State == plc.StateConnected })
+	waitStatus(t, mgr, func(s plc.Status) bool { return s.State == plc.StateConnected && s.ScanCount >= 1 })
 
 	d.set(func(d *statusMockDriver) {
 		d.connected = false
@@ -193,6 +193,8 @@ func TestManagerStatus_LostConnectionIsDisconnected(t *testing.T) {
 	if !st.ConnectedSince.IsZero() {
 		t.Fatalf("ConnectedSince = %v, want zero while disconnected", st.ConnectedSince)
 	}
+	// No scans run while reconnecting, so the old last scan must not read as healthy.
+	waitStatus(t, mgr, func(s plc.Status) bool { return s.ScanHealth == plc.ScanHealthStale })
 	waitStatus(t, mgr, func(s plc.Status) bool { return strings.Contains(s.LastError, "connection reset") })
 
 	d.set(func(d *statusMockDriver) { d.connectErr = nil })

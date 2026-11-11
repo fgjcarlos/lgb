@@ -25,8 +25,8 @@ const (
 	ScanHealthNone = "none"
 	// ScanHealthOK: the last scan completed within staleScanFactor × ScanRate.
 	ScanHealthOK = "ok"
-	// ScanHealthStale: the PLC is connected but the last scan completed more
-	// than staleScanFactor × ScanRate ago (stalled reads).
+	// ScanHealthStale: the last scan completed more than staleScanFactor ×
+	// ScanRate ago (stalled reads, or no scans while disconnected).
 	ScanHealthStale = "stale"
 )
 
@@ -133,7 +133,7 @@ func (ws *workerStatus) snapshot(now time.Time) Status {
 	switch {
 	case st.LastScan.IsZero():
 		st.ScanHealth = ScanHealthNone
-	case st.State == StateConnected && now.Sub(st.LastScan) > staleScanFactor*st.ScanRate:
+	case now.Sub(st.LastScan) > staleScanFactor*st.ScanRate:
 		st.ScanHealth = ScanHealthStale
 	default:
 		st.ScanHealth = ScanHealthOK

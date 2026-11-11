@@ -41,8 +41,8 @@ type Options struct {
 	// Writer writes the value to the PLC. When nil every write is denied.
 	Writer writeguard.TagWriter
 
-	// Audit receives exactly one event per write attempt. When nil the audit
-	// calls are no-ops (the audit sink is nil-safe everywhere else too).
+	// Audit receives exactly one event per write attempt. A nil sink denies
+	// every write: without a sink no attempt can be accounted for.
 	Audit writeguard.AuditSink
 
 	// Tags exposes the per-tag metadata used to derive the node AccessLevel
@@ -108,13 +108,14 @@ func (s *Server) HandleWriteRequest(req *ua.WriteRequest) *ua.WriteResponse {
 // handleWriteValue processes a single WriteValue and returns its status code.
 //
 // Order of checks (TWA-OPCUA-3.3):
-//  1. unknown node id        → ua.StatusBadNodeIDUnknown
-//  2. attribute != Value     → ua.StatusBadAttributeIDInvalid
-//  3. no guard or no writer  → deny (deny-by-default)
-//  4. value not convertible  → ua.StatusBadTypeMismatch
-//  5. guard denies           → ua.StatusBadUserAccessDenied
-//  6. PLC write error        → ua.StatusBadInternalError
-//  7. otherwise              → ua.StatusOK
+//  1. unknown node id           → ua.StatusBadNodeIDUnknown
+//  2. attribute != Value        → ua.StatusBadAttributeIDInvalid
+//  3. no guard, writer or audit → deny (deny-by-default)
+//  4. value not convertible     → ua.StatusBadTypeMismatch
+//  5. guard denies              → ua.StatusBadUserAccessDenied
+//  6. audit not persisted       → ua.StatusBadInternalError (no PLC write)
+//  7. PLC write error           → ua.StatusBadInternalError
+//  8. otherwise                 → ua.StatusOK
 func (s *Server) handleWriteValue(wv *ua.WriteValue) ua.StatusCode {
 	if wv == nil || wv.NodeID == nil {
 		_ = s.emitWriteAudit("", "", nil, "deny", "unknown node id")
@@ -134,10 +135,11 @@ func (s *Server) handleWriteValue(wv *ua.WriteValue) ua.StatusCode {
 		return ua.StatusBadAttributeIDInvalid
 	}
 
-	// (4) Deny-by-default: without a guard or a writer nothing may be written.
+	// (4) Deny-by-default: without a guard, a writer or an audit sink nothing
+	// may be written. A write that cannot be audited must not reach the PLC.
 	// Resolve the node first so unknown identifiers still receive the precise
 	// OPC UA status required by the Write service contract.
-	if s.guard == nil || s.writer == nil {
+	if s.guard == nil || s.writer == nil || s.audit == nil {
 		_ = s.emitWriteAudit(plcName, tagName, variantValue(wv.Value), "deny", "opcua write surface not configured")
 		return ua.StatusBadUserAccessDenied
 	}
@@ -157,16 +159,18 @@ func (s *Server) handleWriteValue(wv *ua.WriteValue) ua.StatusCode {
 		return ua.StatusBadUserAccessDenied
 	}
 
-	// (7) Write through the PLC driver.
-	if err := s.writer.WriteTag(plcName, tagName, val); err != nil {
-		_ = s.emitWriteAudit(plcName, tagName, val, "deny", fmt.Sprintf("write error: %v", err))
+	// (7) Account for the attempt BEFORE the write. The audit event is
+	// persisted first, so a physical write always carries its audit trail: an
+	// event that cannot be persisted stops the write instead of leaving an
+	// untraceable setpoint behind.
+	if err := s.emitWriteAudit(plcName, tagName, val, "allow", ""); err != nil {
 		return ua.StatusBadInternalError
 	}
 
-	// (8) Allow. The audit event must be persisted for the attempt to count as
-	// an accounted write: if the sink fails, the write is reported as an
-	// internal error rather than a success nobody can trace.
-	if err := s.emitWriteAudit(plcName, tagName, val, "allow", ""); err != nil {
+	// (8) Write through the PLC driver. The attempt already carries its one
+	// audit event, so a driver failure is reported to the client without a
+	// second event.
+	if err := s.writer.WriteTag(plcName, tagName, val); err != nil {
 		return ua.StatusBadInternalError
 	}
 	return ua.StatusOK
@@ -203,7 +207,8 @@ func (s *Server) resolveTag(nodeID *ua.NodeID) (plcName, tagName, declaredType s
 // attempt and reports whether the event was persisted.
 //
 // It is nil-safe: with no audit sink configured the call is a no-op that
-// reports success, so a server without an audit sink still serves writes.
+// reports success. The write surface denies writes without a sink, so this
+// path only serves the deny branches.
 //
 // The OPC UA surface carries no authenticated principal, so the actor username
 // is always empty. The detail uses the same flat key=value format as the HTTP

@@ -271,6 +271,47 @@ export function useDeletePLC(): UseMutationResult<
   });
 }
 
+// ─── Per-PLC operational status (viewer+; backed by the live PLC manager) ───
+
+export type PLCConnectionState = "never_connected" | "connected" | "disconnected";
+export type PLCScanHealth = "none" | "ok" | "stale";
+
+export interface PLCStatus {
+  name: string;
+  state: PLCConnectionState;
+  scan_rate: string;
+  scan_health: PLCScanHealth;
+  connected_since: string | null;
+  last_scan: string | null;
+  last_scan_duration_ms: number | null;
+  scan_count: number;
+  read_count: number;
+  read_error_count: number;
+  connect_error_count: number;
+  last_error: string;
+  last_error_at: string | null;
+}
+
+export function usePLCStatus(
+  name: string | null | undefined,
+): UseQueryResult<{ data: PLCStatus }, ApiError | Error> {
+  const { getWsToken } = useAuth();
+  return useQuery({
+    queryKey: ["plcs", name, "status"],
+    queryFn: () =>
+      apiFetch<{ data: PLCStatus }>(
+        `/api/plcs/${encodeURIComponent(name!)}/status`,
+        {},
+      ),
+    enabled: !!getWsToken && !!name,
+    refetchInterval: 2_000,
+    // 404 (unknown PLC) and 503 (no status support) will not fix themselves.
+    retry: (count, err) =>
+      !(err instanceof ApiError && (err.status === 404 || err.status === 503)) &&
+      count < 3,
+  });
+}
+
 // ─── ACL CRUD hooks (admin-only; backed by the SQLite tag_acl store) ────────
 
 export interface ACLRule {

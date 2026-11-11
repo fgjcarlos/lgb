@@ -6,6 +6,8 @@ export interface TagPoint {
   plc: string;
   tag: string;
   value: number | string | boolean | null;
+  /** "good" | "bad"; absent when the server frame carries no quality. */
+  quality?: string;
   timestamp: string;
 }
 
@@ -19,6 +21,7 @@ interface ServerMessage {
   plc?: string;
   tag?: string;
   value?: TagPoint["value"];
+  quality?: string;
   timestamp?: string;
 }
 
@@ -85,6 +88,7 @@ export function useTagStream(getToken: () => string | null): UseTagStreamReturn 
               plc: msg.plc,
               tag: msg.tag,
               value: msg.value ?? null,
+              quality: msg.quality,
               timestamp: msg.timestamp,
             };
             setTags((prev) => {

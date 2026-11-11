@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { MonitorDot, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -238,6 +239,14 @@ function PLCRowItem({ plc, onEdit }: PLCRowItemProps) {
       <TableCell>{plc.tags.length}</TableCell>
       <TableCell>
         <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" asChild>
+            <Link
+              to={`/plcs/${encodeURIComponent(plc.name)}/status`}
+              aria-label={`Status of ${plc.name}`}
+            >
+              <MonitorDot className="h-4 w-4" />
+            </Link>
+          </Button>
           <Button
             variant="ghost"
             size="icon"

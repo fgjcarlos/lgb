@@ -24,7 +24,7 @@ import {
 } from "@/components/PLCStatusBadges";
 import { UnavailableBanner } from "@/components/UnavailableBanner";
 import {
-  useCurrentTags,
+  useAllCurrentTags,
   useMappings,
   usePLCStatus,
   type Mapping,
@@ -55,7 +55,8 @@ function errorRate(st: PLCStatusData): string {
 
 function PLCStatusRow({ mapping }: { mapping: Mapping }) {
   const status = usePLCStatus(mapping.plc);
-  const st = status.data?.data;
+  // On error, do not keep showing the last successful status as if current.
+  const st = status.isError ? undefined : status.data?.data;
   return (
     <TableRow>
       <TableCell className="font-medium">
@@ -68,12 +69,12 @@ function PLCStatusRow({ mapping }: { mapping: Mapping }) {
       </TableCell>
       <TableCell className="font-mono text-xs">{mapping.address}</TableCell>
       <TableCell>
-        {st ? (
-          <PLCStateBadge state={st.state} />
-        ) : status.isError ? (
-          <span className="text-xs text-muted-foreground">
+        {status.isError ? (
+          <span className="text-xs text-destructive">
             {status.error.message}
           </span>
+        ) : st ? (
+          <PLCStateBadge state={st.state} />
         ) : (
           <span className="text-xs text-muted-foreground">Loading…</span>
         )}
@@ -181,7 +182,7 @@ function useLiveTags(plc: string, mapping: Mapping | undefined): {
 } {
   const { getWsToken } = useAuth();
   const { status: feed, tags: live } = useTagStream(getWsToken);
-  const snapshot = useCurrentTags({ limit: 1000 });
+  const snapshot = useAllCurrentTags();
 
   const rows = useMemo<LiveTagRow[]>(() => {
     const byTag = new Map<string, LiveTagRow>();
@@ -195,11 +196,13 @@ function useLiveTags(plc: string, mapping: Mapping | undefined): {
         tag,
         type: prev?.type ?? "",
         value,
-        quality: quality || prev?.quality,
+        // The backend treats an empty quality as "good"; never carry over a
+        // previous "bad" from an older update.
+        quality: quality || "good",
         timestamp,
       });
     };
-    for (const row of snapshot.data?.data ?? []) {
+    for (const row of snapshot.data ?? []) {
       if (row.plc === plc) merge(row.tag, row.value, row.quality, row.timestamp);
     }
     live.forEach((buffer) => {

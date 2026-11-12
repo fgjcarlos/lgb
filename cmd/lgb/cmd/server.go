@@ -25,6 +25,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"github.com/fgjcarlos/lgb/internal/datadir"
 	"github.com/fgjcarlos/lgb/internal/doctor"
 	"github.com/fgjcarlos/lgb/internal/historian"
@@ -165,7 +166,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		if h, ok := spNode.(interface{ HandleTagUpdate(sparkplug.TagUpdate) }); ok {
 			spHandler = h.HandleTagUpdate
 		}
-		tagCb = buildTagCallback(ctx, histWriter, spHandler, logger)
+		tagCb = buildTagCallback(ctx, histWriter, cfg.ChangeOnValue.Historian, spHandler, logger)
 	}
 
 	// Open the PLC store (plcs.db). Seeds from YAML on first boot; store wins thereafter.
@@ -496,21 +497,32 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 // buildTagCallback creates a fan-out callback that sends tag updates to both
 // the historian writer and the sparkplug edge node.
 // R70-1/R70-4: Quality is propagated from the plc.TagUpdate to all consumers.
-func buildTagCallback(ctx context.Context, hw *historian.Writer, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
+// #60: with historianCOV the historian keeps its own change-on-value filter,
+// independent of the Sparkplug edge node's filter.
+func buildTagCallback(ctx context.Context, hw *historian.Writer, historianCOV bool, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
+	var histFilter *cov.Filter
+	if historianCOV {
+		histFilter = cov.NewFilter()
+	}
 	return func(u plc.TagUpdate) {
 		if hw != nil {
-			if err := hw.Enqueue(ctx, historian.Sample{
-				PLCName:   u.PLCName,
-				Tag:       u.Tag,
-				Value:     u.Value,
-				Timestamp: u.Timestamp,
-				Quality:   u.Quality,
-			}); err != nil {
-				logger.Warn("historian enqueue error",
-					slog.String("component", "historian"),
-					slog.String("tag", u.Tag),
-					slog.String("err", err.Error()))
-			}
+			sample := cov.Sample{Key: u.PLCName + "/" + u.Tag, Value: u.Value, Quality: u.Quality, Deadband: u.Deadband}
+			histFilter.Offer(sample, func() bool {
+				err := hw.Enqueue(ctx, historian.Sample{
+					PLCName:   u.PLCName,
+					Tag:       u.Tag,
+					Value:     u.Value,
+					Timestamp: u.Timestamp,
+					Quality:   u.Quality,
+				})
+				if err != nil {
+					logger.Warn("historian enqueue error",
+						slog.String("component", "historian"),
+						slog.String("tag", u.Tag),
+						slog.String("err", err.Error()))
+				}
+				return err == nil
+			})
 		}
 		if spHandler != nil {
 			spHandler(sparkplug.TagUpdate{

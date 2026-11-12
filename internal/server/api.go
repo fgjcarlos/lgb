@@ -269,7 +269,7 @@ func (s *Server) handleTagsWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sub := &tagSubscriber{ch: make(chan plc.TagUpdate, 16)}
+	sub := newTagSubscriber(16, s.cfg.ChangeOnValue.Realtime)
 	sub.setFilter(r.URL.Query().Get("plc"), r.URL.Query().Get("tag"))
 	s.tagHub.register(sub)
 	defer s.tagHub.unregister(sub)

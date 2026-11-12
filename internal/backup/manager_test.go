@@ -10,7 +10,8 @@ import (
 )
 
 func TestManager_BackupAllRunsEveryRepository(t *testing.T) {
-	t.Parallel()
+	// Not parallel: exec of a just-written script fails with ETXTBSY
+	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
 
 	fake := filepath.Join(t.TempDir(), "restic")
 	logPath := filepath.Join(t.TempDir(), "calls.log")
@@ -38,7 +39,8 @@ printf '{"message_type":"summary","snapshot_id":"abc123"}\n'
 }
 
 func TestManager_SnapshotsDelegatesToFirstRepo(t *testing.T) {
-	t.Parallel()
+	// Not parallel: exec of a just-written script fails with ETXTBSY
+	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
 
 	fake := filepath.Join(t.TempDir(), "restic")
 	script := `#!/bin/sh

@@ -267,19 +267,30 @@ Before calling `Authorize`, the write handler MUST verify that the requested tag
 
 The system MUST expose `POST /api/plcs/{plc}/tags/{tag}/write`, gated by `auth.RequireRole(RoleAdmin, RoleOperator, RoleViewer)` (any authenticated role may attempt; ACL decides the outcome).
 
-Request body: `{"value": <any scalar>}`. Response codes:
+Request body: `{"value": <JSON scalar>}`. Response codes:
 
 | Condition | Status | Code |
 |-----------|--------|------|
 | Write succeeded | `200 OK` | — |
 | Tag not found | `404 Not Found` | `tag_not_found` |
 | ACL deny (either layer) | `403 Forbidden` | `write_denied` |
-| Malformed body / bad value type | `400 Bad Request` | `bad_request` |
+| Malformed body | `400 Bad Request` | `bad_request` |
+| Value cannot represent the tag's declared type | `400 Bad Request` | `invalid_value` |
 | Unauthenticated | `401 Unauthorized` | — |
 
-The handler MUST: (1) validate the tag exists, (2) call `AuthorizeHTTP`, (3) on allow: call `Driver.WriteTag`, (4) emit audit event with `source="http"`, (5) return response. On deny: emit audit event with `source="http"`, return `403`. The audit event MUST be written before the handler returns in both allow and deny paths.
+The handler MUST: (1) validate the tag exists, (1b) coerce `value` to the tag's declared type, (2) call `AuthorizeHTTP`, (3) on allow: call `Driver.WriteTag`, (4) emit audit event with `source="http"`, (5) return response. On deny: emit audit event with `source="http"`, return `403`. The audit event MUST be written before the handler returns in both allow and deny paths.
 
-Note on write-value typing: the frontend sends `value` as a string. The gateway passes the value as-is to `Driver.WriteTag` without coercion. Type coercion (string → numeric) is a known limitation accepted for this change.
+Write-value typing (issue #61): the driver derives the on-wire CIP type from the Go type of the value, so the handler MUST coerce `value` to the tag's declared Sparkplug type before the guard and the driver (shared `internal/tagvalue.Coerce`, also used by OPC UA). The body is decoded with `UseNumber` so Int64/UInt64 keep full precision. Coercion is strict JSON:
+
+| Declared type | Accepted JSON | Driver receives |
+|---------------|---------------|-----------------|
+| `Boolean` | `true` / `false` | `bool` |
+| `Int8`..`Int64`, `UInt8`..`UInt64` | integral number within the type range | `int8`..`int64`, `uint8`..`uint64` |
+| `Float` | number within ±MaxFloat32 | `float32` |
+| `Double` | number | `float64` |
+| `String` | string | `string` |
+
+Strings are never parsed as numbers or booleans; `null` or a missing `value` is rejected. A rejected value MUST NOT reach the driver: the handler emits an audit deny event with reason `"invalid value"` and returns `400` with code `invalid_value` and a message naming the expected type (e.g. `value is not a valid Int16: expected an integer between -32768 and 32767`).
 
 #### Scenario: Authorized write succeeds — HTTP
 
@@ -289,6 +300,21 @@ Note on write-value typing: the frontend sends `value` as a string. The gateway 
 - WHEN `POST /api/plcs/Silo-1/tags/Feed.Rate/write` with body `{"value": 2.5}`
 - THEN response is `200 OK`
 - AND an audit event with `action="tag.write"`, `outcome="allow"`, actor, plc, tag, value is recorded
+
+#### Scenario: Value is coerced to the declared type — HTTP
+
+- GIVEN tag `Feed.Rate` is declared `Float`, writable, and allowed for `operator`
+- WHEN `POST /api/plcs/Silo-1/tags/Feed.Rate/write` with body `{"value": 2.5}`
+- THEN response is `200 OK`
+- AND `Driver.WriteTag` receives `float32(2.5)`
+
+#### Scenario: Value that cannot represent the type returns 400 — HTTP
+
+- GIVEN tag `Feed.Rate` is declared `Float`, writable, and allowed for `operator`
+- WHEN `POST /api/plcs/Silo-1/tags/Feed.Rate/write` with body `{"value": "2.5"}`
+- THEN response is `400 Bad Request` with code `invalid_value` and message `value is not a valid Float: expected a number`
+- AND `Driver.WriteTag` is not called
+- AND an audit event with `action="tag.write"`, `outcome="deny"`, reason `"invalid value"` is recorded
 
 #### Scenario: ACL denied write returns 403 — HTTP
 
@@ -493,6 +519,8 @@ Note on plc/tag existence validation: the ACL store accepts free-form `plc`/`tag
 | TWA-HTTP-3.1 | ACL denied write returns 403 | Unit (httptest) |
 | TWA-HTTP-3.1 | Master-switch denied returns 403 | Unit (httptest) |
 | TWA-HTTP-3.1 | Unauthenticated returns 401 | Unit (httptest) |
+| TWA-HTTP-3.1 | Each scalar type coerced to its driver Go type | Unit (httptest) |
+| TWA-HTTP-3.1 | Value that cannot represent the type returns 400 invalid_value, audited, no write | Unit (httptest) |
 | TWA-DCMD-3.2 | (a) DCMD proceeds when Writable+DCMDEnabled=true | Unit |
 | TWA-DCMD-3.2 | (b) DCMD dropped when DCMDEnabled=false; ACL rule irrelevant | Unit |
 | TWA-DCMD-3.2 | (c) DCMD dropped when Writable=false; DCMDEnabled irrelevant | Unit |

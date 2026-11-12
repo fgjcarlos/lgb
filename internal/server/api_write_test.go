@@ -561,8 +561,10 @@ func TestPreserve_HandleWriteTag_HTTPPathUnchanged(t *testing.T) {
 	}
 	if call, ok := ts.mgr.lastWrite(); !ok {
 		t.Fatal("expected Manager.WriteTag to be called")
-	} else if call.Val != 2.5 {
-		t.Errorf("written value = %v; want 2.5", call.Val)
+	} else if call.Val != float32(2.5) {
+		// Feed.Rate is declared Float, so the value reaches the driver as
+		// float32 (issue #61: coerced to the declared type).
+		t.Errorf("written value = %#v; want float32(2.5)", call.Val)
 	}
 
 	events := ts.readAuditEvents(t)

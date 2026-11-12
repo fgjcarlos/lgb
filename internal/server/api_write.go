@@ -10,6 +10,7 @@ import (
 	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/plcstore"
 	"github.com/fgjcarlos/lgb/internal/sparkplug"
+	"github.com/fgjcarlos/lgb/internal/tagvalue"
 	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
@@ -50,6 +51,10 @@ func (r *plcstoreTagReader) TagMeta(ctx context.Context, plcName, tagName string
 }
 
 // writeTagRequest is the JSON body for POST .../write.
+//
+// Value is decoded with UseNumber, so numbers arrive as json.Number and keep
+// full Int64/UInt64 precision until tagvalue.Coerce converts them to the
+// tag's declared type.
 type writeTagRequest struct {
 	Value any `json:"value"`
 }
@@ -79,7 +84,9 @@ func (s *Server) registerWriteRoutes(mux *http.ServeMux) {
 // Flow:
 //  1. Decode body → extract value; 400 on malformed.
 //  2. Look up tag in plcStore; 404 tag_not_found if absent.
-//  3. Extract Claims → actor; call guard.AuthorizeHTTP.
+//  3. Extract Claims → actor; coerce value to the tag's declared type (on
+//     failure emit audit deny "invalid value", return 400 invalid_value —
+//     issue #61); call guard.AuthorizeHTTP.
 //  4. On deny: emit audit deny event, return 403 write_denied.
 //  5. On allow: call plcMgr.WriteTag; emit audit allow event, return 200.
 //
@@ -91,7 +98,9 @@ func (s *Server) handleWriteTag(w http.ResponseWriter, r *http.Request) {
 
 	// Step 1 — decode body.
 	var req writeTagRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	if err := dec.Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 		return
 	}
@@ -107,9 +116,11 @@ func (s *Server) handleWriteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tagFound := false
+	declaredType := ""
 	for _, t := range plc.Tags {
 		if t.Name == tagName {
 			tagFound = true
+			declaredType = t.Type
 			break
 		}
 	}
@@ -124,6 +135,18 @@ func (s *Server) handleWriteTag(w http.ResponseWriter, r *http.Request) {
 		actor.Username = claims.Username
 		actor.Role = claims.Role
 	}
+
+	// Coerce the value to the tag's declared Sparkplug type before it reaches
+	// the guard or the driver: the driver picks the on-wire CIP type from the
+	// Go type, so a raw JSON number would always be written as LREAL. Strict
+	// JSON — strings are never parsed as numbers or booleans. (issue #61)
+	val, err := tagvalue.Coerce(req.Value, declaredType)
+	if err != nil {
+		s.emitWriteAudit(r, plcName, tagName, req.Value, "deny", "invalid value", "http", actor.Username)
+		writeAPIError(w, http.StatusBadRequest, "invalid_value", tagvalue.Message(err))
+		return
+	}
+	req.Value = val
 
 	// Authorize — gate 1 (master switch) + gate 2 (ACL).
 	decision := s.writeGuard.AuthorizeHTTP(r.Context(), actor, plcName, tagName, req.Value)

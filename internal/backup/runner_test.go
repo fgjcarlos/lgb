@@ -11,7 +11,8 @@ import (
 )
 
 func TestRunner_InitBackupCheckUseJSONAndPasswordEnv(t *testing.T) {
-	t.Parallel()
+	// Not parallel: exec of a just-written script fails with ETXTBSY
+	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
 
 	fake := filepath.Join(t.TempDir(), "restic")
 	logPath := filepath.Join(t.TempDir(), "calls.log")
@@ -61,10 +62,12 @@ esac
 }
 
 func TestRunner_Snapshots(t *testing.T) {
-	t.Parallel()
+	// Not parallel: exec of a just-written script fails with ETXTBSY
+	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
 
 	t.Run("two snapshots JSON returns two Snapshot values", func(t *testing.T) {
-		t.Parallel()
+		// Not parallel: exec of a just-written script fails with ETXTBSY
+		// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
 
 		fake := filepath.Join(t.TempDir(), "restic")
 		script := `#!/bin/sh
@@ -101,7 +104,8 @@ printf '[{"short_id":"abc123","time":"2026-05-26T10:00:00Z","hostname":"host1","
 	})
 
 	t.Run("empty JSON array returns empty slice not nil", func(t *testing.T) {
-		t.Parallel()
+		// Not parallel: exec of a just-written script fails with ETXTBSY
+		// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
 
 		fake := filepath.Join(t.TempDir(), "restic")
 		script := "#!/bin/sh\nprintf '[]\n'\n"

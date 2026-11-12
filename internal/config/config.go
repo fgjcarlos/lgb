@@ -44,6 +44,8 @@ type Config struct {
 	OPCUA     OPCUASection     `koanf:"opcua"`
 	PLCs      []PLC            `koanf:"plcs"`
 	PLCSim    PLCSimSection    `koanf:"plcsim"`
+
+	ChangeOnValue ChangeOnValueSection `koanf:"changeOnValue"`
 }
 
 // OPCUASection holds OPC UA server settings.
@@ -152,11 +154,30 @@ type PLC struct {
 
 // TagDef maps a PLC tag to a Sparkplug B metric.
 type TagDef struct {
-	Name         string `koanf:"name"`
-	Type         string `koanf:"type"`
-	Writable     bool   `koanf:"writable"`            // PCS-CFG-5.1 — engineering master switch for writes
-	DCMDEnabled  bool   `koanf:"dcmd_enabled"`        // PCS-CFG-5.2 — per-tag DCMD opt-in; false by default
-	OPCUAEnabled bool   `koanf:"opcua_write_enabled"` // PCS-CFG-5.3 — per-tag OPC UA opt-in; false by default
+	Name         string   `koanf:"name"`
+	Type         string   `koanf:"type"`
+	Writable     bool     `koanf:"writable"`            // PCS-CFG-5.1 — engineering master switch for writes
+	DCMDEnabled  bool     `koanf:"dcmd_enabled"`        // PCS-CFG-5.2 — per-tag DCMD opt-in; false by default
+	OPCUAEnabled bool     `koanf:"opcua_write_enabled"` // PCS-CFG-5.3 — per-tag OPC UA opt-in; false by default
+	Deadband     Deadband `koanf:"deadband"`            // change-on-value deadband (#60); zero = any change
+}
+
+// Deadband is the optional change-on-value deadband of a numeric tag (#60).
+// An update reaches a COV-enabled consumer only when it differs from the last
+// value delivered to that consumer by more than max(Absolute,
+// Percent/100 * |last|). Zero values disable the corresponding check.
+type Deadband struct {
+	Absolute float64 `koanf:"absolute"`
+	Percent  float64 `koanf:"percent"`
+}
+
+// ChangeOnValueSection enables change-on-value filtering per consumer (#60).
+// Each enabled consumer keeps its own filter, so one consumer never affects
+// what another receives.
+type ChangeOnValueSection struct {
+	Sparkplug bool `koanf:"sparkplug"` // DDATA only on change; default true
+	Realtime  bool `koanf:"realtime"`  // WebSocket tag feed only on change; default true
+	Historian bool `koanf:"historian"` // historian samples only on change; default false
 }
 
 // Validate checks the loaded config against schema constraints.
@@ -313,6 +334,12 @@ var sparkplugScalarTypes = map[string]bool{
 	"Boolean": true, "Int8": true, "Int16": true, "Int32": true, "Int64": true,
 	"UInt8": true, "UInt16": true, "UInt32": true, "UInt64": true,
 	"Float": true, "Double": true, "String": true,
+}
+
+var numericTagTypes = map[string]bool{
+	"Int8": true, "Int16": true, "Int32": true, "Int64": true,
+	"UInt8": true, "UInt16": true, "UInt32": true, "UInt64": true,
+	"Float": true, "Double": true,
 }
 
 func validSparkplugType(t string) bool {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/lgb/internal/config"
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"github.com/fgjcarlos/lgb/internal/retry"
 )
 
@@ -21,6 +22,9 @@ type TagUpdate struct {
 	Value     any
 	Timestamp time.Time
 	Quality   string
+	// Deadband is the tag's configured change-on-value deadband (#60).
+	// Consumers with COV enabled pass it to their own cov.Filter.
+	Deadband cov.Deadband
 }
 
 // TagValue is the in-memory current value for one PLC tag.
@@ -373,6 +377,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 			}
 			scanStart := time.Now()
 			for _, tag := range plcCfg.Tags {
+				deadband := cov.Deadband(tag.Deadband)
 				dest := m.AllocDest(tag.Type, tag.Name)
 				if dest == nil {
 					// Unknown type: AllocDest already logged warning once.
@@ -384,6 +389,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 							Value:     nil,
 							Timestamp: time.Now(),
 							Quality:   "bad",
+							Deadband:  deadband,
 						})
 						lastQuality[tag.Name] = "bad"
 					}
@@ -404,6 +410,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 							Value:     nil,
 							Timestamp: time.Now(),
 							Quality:   "bad",
+							Deadband:  deadband,
 						})
 						lastQuality[tag.Name] = "bad"
 					}
@@ -423,6 +430,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 						Value:     value,
 						Timestamp: time.Now(),
 						Quality:   quality,
+						Deadband:  deadband,
 					}
 					m.emitTagUpdate(update)
 					lastQuality[tag.Name] = quality
@@ -434,6 +442,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 						Value:     value,
 						Timestamp: time.Now(),
 						Quality:   quality,
+						Deadband:  deadband,
 					}
 					m.emitTagUpdate(update)
 					lastQuality[tag.Name] = quality

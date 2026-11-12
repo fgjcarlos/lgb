@@ -44,6 +44,17 @@ func TestCoerce_EachScalarType(t *testing.T) {
 		{"Int16", float64(42), int16(42)},
 		{"Float", float64(2.5), float32(2.5)},
 		{"UInt64", uint64(math.MaxUint64), uint64(math.MaxUint64)},
+		// Exact integer literals in decimal or exponent form.
+		{"Int16", json.Number("1.0"), int16(1)},
+		{"Int16", json.Number("1.5e1"), int16(15)},
+		{"Int16", json.Number("-12E+2"), int16(-1200)},
+		{"UInt8", json.Number("-0"), uint8(0)},
+		{"Int8", json.Number("0e99999999999999999999"), int8(0)},
+		{"Int64", json.Number("9.223372036854775807e18"), int64(math.MaxInt64)},
+		{"UInt64", json.Number("1.8446744073709551615e19"), uint64(math.MaxUint64)},
+		// Beyond 2^53: evaluated exactly, never rounded through float64.
+		{"Int64", json.Number("9007199254740993.0"), int64(9007199254740993)},
+		{"Int64", json.Number("9.007199254740993e15"), int64(9007199254740993)},
 	}
 	for _, tc := range cases {
 		got, err := tagvalue.Coerce(tc.raw, tc.typ)
@@ -83,6 +94,22 @@ func TestCoerce_RejectsUnrepresentableValues(t *testing.T) {
 		{"UInt32", json.Number("4294967296")},
 		{"UInt64", json.Number("-1")},
 		{"UInt64", json.Number("18446744073709551616")},
+		// Non-integer or out-of-range literals must not be rounded through
+		// float64 into a different integer.
+		{"Int16", json.Number("1.00000000000000001")},
+		{"Int64", json.Number("9.223372036854775808e18")},
+		{"Int64", json.Number("9007199254740993.5")},
+		{"Int16", json.Number("01")},
+		{"Int16", json.Number("1.")},
+		{"Int16", json.Number("1e")},
+		{"Int16", json.Number("-")},
+		{"Int16", json.Number("12e-1")},
+		{"Int16", json.Number("1e-400")},
+		{"Int64", json.Number("1e1000000000")},
+		{"UInt64", json.Number("1e99999999999999999999")},
+		{"UInt64", json.Number("-1e0")},
+		{"Int16", json.Number("0x10")},
+		{"Int16", json.Number("")},
 		{"Float", "2.5"},
 		{"Float", json.Number("1e100")},
 		{"Float", nil},

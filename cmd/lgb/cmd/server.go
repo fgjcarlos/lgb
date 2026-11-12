@@ -488,6 +488,8 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 		Client:  mqttClient,
 		Devices: devices,
 		Log:     slog.Default(),
+		// #60: DDATA only on change, per tag deadband; reset on every birth.
+		ChangeOnValue: cfg.ChangeOnValue.Sparkplug,
 	})
 }
 
@@ -517,6 +519,7 @@ func buildTagCallback(ctx context.Context, hw *historian.Writer, spHandler func(
 				Value:     u.Value,
 				Timestamp: u.Timestamp,
 				Quality:   u.Quality,
+				Deadband:  u.Deadband,
 			})
 		}
 	}

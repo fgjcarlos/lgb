@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS plc_tags (
     writable            INTEGER NOT NULL DEFAULT 0,
     dcmd_enabled        INTEGER NOT NULL DEFAULT 0,
     opcua_write_enabled INTEGER NOT NULL DEFAULT 0,
+    deadband_abs        REAL    NOT NULL DEFAULT 0,
+    deadband_pct        REAL    NOT NULL DEFAULT 0,
     UNIQUE(plc_id, name)
 );`)
 	if err != nil {
@@ -114,6 +116,17 @@ CREATE TABLE IF NOT EXISTS plc_tags (
 		`ALTER TABLE plc_tags ADD COLUMN opcua_write_enabled INTEGER NOT NULL DEFAULT 0`)
 	if alterErr != nil && !containsStr(alterErr.Error(), "duplicate column name") {
 		return alterErr
+	}
+
+	// Idempotent migration: change-on-value deadband columns (#60). Existing
+	// tags default to 0 (no deadband: any change is reported).
+	for _, stmt := range []string{
+		`ALTER TABLE plc_tags ADD COLUMN deadband_abs REAL NOT NULL DEFAULT 0`,
+		`ALTER TABLE plc_tags ADD COLUMN deadband_pct REAL NOT NULL DEFAULT 0`,
+	} {
+		if _, alterErr = s.db.ExecContext(ctx, stmt); alterErr != nil && !containsStr(alterErr.Error(), "duplicate column name") {
+			return alterErr
+		}
 	}
 	return nil
 }
@@ -343,7 +356,7 @@ func (s *Store) Seed(ctx context.Context, plcs []config.PLC) error {
 // listTags fetches all tags for the given PLC surrogate ID, ordered by insertion.
 func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, type, writable, dcmd_enabled, opcua_write_enabled
+		`SELECT name, type, writable, dcmd_enabled, opcua_write_enabled, deadband_abs, deadband_pct
 		   FROM plc_tags WHERE plc_id = ? ORDER BY id`, plcID)
 	if err != nil {
 		return nil, err
@@ -354,7 +367,8 @@ func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, err
 	for rows.Next() {
 		var tag config.TagDef
 		var writable, dcmdEnabled, opcuaEnabled int
-		if err := rows.Scan(&tag.Name, &tag.Type, &writable, &dcmdEnabled, &opcuaEnabled); err != nil {
+		if err := rows.Scan(&tag.Name, &tag.Type, &writable, &dcmdEnabled, &opcuaEnabled,
+			&tag.Deadband.Absolute, &tag.Deadband.Percent); err != nil {
 			return nil, err
 		}
 		tag.Writable = writable != 0
@@ -369,10 +383,11 @@ func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, err
 func insertTags(ctx context.Context, tx *sql.Tx, plcID int64, tags []config.TagDef) error {
 	for _, tag := range tags {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO plc_tags(plc_id, name, type, writable, dcmd_enabled, opcua_write_enabled)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO plc_tags(plc_id, name, type, writable, dcmd_enabled, opcua_write_enabled,
+			                      deadband_abs, deadband_pct)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			plcID, tag.Name, tag.Type, boolToInt(tag.Writable), boolToInt(tag.DCMDEnabled),
-			boolToInt(tag.OPCUAEnabled)); err != nil {
+			boolToInt(tag.OPCUAEnabled), tag.Deadband.Absolute, tag.Deadband.Percent); err != nil {
 			return err
 		}
 	}

@@ -259,6 +259,25 @@ components:
             surface never consults. A write via OPC UA requires both writable=true and
             opcua_write_enabled=true; the master writable switch still applies to every
             surface.
+        deadband:
+          type: object
+          description: >
+            Optional change-on-value deadband for numeric tags. Consumers with
+            change-on-value enabled (Sparkplug DDATA, realtime feed, optionally the
+            historian) receive an update only when the value differs from the last
+            value delivered to that consumer by more than
+            max(absolute, percent/100 x |last|). Omitted or 0 means any change is
+            reported. Only numeric types accept a non-zero deadband.
+          properties:
+            absolute:
+              type: number
+              minimum: 0
+              default: 0
+            percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              default: 0
 
     PLCRequest:
       type: object

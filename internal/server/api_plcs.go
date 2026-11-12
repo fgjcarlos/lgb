@@ -12,11 +12,19 @@ import (
 
 // plcTagResponse is the API-safe tag representation.
 type plcTagResponse struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Writable     bool   `json:"writable"`
-	DcmdEnabled  bool   `json:"dcmd_enabled"`        // PCS-CFG-5.2
-	OpcuaEnabled bool   `json:"opcua_write_enabled"` // PCS-CFG-5.3
+	Name         string           `json:"name"`
+	Type         string           `json:"type"`
+	Writable     bool             `json:"writable"`
+	DcmdEnabled  bool             `json:"dcmd_enabled"`        // PCS-CFG-5.2
+	OpcuaEnabled bool             `json:"opcua_write_enabled"` // PCS-CFG-5.3
+	Deadband     deadbandResponse `json:"deadband"`            // change-on-value (#60)
+}
+
+// deadbandResponse is the wire form of a tag's change-on-value deadband.
+// Omitting it (or either field) on requests means 0: any change is reported.
+type deadbandResponse struct {
+	Absolute float64 `json:"absolute"`
+	Percent  float64 `json:"percent"`
 }
 
 // plcResponse is the API-safe PLC representation.
@@ -41,6 +49,7 @@ func plcToResponse(p config.PLC) plcResponse {
 			Writable:     t.Writable,
 			DcmdEnabled:  t.DCMDEnabled,
 			OpcuaEnabled: t.OPCUAEnabled,
+			Deadband:     deadbandResponse(t.Deadband),
 		})
 	}
 	return plcResponse{
@@ -78,6 +87,7 @@ func decodePLCRequest(r *http.Request) (config.PLC, error) {
 			Writable:     t.Writable,
 			DCMDEnabled:  t.DcmdEnabled,
 			OPCUAEnabled: t.OpcuaEnabled,
+			Deadband:     config.Deadband(t.Deadband),
 		})
 	}
 	return config.PLC{

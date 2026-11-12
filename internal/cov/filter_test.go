@@ -118,8 +118,10 @@ func TestFilterReset(t *testing.T) {
 
 func TestDisabledFilterDeliversEverything(t *testing.T) {
 	var f *cov.Filter // nil filter = COV disabled
-	if !f.Offer(sample(1.0, "good", cov.Deadband{}), always) || !f.Offer(sample(1.0, "good", cov.Deadband{}), always) {
-		t.Fatal("nil filter must deliver every value")
+	for i := 0; i < 2; i++ {
+		if !f.Offer(sample(1.0, "good", cov.Deadband{}), always) {
+			t.Fatalf("offer %d: nil filter must deliver every value", i+1)
+		}
 	}
 	if f.Offer(sample(1.0, "good", cov.Deadband{}), never) {
 		t.Fatal("nil filter must report delivery result")

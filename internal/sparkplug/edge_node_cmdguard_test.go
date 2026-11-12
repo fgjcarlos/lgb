@@ -138,3 +138,24 @@ func TestEdgeNode_Start_WithCommandHandler_NoWarning(t *testing.T) {
 		t.Errorf("logs = %q; unexpected missing-handler warning", out)
 	}
 }
+
+// TestEdgeNode_SetCommandHandler_AfterFailedStart_Allowed verifies that a Start
+// that fails to connect does not leave the ordering guard armed (#62).
+func TestEdgeNode_SetCommandHandler_AfterFailedStart_Allowed(t *testing.T) {
+	t.Parallel()
+
+	mc := &mockMQTTClient{connectBlock: make(chan struct{})}
+	en := newGuardTestNode(mc, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := en.Start(ctx); err == nil {
+		t.Fatal("expected Start to fail on a cancelled connect")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SetCommandHandler after failed Start panicked: %v", r)
+		}
+	}()
+	en.SetCommandHandler(func(string, string, any) {})
+}

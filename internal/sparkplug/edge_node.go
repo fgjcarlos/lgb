@@ -47,7 +47,8 @@ type EdgeNode struct {
 	client       mqtt.Client
 	devices      []DeviceConfig
 	log          *slog.Logger
-	onCommand    CommandHandler
+	onCommand    atomic.Pointer[CommandHandler] // read by the MQTT goroutine in handleDCMD
+	started      atomic.Bool                    // true between Start and Stop; guards SetCommandHandler
 	retryOptions retry.Options
 
 	sm    StateMachine
@@ -79,17 +80,21 @@ func NewEdgeNode(cfg EdgeNodeConfig) *EdgeNode {
 	if cfg.ChangeOnValue {
 		filter = cov.NewFilter()
 	}
-	return &EdgeNode{
+	e := &EdgeNode{
 		cov:          filter,
 		groupID:      cfg.GroupID,
 		nodeID:       cfg.NodeID,
 		client:       cfg.Client,
 		devices:      cfg.Devices,
 		log:          log,
-		onCommand:    cfg.OnCommand,
 		retryOptions: opts,
 		updates:      make(chan TagUpdate, 256),
 	}
+	if cfg.OnCommand != nil {
+		h := cfg.OnCommand
+		e.onCommand.Store(&h)
+	}
+	return e
 }
 
 // State returns the current state machine state.
@@ -103,12 +108,20 @@ func (e *EdgeNode) BdSeq() uint64 {
 }
 
 // SetCommandHandler sets the handler for inbound DCMD metric writes.
-// It MUST be called before Start — the subscription is registered during Start,
-// and handleDCMD reads e.onCommand at dispatch time, so calling this before
-// Start is the correct and safe window. Safe to call at any time if Start has
-// not yet been invoked. (PR3 wiring seam — TWA-DCMD-3.2)
+// It MUST be called before Start (or after Stop): DCMDs can arrive as soon as
+// Start subscribes, so a handler wired later would leave a window where writes
+// bypass enforcement. Calling it while the node is started is a programming
+// error and panics, so a refactor that reorders the wiring fails at the first
+// run instead of silently disabling DCMD enforcement. (TWA-DCMD-3.2, #62)
 func (e *EdgeNode) SetCommandHandler(h CommandHandler) {
-	e.onCommand = h
+	if e.started.Load() {
+		panic("sparkplug: SetCommandHandler called after Start; wire the DCMD handler before Start")
+	}
+	if h == nil {
+		e.onCommand.Store(nil)
+		return
+	}
+	e.onCommand.Store(&h)
 }
 
 // Start connects to the MQTT broker, publishes NBIRTH + DBIRTH for all
@@ -116,6 +129,11 @@ func (e *EdgeNode) SetCommandHandler(h CommandHandler) {
 // ctx cancellation is forwarded to the reconnect loop — cancel it to stop
 // reconnect attempts before calling Stop (useful in tests).
 func (e *EdgeNode) Start(ctx context.Context) error {
+	e.started.Store(true)
+	if e.onCommand.Load() == nil {
+		e.log.Warn("sparkplug: no DCMD command handler set; inbound DCMD writes will be dropped")
+	}
+
 	e.done = make(chan struct{})
 	e.reconnectCh = make(chan struct{}, 1)
 
@@ -125,6 +143,7 @@ func (e *EdgeNode) Start(ctx context.Context) error {
 	e.sm.Transition(EventConnectAttempt)
 	if err := e.client.Connect(ctx); err != nil {
 		e.sm.Transition(EventConnectFail)
+		e.started.Store(false)
 		return fmt.Errorf("sparkplug: start: %w", err)
 	}
 
@@ -187,6 +206,7 @@ func (e *EdgeNode) Stop() error {
 	}
 
 	e.client.Disconnect(250)
+	e.started.Store(false)
 	return nil
 }
 
@@ -379,9 +399,11 @@ func (e *EdgeNode) handleNCMD(_ string, payload []byte) {
 }
 
 func (e *EdgeNode) handleDCMD(topic string, payload []byte) {
-	if e.onCommand == nil {
+	hp := e.onCommand.Load()
+	if hp == nil {
 		return
 	}
+	onCommand := *hp
 
 	// Extract device ID from topic: spBv1.0/{group}/DCMD/{node}/{device}
 	parts := strings.Split(topic, "/")
@@ -404,7 +426,7 @@ func (e *EdgeNode) handleDCMD(topic string, payload []byte) {
 		if val == nil {
 			continue
 		}
-		e.onCommand(deviceID, *m.Name, val)
+		onCommand(deviceID, *m.Name, val)
 	}
 }
 

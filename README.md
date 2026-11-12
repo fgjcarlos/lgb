@@ -20,6 +20,7 @@ Connecting Rockwell PLCs to modern IIoT systems usually requires expensive comme
 - Visual tag mapping with explicit write ACL per tag
 - Audit trail for all PLC writes and admin actions
 - Local historian with configurable retention
+- Per-consumer change-on-value with optional per-tag deadband ([docs](docs/change-on-value.md))
 - Built-in backup system with rotation, schedules, and remote repositories (restic)
 - Multi-platform: Docker first, native binaries for Linux / Windows / macOS / ARM (Raspberry Pi)
 

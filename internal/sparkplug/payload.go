@@ -1,9 +1,9 @@
 package sparkplug
 
 import (
-	"github.com/fgjcarlos/lgb/internal/cov"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/cov"
 	pb "github.com/fgjcarlos/lgb/internal/sparkplug/pb"
 	"google.golang.org/protobuf/proto"
 )

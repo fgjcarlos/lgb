@@ -110,6 +110,10 @@ func changed(prev entry, value any, quality string, db Deadband) bool {
 		if aNaN || bNaN {
 			return aNaN != bNaN
 		}
+		if math.IsInf(a, 0) || math.IsInf(b, 0) {
+			// Deadband math is meaningless with infinities: report any change.
+			return a != b
+		}
 		if !db.IsZero() {
 			threshold := math.Max(db.Absolute, db.Percent/100*math.Abs(a))
 			return math.Abs(b-a) > threshold

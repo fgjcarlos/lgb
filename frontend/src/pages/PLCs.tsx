@@ -67,6 +67,27 @@ const TAG_TYPES = [
   "String",
 ] as const;
 
+// Types that accept a non-zero change-on-value deadband (backend: numeric only).
+const NUMERIC_TAG_TYPES: ReadonlySet<string> = new Set(
+  TAG_TYPES.filter((t) => t !== "Boolean" && t !== "String"),
+);
+
+const DEADBAND_TITLE =
+  "Change-on-value: report only when the value changes by more than this";
+
+// Deadband number — empty/undefined (e.g. a disabled input) means 0.
+const deadbandNumber = (max?: number) =>
+  z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? 0 : v),
+    max === undefined
+      ? z.coerce.number().finite("Must be a number").min(0, "Must be ≥ 0")
+      : z.coerce
+          .number()
+          .finite("Must be a number")
+          .min(0, "Must be ≥ 0")
+          .max(max, `Must be ≤ ${max}`),
+  );
+
 // Go duration as parsed by time.ParseDuration — empty is allowed (optional).
 const goDuration = z
   .string()
@@ -89,6 +110,21 @@ const plcSchema = z.object({
       writable: z.boolean(),
       dcmd_enabled: z.boolean(), // PCS-CFG-5.2
       opcua_write_enabled: z.boolean(), // PCS-CFG-5.3
+      deadband: z.object({
+        absolute: deadbandNumber(),
+        percent: deadbandNumber(100),
+      }),
+    }).superRefine((tag, ctx) => {
+      if (NUMERIC_TAG_TYPES.has(tag.type)) return;
+      for (const key of ["absolute", "percent"] as const) {
+        if (tag.deadband[key] !== 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["deadband", key],
+            message: `Deadband is only allowed on numeric types, not ${tag.type}`,
+          });
+        }
+      }
     }),
   ),
 });
@@ -121,6 +157,10 @@ function toFormValues(plc: PLCRow): PLCFormValues {
       writable: t.writable,
       dcmd_enabled: t.dcmd_enabled,
       opcua_write_enabled: t.opcua_write_enabled,
+      deadband: {
+        absolute: t.deadband?.absolute ?? 0,
+        percent: t.deadband?.percent ?? 0,
+      },
     })),
   };
 }
@@ -209,7 +249,7 @@ export function PLCs() {
           if (!open) closeDialog();
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[640px]">
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[820px]">
           {dialogOpen && (
             <PLCForm
               editing={editing}
@@ -315,6 +355,8 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
     register,
     control,
     handleSubmit,
+    watch,
+    setValue,
     formState: { errors },
   } = useForm<PLCFormValues>({
     resolver: zodResolver(plcSchema),
@@ -322,6 +364,7 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
   });
 
   const { fields, append, remove } = useFieldArray({ control, name: "tags" });
+  const watchedTags = watch("tags");
 
   // Keep submit error in sync with the active mutation.
   useEffect(() => setSubmitError(null), [editing]);
@@ -439,6 +482,7 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                 writable: false,
                 dcmd_enabled: false,
                 opcua_write_enabled: false,
+                deadband: { absolute: 0, percent: 0 },
               })
             }
           >
@@ -453,10 +497,17 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
           </p>
         ) : (
           <div className="space-y-2">
-            {fields.map((field, index) => (
+            {fields.map((field, index) => {
+              const deadbandEnabled = NUMERIC_TAG_TYPES.has(
+                watchedTags?.[index]?.type ?? field.type,
+              );
+              const deadbandError =
+                errors.tags?.[index]?.deadband?.absolute?.message ??
+                errors.tags?.[index]?.deadband?.percent?.message;
+              return (
               <div
                 key={field.id}
-                className="grid grid-cols-[1fr_140px_auto_auto_auto_auto] items-center gap-2"
+                className="grid grid-cols-[1fr_140px_88px_88px_auto_auto_auto_auto] items-center gap-2"
               >
                 <div>
                   <Input
@@ -472,7 +523,17 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                 </div>
                 <select
                   className="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  {...register(`tags.${index}.type`)}
+                  {...register(`tags.${index}.type`, {
+                    // Non-numeric types cannot carry a deadband — reset it.
+                    onChange: (e) => {
+                      if (!NUMERIC_TAG_TYPES.has(e.target.value)) {
+                        setValue(`tags.${index}.deadband`, {
+                          absolute: 0,
+                          percent: 0,
+                        });
+                      }
+                    },
+                  })}
                 >
                   {TAG_TYPES.map((t) => (
                     <option key={t} value={t}>
@@ -480,6 +541,27 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                     </option>
                   ))}
                 </select>
+                <Input
+                  type="number"
+                  min={0}
+                  step="any"
+                  placeholder="Deadband abs"
+                  aria-label={`Deadband abs for tag ${index + 1}`}
+                  title={`${DEADBAND_TITLE} (absolute)`}
+                  disabled={!deadbandEnabled}
+                  {...register(`tags.${index}.deadband.absolute`)}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="any"
+                  placeholder="Deadband %"
+                  aria-label={`Deadband % for tag ${index + 1}`}
+                  title={`${DEADBAND_TITLE} (percent of last value)`}
+                  disabled={!deadbandEnabled}
+                  {...register(`tags.${index}.deadband.percent`)}
+                />
                 <label className="flex items-center gap-1 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
@@ -510,8 +592,14 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
+                {deadbandError && (
+                  <p className="col-span-full text-xs text-destructive">
+                    {deadbandError}
+                  </p>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

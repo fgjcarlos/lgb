@@ -207,6 +207,7 @@ export interface PLCTag {
   writable: boolean;
   dcmd_enabled: boolean; // PCS-CFG-5.2 — per-tag DCMD opt-in
   opcua_write_enabled: boolean; // PCS-CFG-5.3 — per-tag OPC UA write opt-in (default false)
+  deadband: { absolute: number; percent: number }; // change-on-value deadband (S2/S4; zeros = any change)
 }
 
 export interface PLCRow {

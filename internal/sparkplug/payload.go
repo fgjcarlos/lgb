@@ -1,6 +1,7 @@
 package sparkplug
 
 import (
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"time"
 
 	pb "github.com/fgjcarlos/lgb/internal/sparkplug/pb"
@@ -22,6 +23,9 @@ type TagUpdate struct {
 	Value     any
 	Timestamp time.Time
 	Quality   string
+	// Deadband is the tag's change-on-value deadband (#60), used only when
+	// the edge node has ChangeOnValue enabled.
+	Deadband cov.Deadband
 }
 
 // BuildNBIRTH produces the Sparkplug B NBIRTH payload. The sequence tracker
@@ -147,8 +151,8 @@ func strPtr(s string) *string { return &s }
 var sparkplugTypeMap = map[string]uint32{
 	"Boolean": dtBoolean,
 	"Int8":    dtInt8, "Int16": dtInt16, "Int32": dtInt32, "Int64": dtInt64,
-	"UInt8":   dtUInt8, "UInt16": dtUInt16, "UInt32": dtUInt32, "UInt64": dtUInt64,
-	"Float":   dtFloat, "Double": dtDouble, "String": dtString,
+	"UInt8": dtUInt8, "UInt16": dtUInt16, "UInt32": dtUInt32, "UInt64": dtUInt64,
+	"Float": dtFloat, "Double": dtDouble, "String": dtString,
 }
 
 func sparkplugTypeToDataType(typeName string) uint32 {

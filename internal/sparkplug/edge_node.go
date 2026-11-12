@@ -3,6 +3,7 @@ package sparkplug
 import (
 	"context"
 	"fmt"
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"log/slog"
 	"strings"
 	"sync"
@@ -33,6 +34,10 @@ type EdgeNodeConfig struct {
 	Log          *slog.Logger
 	OnCommand    CommandHandler
 	RetryOptions *retry.Options // optional; if nil, defaults to 1s→30s exponential backoff
+	// ChangeOnValue publishes DDATA only when a tag value changes beyond its
+	// deadband (#60). The filter is reset on every birth so current values
+	// are re-sent after NBIRTH/DBIRTH.
+	ChangeOnValue bool
 }
 
 // EdgeNode orchestrates the Sparkplug B lifecycle.
@@ -49,6 +54,7 @@ type EdgeNode struct {
 	seq   SeqTracker
 	bdSeq atomic.Uint64 // incremented on each birth cycle (R69-3)
 
+	cov         *cov.Filter // nil when change-on-value is disabled
 	updates     chan TagUpdate
 	done        chan struct{}
 	reconnectCh chan struct{} // signaled by onConnectionLost; reconnect goroutine listens
@@ -69,7 +75,12 @@ func NewEdgeNode(cfg EdgeNodeConfig) *EdgeNode {
 	if cfg.RetryOptions != nil {
 		opts = *cfg.RetryOptions
 	}
+	var filter *cov.Filter
+	if cfg.ChangeOnValue {
+		filter = cov.NewFilter()
+	}
 	return &EdgeNode{
+		cov:          filter,
 		groupID:      cfg.GroupID,
 		nodeID:       cfg.NodeID,
 		client:       cfg.Client,
@@ -181,15 +192,23 @@ func (e *EdgeNode) Stop() error {
 
 // HandleTagUpdate sends a tag update to the publisher goroutine.
 // If the edge node is not ONLINE or the channel is full, the update is dropped.
+// With ChangeOnValue enabled, updates that do not differ from the last value
+// sent for the tag (beyond its deadband) are suppressed; a dropped update does
+// not count as sent, so it is retried on the next scan.
 func (e *EdgeNode) HandleTagUpdate(u TagUpdate) {
 	if e.sm.State() != Online {
 		return
 	}
-	select {
-	case e.updates <- u:
-	default:
-		e.log.Warn("sparkplug: tag update channel full, dropping", slog.String("tag", u.Tag))
-	}
+	sample := cov.Sample{Key: u.PLCName + "/" + u.Tag, Value: u.Value, Quality: u.Quality, Deadband: u.Deadband}
+	e.cov.Offer(sample, func() bool {
+		select {
+		case e.updates <- u:
+			return true
+		default:
+			e.log.Warn("sparkplug: tag update channel full, dropping", slog.String("tag", u.Tag))
+			return false
+		}
+	})
 }
 
 // onConnect is called by the MQTT client on (re)connect. It publishes births.
@@ -237,6 +256,8 @@ func (e *EdgeNode) publishBirths() {
 		}
 	}
 
+	// Births carry no values, so every tag must be re-sent as DDATA (#60).
+	e.cov.Reset()
 	e.sm.Transition(EventConnectSuccess)
 }
 

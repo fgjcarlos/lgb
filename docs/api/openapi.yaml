@@ -1183,14 +1183,27 @@ paths:
               properties:
                 value:
                   description: >
-                    The value to write. Accepted as-is (JSON any) and passed to the
-                    driver; it is NOT coerced to the tag's declared Sparkplug type.
+                    The value to write, as a native JSON value coerced to the tag's
+                    declared Sparkplug type: Boolean takes `true`/`false`; integer
+                    types (Int8..Int64, UInt8..UInt64) take an integral number within
+                    the type range; Float takes a number within the float32 range;
+                    Double takes a number; String takes a string. Strings are never
+                    parsed as numbers or booleans, and `null` is rejected.
+                  oneOf:
+                    - type: boolean
+                    - type: number
+                    - type: string
                   example: 2.5
       responses:
         "200":
           description: Write accepted and dispatched to the driver (no body).
         "400":
-          description: Invalid request body (`bad_request`).
+          description: >
+            Malformed request body (`bad_request`), or a value that cannot
+            represent the tag's declared type (`invalid_value`; the message names
+            the expected type, e.g. `value is not a valid Int16: expected an
+            integer between -32768 and 32767`). An `invalid_value` rejection is
+            audited as a denied `tag.write` and never reaches the driver.
           content:
             application/json:
               schema:

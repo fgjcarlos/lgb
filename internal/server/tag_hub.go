@@ -3,6 +3,7 @@ package server
 import (
 	"sync"
 
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"github.com/fgjcarlos/lgb/internal/plc"
 )
 
@@ -17,6 +18,18 @@ type tagSubscriber struct {
 	tag    string
 	active bool
 	ch     chan plc.TagUpdate
+	cov    *cov.Filter // per-subscriber change-on-value state (#60); nil = off
+}
+
+// newTagSubscriber returns a subscriber with a buffer of size updates. With
+// changeOnValue it gets its own COV filter, so its deadband state and dropped
+// updates never affect other subscribers.
+func newTagSubscriber(buffer int, changeOnValue bool) *tagSubscriber {
+	sub := &tagSubscriber{ch: make(chan plc.TagUpdate, buffer)}
+	if changeOnValue {
+		sub.cov = cov.NewFilter()
+	}
+	return sub
 }
 
 func newTagHub() *tagHub {
@@ -43,12 +56,18 @@ func (h *tagHub) publish(update plc.TagUpdate) {
 		if !sub.matches(update) {
 			continue
 		}
-		select {
-		case sub.ch <- update:
-		default:
-			// Backpressure policy: drop newest update for slow clients rather than
-			// blocking the PLC scan loop.
-		}
+		sample := cov.Sample{Key: update.PLCName + "/" + update.Tag, Value: update.Value, Quality: update.Quality, Deadband: update.Deadband}
+		sub.cov.Offer(sample, func() bool {
+			select {
+			case sub.ch <- update:
+				return true
+			default:
+				// Backpressure policy: drop newest update for slow clients rather than
+				// blocking the PLC scan loop. A dropped update is not recorded as
+				// delivered, so COV re-offers it on the next scan.
+				return false
+			}
+		})
 	}
 }
 
@@ -58,6 +77,8 @@ func (s *tagSubscriber) setFilter(plcName, tagName string) {
 	s.plc = plcName
 	s.tag = tagName
 	s.active = true
+	// A new subscription starts from the current values again.
+	s.cov.Reset()
 }
 
 func (s *tagSubscriber) unsubscribe() {

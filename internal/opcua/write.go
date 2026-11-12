@@ -18,13 +18,13 @@ package opcua
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/gopcua/opcua/uasc"
 
 	"github.com/fgjcarlos/lgb/internal/auth"
+	"github.com/fgjcarlos/lgb/internal/tagvalue"
 	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
@@ -241,219 +241,15 @@ func variantValue(dv *ua.DataValue) any {
 
 // convertValue converts an OPC UA variant value to the tag's declared type.
 //
-// The supported declared types are the ones internal/config validates:
-// Boolean, Int8..UInt64, Float, Double and String. The returned Go type is the
-// exact type the PLC driver expects for that declared type (e.g. Float →
-// float32, Double → float64).
+// It delegates to tagvalue.Coerce, the conversion shared with the HTTP write
+// endpoint: the returned Go type is the exact type the PLC driver expects for
+// that declared type (e.g. Float → float32, Double → float64).
 //
 // ok is false when the value cannot be converted — the caller then denies the
 // write with ua.StatusBadTypeMismatch and the value never reaches the PLC.
 //
 // (TWA-OPCUA-3.3 step 2)
 func convertValue(raw any, declaredType string) (any, bool) {
-	switch declaredType {
-	case "Boolean":
-		b, ok := raw.(bool)
-		return b, ok
-	case "Int8":
-		i, ok := toInt64(raw)
-		if !ok || i < math.MinInt8 || i > math.MaxInt8 {
-			return nil, false
-		}
-		return int8(i), true
-	case "Int16":
-		i, ok := toInt64(raw)
-		if !ok || i < math.MinInt16 || i > math.MaxInt16 {
-			return nil, false
-		}
-		return int16(i), true
-	case "Int32":
-		i, ok := toInt64(raw)
-		if !ok || i < math.MinInt32 || i > math.MaxInt32 {
-			return nil, false
-		}
-		return int32(i), true
-	case "Int64":
-		i, ok := toInt64(raw)
-		if !ok {
-			return nil, false
-		}
-		return i, true
-	case "UInt8":
-		i, ok := toInt64(raw)
-		if !ok || i < 0 || i > math.MaxUint8 {
-			return nil, false
-		}
-		return uint8(i), true
-	case "UInt16":
-		i, ok := toInt64(raw)
-		if !ok || i < 0 || i > math.MaxUint16 {
-			return nil, false
-		}
-		return uint16(i), true
-	case "UInt32":
-		i, ok := toInt64(raw)
-		if !ok || i < 0 || i > math.MaxUint32 {
-			return nil, false
-		}
-		return uint32(i), true
-	case "UInt64":
-		i, ok := toUint64(raw)
-		if !ok {
-			return nil, false
-		}
-		return i, true
-	case "Float":
-		f, ok := toFloat64(raw)
-		if !ok {
-			return nil, false
-		}
-		// A double outside the float32 range narrows to ±Inf, which is not the
-		// number the client sent and not a value a PLC should ever receive.
-		if f > math.MaxFloat32 || f < -math.MaxFloat32 {
-			return nil, false
-		}
-		return float32(f), true
-	case "Double":
-		f, ok := toFloat64(raw)
-		if !ok {
-			return nil, false
-		}
-		return f, true
-	case "String":
-		s, ok := raw.(string)
-		return s, ok
-	default:
-		// Unknown declared type — the value cannot be converted safely.
-		return nil, false
-	}
-}
-
-// toInt64 converts a numeric OPC UA value to an int64. Floating point values
-// are accepted only when they are integral and in range.
-func toInt64(raw any) (int64, bool) {
-	switch v := raw.(type) {
-	case int8:
-		return int64(v), true
-	case int16:
-		return int64(v), true
-	case int32:
-		return int64(v), true
-	case int64:
-		return v, true
-	case uint8:
-		return int64(v), true
-	case uint16:
-		return int64(v), true
-	case uint32:
-		return int64(v), true
-	case uint64:
-		if v > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(v), true
-	case float32:
-		return floatToInt64(float64(v))
-	case float64:
-		return floatToInt64(v)
-	default:
-		return 0, false
-	}
-}
-
-// floatToInt64 converts an integral float to an int64.
-//
-// The upper bound is exclusive: float64 cannot represent math.MaxInt64
-// exactly, so it rounds up to 2^63. Comparing against math.MaxInt64 would
-// therefore let 2^63 through, and converting it to int64 overflows into a
-// wrapped negative value instead of the number the client sent.
-func floatToInt64(f float64) (int64, bool) {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, false
-	}
-	if f != math.Trunc(f) {
-		return 0, false
-	}
-	if f < math.MinInt64 || f >= math.Exp2(63) {
-		return 0, false
-	}
-	return int64(f), true
-}
-
-// toUint64 converts a non-negative integral OPC UA value to a uint64 without
-// narrowing the full uint64 input range through int64.
-func toUint64(raw any) (uint64, bool) {
-	switch v := raw.(type) {
-	case uint8:
-		return uint64(v), true
-	case uint16:
-		return uint64(v), true
-	case uint32:
-		return uint64(v), true
-	case uint64:
-		return v, true
-	case int8:
-		if v < 0 {
-			return 0, false
-		}
-		return uint64(v), true
-	case int16:
-		if v < 0 {
-			return 0, false
-		}
-		return uint64(v), true
-	case int32:
-		if v < 0 {
-			return 0, false
-		}
-		return uint64(v), true
-	case int64:
-		if v < 0 {
-			return 0, false
-		}
-		return uint64(v), true
-	case float32:
-		return floatToUint64(float64(v))
-	case float64:
-		return floatToUint64(v)
-	default:
-		return 0, false
-	}
-}
-
-// floatToUint64 converts an integral float in [0, 2^64) to uint64. The upper
-// bound is exclusive because float64 cannot represent math.MaxUint64 exactly.
-func floatToUint64(f float64) (uint64, bool) {
-	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f != math.Trunc(f) || f >= math.Exp2(64) {
-		return 0, false
-	}
-	return uint64(f), true
-}
-
-// toFloat64 converts a numeric OPC UA value to a float64.
-func toFloat64(raw any) (float64, bool) {
-	switch v := raw.(type) {
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
-	case int8:
-		return float64(v), true
-	case int16:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint8:
-		return float64(v), true
-	case uint16:
-		return float64(v), true
-	case uint32:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	default:
-		return 0, false
-	}
+	val, err := tagvalue.Coerce(raw, declaredType)
+	return val, err == nil
 }

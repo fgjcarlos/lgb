@@ -39,6 +39,13 @@ import (
 	"github.com/fgjcarlos/lgb/internal/writeguard"
 )
 
+// edgeNodeCommandWiring pins the optional-interface used to wire the DCMD
+// handler: if EdgeNode.SetCommandHandler's signature changes, the build breaks
+// here instead of the runtime assertion silently leaving DCMD unwired (#62).
+var _ interface {
+	SetCommandHandler(sparkplug.CommandHandler)
+} = (*sparkplug.EdgeNode)(nil)
+
 // NewServerCmd returns the server subcommand.
 func NewServerCmd(d *Deps) *cobra.Command {
 	return &cobra.Command{
@@ -373,7 +380,10 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	// so the build compiles cleanly when spNode is a non-EdgeNode implementation.
 	// The handler is nil-safe: SparkplugCommandHandler returns nil when the guard
 	// or plcMgr is absent, in which case OnCommand stays nil and DCMDs are dropped.
-	// (TWA-DCMD-3.2 — PR3 wiring)
+	// It MUST run before the node is started: EdgeNode.SetCommandHandler panics
+	// after Start (#62). edgeNodeCommandWiring below pins the method signature at
+	// compile time so the optional-interface assertion cannot silently stop
+	// matching. (TWA-DCMD-3.2 — PR3 wiring)
 	if spNode != nil {
 		if h, ok := spNode.(interface {
 			SetCommandHandler(sparkplug.CommandHandler)

@@ -296,6 +296,136 @@ func TestHandleWriteTag_UnknownTag_404(t *testing.T) {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 	assertHTTPErrorCode(t, resp, "tag_not_found")
+
+	// An unknown tag is rejected before authorization: no audit event (#62).
+	if events := ts.readAuditEvents(t); len(events) != 0 {
+		t.Errorf("audit events on unknown tag = %d; want 0: %+v", len(events), events)
+	}
+}
+
+// spyACLReader is a writeguard.ACLReader that counts lookups before delegating.
+type spyACLReader struct {
+	mu    sync.Mutex
+	calls int
+	next  writeguard.ACLReader
+}
+
+func (s *spyACLReader) CanWrite(ctx context.Context, role, plc, tag string) (bool, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	return s.next.CanWrite(ctx, role, plc, tag)
+}
+
+func (s *spyACLReader) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// TestHandleWriteTag_UnknownTag_SkipsACLAndAudit triangulates the unknown-tag
+// path (#62 SUGGESTION-1): even for an operator holding an ACL grant on the PLC,
+// a write to a non-existent tag returns 404 tag_not_found without consulting
+// the ACL and without emitting an audit event. A control write to a known tag
+// proves the spy and the audit sink are live. (TWA-ENFORCE-2.3)
+func TestHandleWriteTag_UnknownTag_SkipsACLAndAudit(t *testing.T) {
+	ctx := context.Background()
+
+	pStore, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("plcstore.Open: %v", err)
+	}
+	defer pStore.Close()
+	if err := pStore.Create(ctx, config.PLC{
+		Name:          "Silo-1",
+		Address:       "127.0.0.1:44818",
+		ScanRate:      "1s",
+		SocketTimeout: "5s",
+		Tags:          []config.TagDef{{Name: "Feed.Rate", Type: "Float", Writable: true}},
+	}); err != nil {
+		t.Fatalf("seed PLC: %v", err)
+	}
+
+	aStore, err := aclstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("aclstore.Open: %v", err)
+	}
+	defer aStore.Close()
+	for _, tag := range []string{"Feed.Rate", "Ghost.Tag"} {
+		if err := aStore.CreateRule(ctx, aclstore.ACLRule{
+			Role: "operator", PLC: "Silo-1", Tag: tag, AllowWrite: true,
+		}); err != nil {
+			t.Fatalf("create ACL rule: %v", err)
+		}
+	}
+	spy := &spyACLReader{next: aStore}
+
+	auditDir := t.TempDir()
+	auditLogger, err := auth.OpenAuditLogger(auditDir)
+	if err != nil {
+		t.Fatalf("audit logger: %v", err)
+	}
+	defer auditLogger.Close()
+
+	mgr := &writePLCManager{}
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	_, url, stopSrv := startAPITestServerWithOpts(t, mgr, Opts{
+		AuthTokens: tokens,
+		PLCStore:   pStore,
+		PLCMgr:     mgr,
+		ACLStore:   aStore,
+		AuditLog:   auditLogger,
+		WriteGuard: writeguard.NewGuard(NewPLCStoreTagReader(pStore), spy),
+	})
+	defer stopSrv()
+
+	tok, err := tokens.Issue(10, "op1", auth.RoleOperator)
+	if err != nil {
+		t.Fatalf("issue operator token: %v", err)
+	}
+	auditLines := func() int {
+		data, err := os.ReadFile(filepath.Join(auditDir, "events.jsonl"))
+		if os.IsNotExist(err) {
+			return 0
+		}
+		if err != nil {
+			t.Fatalf("read audit: %v", err)
+		}
+		trimmed := strings.TrimSpace(string(data))
+		if trimmed == "" {
+			return 0
+		}
+		return len(strings.Split(trimmed, "\n"))
+	}
+
+	resp := doRequest(t, http.MethodPost, writeURL(url, "Silo-1", "Ghost.Tag"), `{"value":1}`, tok)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+	assertHTTPErrorCode(t, resp, "tag_not_found")
+	if n := spy.callCount(); n != 0 {
+		t.Errorf("ACL lookups on unknown tag = %d; want 0", n)
+	}
+	if n := auditLines(); n != 0 {
+		t.Errorf("audit events on unknown tag = %d; want 0", n)
+	}
+	if _, ok := mgr.lastWrite(); ok {
+		t.Error("Manager.WriteTag called for an unknown tag")
+	}
+
+	// Control: a known tag goes through the ACL and is audited.
+	ok := doRequest(t, http.MethodPost, writeURL(url, "Silo-1", "Feed.Rate"), `{"value":2.5}`, tok)
+	defer ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("control write: expected 200, got %d", ok.StatusCode)
+	}
+	if n := spy.callCount(); n != 1 {
+		t.Errorf("ACL lookups after control write = %d; want 1", n)
+	}
+	if n := auditLines(); n != 1 {
+		t.Errorf("audit events after control write = %d; want 1", n)
+	}
 }
 
 // ─── TWA-HTTP-3.1: Unauthenticated → 401 ────────────────────────────────────

@@ -20,17 +20,26 @@ import { Badge } from "@/components/ui/badge";
 import { UnavailableBanner } from "@/components/UnavailableBanner";
 import { useCurrentTags, useMappings, usePLCs, useWriteTag } from "@/hooks/useApi";
 import { ApiError } from "@/lib/api";
+import { inputPropsFor, parseWriteValue } from "@/lib/writeValue";
 
 const PAGE_SIZE = 25;
 
-// Build a fast writability lookup: "plcName|tagName" → true/false
-function useWritabilityMap(): Map<string, boolean> {
+interface TagWriteMeta {
+  writable: boolean;
+  type: string;
+}
+
+// Build a fast lookup: "plcName|tagName" → { writable, declared type }
+function useTagWriteMetaMap(): Map<string, TagWriteMeta> {
   const plcsQuery = usePLCs();
-  const map = new Map<string, boolean>();
+  const map = new Map<string, TagWriteMeta>();
   if (plcsQuery.data) {
     for (const plc of plcsQuery.data.data) {
       for (const tag of plc.tags) {
-        map.set(`${plc.name}|${tag.name}`, tag.writable);
+        map.set(`${plc.name}|${tag.name}`, {
+          writable: tag.writable,
+          type: tag.type,
+        });
       }
     }
   }
@@ -41,11 +50,14 @@ interface WriteControlProps {
   plc: string;
   tag: string;
   writable: boolean;
+  type: string;
 }
 
-function WriteControl({ plc, tag, writable }: WriteControlProps) {
+function WriteControl({ plc, tag, writable, type }: WriteControlProps) {
   const writeMutation = useWriteTag(plc, tag);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [checked, setChecked] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
 
   if (!writable) {
     return (
@@ -58,13 +70,29 @@ function WriteControl({ plc, tag, writable }: WriteControlProps) {
     );
   }
 
+  const isBoolean = type === "Boolean";
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const raw = inputRef.current?.value ?? "";
-    if (raw === "") return;
-    // Send as string; backend accepts any JSON value via `any`.
+    let value: boolean | number | string;
+    if (isBoolean) {
+      value = checked;
+    } else {
+      const raw = inputRef.current?.value ?? "";
+      if (raw === "") return;
+      // The endpoint accepts only the JSON type matching the tag's declared
+      // type (strict JSON, issue #61), so convert before sending.
+      const parsed = parseWriteValue(raw, type);
+      if (!parsed.ok) {
+        setInputError(parsed.error);
+        writeMutation.reset();
+        return;
+      }
+      value = parsed.value;
+    }
+    setInputError(null);
     writeMutation.mutate(
-      { value: raw },
+      { value },
       {
         onSuccess: () => {
           if (inputRef.current) inputRef.current.value = "";
@@ -81,10 +109,6 @@ function WriteControl({ plc, tag, writable }: WriteControlProps) {
     writeMutation.isError &&
     writeMutation.error instanceof ApiError &&
     writeMutation.error.status === 404;
-  const is400 =
-    writeMutation.isError &&
-    writeMutation.error instanceof ApiError &&
-    writeMutation.error.status === 400;
 
   return (
     <form
@@ -92,12 +116,30 @@ function WriteControl({ plc, tag, writable }: WriteControlProps) {
       className="flex items-center gap-1"
       aria-label={`Write value to ${tag}`}
     >
-      <Input
-        ref={inputRef}
-        className="h-6 w-24 px-1 text-xs"
-        placeholder="value"
-        disabled={writeMutation.isPending}
-      />
+      {isBoolean ? (
+        <label className="flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => setChecked(e.target.checked)}
+            disabled={writeMutation.isPending}
+            aria-label={`Value for ${tag}`}
+          />
+          {checked ? "true" : "false"}
+        </label>
+      ) : (
+        <Input
+          ref={inputRef}
+          {...inputPropsFor(type)}
+          className="h-6 w-24 px-1 text-xs"
+          placeholder={type || "value"}
+          title={type ? `${type} value` : undefined}
+          aria-label={`Value for ${tag}`}
+          aria-invalid={inputError !== null}
+          onChange={() => setInputError(null)}
+          disabled={writeMutation.isPending}
+        />
+      )}
       <Button
         type="submit"
         size="sm"
@@ -110,17 +152,21 @@ function WriteControl({ plc, tag, writable }: WriteControlProps) {
       {writeMutation.isSuccess && (
         <span className="text-xs text-green-600">sent</span>
       )}
+      {inputError && (
+        <span className="text-xs text-destructive" role="alert">
+          {inputError}
+        </span>
+      )}
       {is403 && (
         <span className="text-xs text-destructive">permission denied</span>
       )}
       {is404 && (
         <span className="text-xs text-destructive">tag not found</span>
       )}
-      {is400 && (
-        <span className="text-xs text-destructive">bad request</span>
-      )}
-      {writeMutation.isError && !is403 && !is404 && !is400 && (
-        <span className="text-xs text-destructive">
+      {writeMutation.isError && !is403 && !is404 && (
+        // 400 invalid_value carries the server's reason, e.g.
+        // "value is not a valid Int16: expected an integer between …".
+        <span className="text-xs text-destructive" role="alert">
           {writeMutation.error.message}
         </span>
       )}
@@ -131,7 +177,7 @@ function WriteControl({ plc, tag, writable }: WriteControlProps) {
 export function Tags() {
   const [offset, setOffset] = useState(0);
   const tagsQuery = useCurrentTags({ limit: PAGE_SIZE, offset });
-  const writabilityMap = useWritabilityMap();
+  const tagWriteMeta = useTagWriteMetaMap();
 
   const data = tagsQuery.data;
   const count = data?.pagination.count ?? 0;
@@ -179,8 +225,7 @@ export function Tags() {
               </TableHeader>
               <TableBody>
                 {data.data.map((row) => {
-                  const writable =
-                    writabilityMap.get(`${row.plc}|${row.tag}`) ?? false;
+                  const meta = tagWriteMeta.get(`${row.plc}|${row.tag}`);
                   return (
                     <TableRow key={`${row.plc}:${row.tag}`}>
                       <TableCell>{row.plc}</TableCell>
@@ -196,7 +241,8 @@ export function Tags() {
                         <WriteControl
                           plc={row.plc}
                           tag={row.tag}
-                          writable={writable}
+                          writable={meta?.writable ?? false}
+                          type={meta?.type ?? ""}
                         />
                       </TableCell>
                     </TableRow>

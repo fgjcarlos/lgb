@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 )
 
 // ErrInvalidValue is matched (errors.Is) by every error Coerce returns.
@@ -159,10 +160,9 @@ func convert(raw any, declaredType string) (any, bool) {
 }
 
 // toInt64 converts a numeric value to an int64. Floating point values are
-// accepted only when they are integral and in range. A json.Number is parsed
-// exactly as an integer first; only a non-integer literal (e.g. "1e3") falls
-// back to float parsing, and an integer literal out of the int64 range is
-// rejected rather than rounded.
+// accepted only when they are integral and in range. A json.Number is
+// evaluated exactly in decimal (see jsonInteger), never through float64, so a
+// literal is accepted only when it denotes an integer and is never rounded.
 func toInt64(raw any) (int64, bool) {
 	switch v := raw.(type) {
 	case int8:
@@ -189,18 +189,15 @@ func toInt64(raw any) (int64, bool) {
 	case float64:
 		return floatToInt64(v)
 	case json.Number:
-		i, err := strconv.ParseInt(string(v), 10, 64)
-		if err == nil {
-			return i, true
-		}
-		if errors.Is(err, strconv.ErrRange) {
-			return 0, false
-		}
-		f, ok := jsonNumberToFloat64(v)
+		neg, mag, ok := jsonInteger(v)
 		if !ok {
 			return 0, false
 		}
-		return floatToInt64(f)
+		if neg {
+			mag = "-" + mag
+		}
+		i, err := strconv.ParseInt(mag, 10, 64)
+		return i, err == nil
 	default:
 		return 0, false
 	}
@@ -262,18 +259,12 @@ func toUint64(raw any) (uint64, bool) {
 	case float64:
 		return floatToUint64(v)
 	case json.Number:
-		u, err := strconv.ParseUint(string(v), 10, 64)
-		if err == nil {
-			return u, true
-		}
-		if errors.Is(err, strconv.ErrRange) {
+		neg, mag, ok := jsonInteger(v)
+		if !ok || (neg && mag != "0") {
 			return 0, false
 		}
-		f, ok := jsonNumberToFloat64(v)
-		if !ok {
-			return 0, false
-		}
-		return floatToUint64(f)
+		u, err := strconv.ParseUint(mag, 10, 64)
+		return u, err == nil
 	default:
 		return 0, false
 	}
@@ -316,6 +307,88 @@ func toFloat64(raw any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// maxIntegerDigits bounds the decimal digits of an integer literal: 2^64 has
+// 20 digits, so anything longer is out of every supported integer range.
+const maxIntegerDigits = 20
+
+// jsonInteger evaluates a JSON number literal exactly and reports whether it
+// denotes an integer. It returns the sign and the magnitude as plain decimal
+// digits without leading zeros ("0" for zero), e.g. "1.5e1" → (false, "15"),
+// "-12E+2" → (true, "1200"), "1.0" → (false, "1"). Non-integral values
+// ("12e-1", "1.00000000000000001") and malformed literals are rejected. The
+// work is bounded by the literal length: the exponent is never expanded past
+// maxIntegerDigits, so "1e1000000000" is rejected without allocating.
+func jsonInteger(n json.Number) (neg bool, mag string, ok bool) {
+	s := string(n)
+	if strings.HasPrefix(s, "-") {
+		neg, s = true, s[1:]
+	}
+	mant, expPart, hasExp := strings.Cut(strings.ToLower(s), "e")
+	intPart, frac, hasFrac := strings.Cut(mant, ".")
+	if !isDigits(intPart) || (hasFrac && !isDigits(frac)) {
+		return false, "", false
+	}
+	if len(intPart) > 1 && intPart[0] == '0' {
+		return false, "", false // JSON forbids leading zeros
+	}
+	digits := strings.TrimLeft(intPart+frac, "0")
+	if digits == "" {
+		// Zero: any well-formed exponent still denotes zero.
+		if hasExp && !validExponent(expPart) {
+			return false, "", false
+		}
+		return neg, "0", true
+	}
+	// value = digits × 10^shift
+	shift := int64(-len(frac))
+	if hasExp {
+		if !validExponent(expPart) {
+			return false, "", false
+		}
+		e, err := strconv.ParseInt(expPart, 10, 64)
+		if err != nil {
+			// |exponent| beyond int64: either far too large or non-integral.
+			return false, "", false
+		}
+		if e > maxIntegerDigits || e < -int64(len(s)) {
+			// Either out of every integer range, or more negative than the
+			// literal has digits (so the value cannot be integral).
+			return false, "", false
+		}
+		shift += e
+	}
+	trimmed := strings.TrimRight(digits, "0")
+	shift += int64(len(digits) - len(trimmed))
+	digits = trimmed
+	if shift < 0 {
+		return false, "", false // fractional part is non-zero
+	}
+	if int64(len(digits))+shift > maxIntegerDigits {
+		return false, "", false
+	}
+	return neg, digits + strings.Repeat("0", int(shift)), true
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// validExponent reports whether s is a JSON exponent: optional sign, digits.
+func validExponent(s string) bool {
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		s = s[1:]
+	}
+	return isDigits(s)
 }
 
 // jsonNumberToFloat64 parses a JSON number literal, rejecting literals outside

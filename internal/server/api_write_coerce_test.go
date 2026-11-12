@@ -74,6 +74,10 @@ func TestHandleWriteTag_CoercesValueToDeclaredType(t *testing.T) {
 		{"Float", `{"value":2.5}`, float32(2.5)},
 		{"Double", `{"value":2.5}`, 2.5},
 		{"String", `{"value":"run"}`, "run"},
+		{"UInt8", `{"value":-0}`, uint8(0)},
+		{"Int16", `{"value":1e3}`, int16(1000)},
+		{"Float", `{"value":3.4028234663852886e38}`, float32(math.MaxFloat32)},
+		{"Int64", `{"value":9007199254740993.0}`, int64(9007199254740993)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tag+"/"+tc.body, func(t *testing.T) {
@@ -116,6 +120,10 @@ func TestHandleWriteTag_InvalidValue_400(t *testing.T) {
 		{"String", `{"value":1}`, "value is not a valid String: expected a string"},
 		{"Double", `{"value":null}`, "value is not a valid Double: expected a number"},
 		{"Double", `{}`, "value is not a valid Double: expected a number"},
+		{"Double", `null`, "value is not a valid Double: expected a number"},
+		{"Double", `{"value":[1]}`, "value is not a valid Double: expected a number"},
+		{"String", `{"value":{"a":1}}`, "value is not a valid String: expected a string"},
+		{"Int16", `{"value":1.00000000000000001}`, "value is not a valid Int16: expected an integer between -32768 and 32767"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tag+"/"+tc.body, func(t *testing.T) {

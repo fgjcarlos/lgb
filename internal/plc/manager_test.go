@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/lgb/internal/config"
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"github.com/fgjcarlos/lgb/internal/plc"
 )
 
@@ -1477,5 +1478,52 @@ func TestAllocDestAllTypes(t *testing.T) {
 
 	if dest1 != nil || dest2 != nil {
 		t.Fatalf("AllocDest for unknown type should return nil; got %v and %v", dest1, dest2)
+	}
+}
+
+// TestManager_RunWorker_PropagatesDeadband verifies #60: every emitted
+// TagUpdate carries the tag's configured deadband, good and bad alike, so
+// consumers can apply change-on-value without looking up the config.
+func TestManager_RunWorker_PropagatesDeadband(t *testing.T) {
+	t.Parallel()
+
+	mock := &controllableMockDriver{tagValue: float32(10)}
+	factory := func(_ config.PLC) plc.Driver { return mock }
+
+	var mu sync.Mutex
+	var updates []plc.TagUpdate
+	cb := func(u plc.TagUpdate) {
+		mu.Lock()
+		updates = append(updates, u)
+		mu.Unlock()
+	}
+
+	cfg := onePLCFloatConfig("20ms")
+	cfg.PLCs[0].Tags[0].Deadband = config.Deadband{Absolute: 0.5, Percent: 2}
+	mgr := plc.NewManager(cfg, nil, factory, cb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	mock.setReadErr(func(_ string) error { return errors.New("simulated read failure") })
+	time.Sleep(100 * time.Millisecond)
+	_ = mgr.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := cov.Deadband{Absolute: 0.5, Percent: 2}
+	sawGood, sawBad := false, false
+	for _, u := range updates {
+		if u.Deadband != want {
+			t.Fatalf("update %+v deadband = %+v, want %+v", u, u.Deadband, want)
+		}
+		sawGood = sawGood || u.Quality == "good"
+		sawBad = sawBad || u.Quality == "bad"
+	}
+	if !sawGood || !sawBad {
+		t.Fatalf("want good and bad updates, got good=%v bad=%v", sawGood, sawBad)
 	}
 }

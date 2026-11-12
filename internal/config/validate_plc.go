@@ -3,6 +3,7 @@
 package config
 
 import (
+	"math"
 	"time"
 
 	errs "github.com/fgjcarlos/lgb/internal/errors"
@@ -19,6 +20,7 @@ import (
 //   - scanRate must be a valid positive duration when non-empty (PLC-CFG-1.5)
 //   - slot must be in [0, 15] (PLC-CFG-1.6)
 //   - each tag: name and type must be non-empty; type must be a Sparkplug scalar (SPK-CFG-2.6/2.7)
+//   - tag deadband: finite and >= 0, percent <= 100, numeric types only (#60)
 //   - tag Writable is accepted without validation (PCS-CFG-5.1 — stored, not enforced)
 func ValidatePLC(p PLC) error {
 	var violations []error
@@ -58,10 +60,27 @@ func ValidatePLC(p PLC) error {
 		} else if !validSparkplugType(tag.Type) {
 			violations = append(violations, errorf("tags[%d].type: %q is not a supported Sparkplug B scalar type: %w", j, tag.Type, ErrConfigInvalid))
 		}
+		violations = append(violations, validateDeadband(j, tag)...)
 		// tag.Writable is accepted without validation (PCS-CFG-5.1).
 	}
 
 	return errs.Join(violations...)
+}
+
+// validateDeadband checks the change-on-value deadband of tag j (#60).
+func validateDeadband(j int, tag TagDef) []error {
+	db := tag.Deadband
+	var violations []error
+	if math.IsNaN(db.Absolute) || math.IsInf(db.Absolute, 0) || db.Absolute < 0 {
+		violations = append(violations, errorf("tags[%d].deadband.absolute: must be a finite number >= 0, got %v: %w", j, db.Absolute, ErrConfigInvalid))
+	}
+	if math.IsNaN(db.Percent) || db.Percent < 0 || db.Percent > 100 {
+		violations = append(violations, errorf("tags[%d].deadband.percent: must be between 0 and 100, got %v: %w", j, db.Percent, ErrConfigInvalid))
+	}
+	if (db.Absolute != 0 || db.Percent != 0) && tag.Type != "" && validSparkplugType(tag.Type) && !numericTagTypes[tag.Type] {
+		violations = append(violations, errorf("tags[%d].deadband: only numeric tag types support a deadband, got %q: %w", j, tag.Type, ErrConfigInvalid))
+	}
+	return violations
 }
 
 // prefixPLCViolations re-wraps each constituent of err (from ValidatePLC) with

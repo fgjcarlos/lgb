@@ -46,6 +46,10 @@ var defaults = map[string]interface{}{
 	"mqtt.qos":          1,
 	"mqtt.keepAlive":    "30s",
 	"mqtt.cleanSession": true,
+	// Change-on-value per consumer (#60): historian keeps one sample per scan.
+	"changeOnValue.sparkplug": true,
+	"changeOnValue.realtime":  true,
+	"changeOnValue.historian": false,
 	// PLCSim probe defaults: Docker Compose service name + EtherNet/IP port.
 	// Override via LGB_PLCSIM_ADDR or plcsim.addr YAML field.
 	"plcsim.addr": "plcsim:44818",

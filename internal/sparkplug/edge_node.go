@@ -3,13 +3,13 @@ package sparkplug
 import (
 	"context"
 	"fmt"
-	"github.com/fgjcarlos/lgb/internal/cov"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/cov"
 	"github.com/fgjcarlos/lgb/internal/mqtt"
 	"github.com/fgjcarlos/lgb/internal/retry"
 	pb "github.com/fgjcarlos/lgb/internal/sparkplug/pb"
@@ -201,6 +201,9 @@ func (e *EdgeNode) HandleTagUpdate(u TagUpdate) {
 	}
 	sample := cov.Sample{Key: u.PLCName + "/" + u.Tag, Value: u.Value, Quality: u.Quality, Deadband: u.Deadband}
 	e.cov.Offer(sample, func() bool {
+		if e.sm.State() != Online {
+			return false // went offline meanwhile: not sent
+		}
 		select {
 		case e.updates <- u:
 			return true
@@ -256,9 +259,11 @@ func (e *EdgeNode) publishBirths() {
 		}
 	}
 
-	// Births carry no values, so every tag must be re-sent as DDATA (#60).
-	e.cov.Reset()
 	e.sm.Transition(EventConnectSuccess)
+	// Births carry no values, so every tag must be re-sent as DDATA (#60).
+	// Reset after going Online: an update recorded as sent while the node was
+	// still offline (and then dropped by publishLoop) is forgotten here.
+	e.cov.Reset()
 }
 
 // subscribeCommands subscribes to NCMD and DCMD topics.

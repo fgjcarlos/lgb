@@ -25,7 +25,7 @@ func EnsureAdminExists(ctx context.Context, store *UserStore, log *slog.Logger) 
 		username = "admin"
 	}
 	if password == "" {
-		return false, fmt.Errorf("auth wizard: no users exist and LGB_AUTH_ADMIN_PASSWORD is not set — set it (12-72 characters; LGB_AUTH_ADMIN_USER defaults to \"admin\") to create the first admin user")
+		return false, fmt.Errorf("auth wizard: no users exist and LGB_AUTH_ADMIN_PASSWORD is not set — set it (at least 12 characters, at most 72 bytes; LGB_AUTH_ADMIN_USER defaults to \"admin\") to create the first admin user")
 	}
 
 	if err := ValidatePassword(password); err != nil {

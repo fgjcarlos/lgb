@@ -85,7 +85,7 @@ docker build -f docker/Dockerfile -t lgb:latest .
 ```
 
 On first start (empty `users.db` in the data directory) the server creates the first
-admin user from `LGB_AUTH_ADMIN_PASSWORD` (12-72 characters) and the optional
+admin user from `LGB_AUTH_ADMIN_PASSWORD` (at least 12 characters, at most 72 bytes) and the optional
 `LGB_AUTH_ADMIN_USER` (default `admin`). Without the password the container exits with
 `no users exist and LGB_AUTH_ADMIN_PASSWORD is not set`. Once a user exists the
 variables are ignored, so you can drop them after the first run.
@@ -94,8 +94,7 @@ Pass the password through an env file with restricted permissions rather than an
 inline `-e` value, which would land in shell history and process listings:
 
 ```bash
-printf 'LGB_AUTH_ADMIN_PASSWORD=%s\n' '<12+ character password>' > lgb-admin.env
-chmod 600 lgb-admin.env
+(umask 077; printf 'LGB_AUTH_ADMIN_PASSWORD=%s\n' '<12+ character password>' > lgb-admin.env)
 ```
 
 Mount your TLS cert and key as container secrets or volumes:

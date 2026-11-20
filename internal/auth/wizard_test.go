@@ -88,7 +88,7 @@ func TestEnsureAdminExists_ErrorsWithoutPassword(t *testing.T) {
 	if created {
 		t.Error("expected no user creation without a password")
 	}
-	want := `auth wizard: no users exist and LGB_AUTH_ADMIN_PASSWORD is not set — set it (12-72 characters; LGB_AUTH_ADMIN_USER defaults to "admin") to create the first admin user`
+	want := `auth wizard: no users exist and LGB_AUTH_ADMIN_PASSWORD is not set — set it (at least 12 characters, at most 72 bytes; LGB_AUTH_ADMIN_USER defaults to "admin") to create the first admin user`
 	if err.Error() != want {
 		t.Errorf("error message:\n got: %s\nwant: %s", err, want)
 	}

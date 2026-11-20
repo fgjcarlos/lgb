@@ -77,7 +77,13 @@ isolated development environment but should never be used in production.
 
 ## Container Deployment
 
-The production Docker image (`docker/Dockerfile`) embeds the compiled `lgb` binary.
+The production Docker image (`docker/Dockerfile`) builds the web UI bundle and embeds it
+in the `lgb` binary, so the container serves the web UI at `/` alongside the JSON API.
+
+```bash
+docker build -f docker/Dockerfile -t lgb:latest .
+```
+
 Mount your TLS cert and key as container secrets or volumes:
 
 ```bash

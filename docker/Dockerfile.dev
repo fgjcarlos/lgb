@@ -1,6 +1,6 @@
 # docker/Dockerfile.dev — development image with live-reload via air.
 #
-# Single-stage image based on golang:1.24-alpine. The workspace is mounted
+# Single-stage image based on golang:1.25-alpine. The workspace is mounted
 # at /workspace so code changes are reflected immediately. Not shipped to
 # production — only used by docker-compose.dev.yml for the gateway service.
 #
@@ -17,7 +17,7 @@
 #   4. If `users.db` already exists from a previous run, the admin wizard is
 #      skipped. To reset: `docker compose -f docker-compose.dev.yml down -v`.
 #
-FROM golang:1.24-alpine
+FROM golang:1.25-alpine
 
 # Install air for live-reload. Pinned via go install to a stable release that
 # supports the long-form --build.* flags (air >= 1.52). Update as needed.
@@ -35,7 +35,7 @@ WORKDIR /workspace
 # (go:embed will not recompile when those files change, but watching them
 # still wastes CPU).
 CMD ["air", \
-     "--build.cmd", "go build -tags no_embed -o ./bin/lgb ./cmd/lgb", \
+     "--build.cmd", "go build -o ./bin/lgb ./cmd/lgb", \
      "--build.entrypoint", "./bin/lgb", \
      "--build.exclude_dir", "tmp,bin,frontend/node_modules,site/node_modules,frontend/dist", \
      "--", "server", "--config", "docker/lgb.dev.yaml"]

@@ -3,9 +3,11 @@
 # Stage 1 (restic-bin): extracts the restic binary from the official upstream
 #   image so the final image can include backup functionality without pulling
 #   the Go toolchain at runtime.
-# Stage 2 (build): compiles the lgb binary with CGO_ENABLED=0 for a fully
-#   static binary compatible with the distroless final stage.
-# Stage 3 (final): minimal distroless image — no shell, no package manager.
+# Stage 2 (frontend): builds the web UI bundle (frontend/dist) with Node 20.
+# Stage 3 (build): compiles the lgb binary with CGO_ENABLED=0 for a fully
+#   static binary compatible with the distroless final stage, embedding the
+#   web UI bundle from stage 2 (//go:embed all:frontend/dist in embed.go).
+# Stage 4 (final): minimal distroless image — no shell, no package manager.
 #   Runs as non-root by default (gcr.io/distroless/static-debian12:nonroot).
 #
 # Requirements: MVP-FND-9.4. Design: §13.2, decision #21, #22 (ADR-0009).
@@ -17,9 +19,22 @@
 FROM restic/restic:0.18.0 AS restic-bin
 
 # ----------------------------
-# Stage 2: Go build
+# Stage 2: frontend bundle
 # ----------------------------
-FROM golang:1.24-alpine AS build
+FROM node:20-alpine AS frontend
+
+WORKDIR /src/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+# ----------------------------
+# Stage 3: Go build
+# ----------------------------
+FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 
@@ -29,6 +44,8 @@ RUN go mod download
 
 # Copy the full source and build.
 COPY . .
+# Replace the .gitkeep placeholder with the real bundle so the SPA is embedded.
+COPY --from=frontend /src/frontend/dist ./frontend/dist
 
 ENV CGO_ENABLED=0
 
@@ -39,12 +56,11 @@ RUN VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo dev) && \
         -X github.com/fgjcarlos/lgb/internal/version.Version=${VERSION} \
         -X github.com/fgjcarlos/lgb/internal/version.Commit=${VERSION} \
         -X github.com/fgjcarlos/lgb/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      -tags no_embed \
       -o /out/lgb \
       ./cmd/lgb
 
 # ----------------------------
-# Stage 3: minimal runtime image
+# Stage 4: minimal runtime image
 # ----------------------------
 FROM gcr.io/distroless/static-debian12:nonroot
 

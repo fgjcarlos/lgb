@@ -1,0 +1,4 @@
+# Host build outputs and dependencies: the image builds its own.
+**/node_modules
+frontend/dist
+bin

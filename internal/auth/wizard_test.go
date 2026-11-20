@@ -81,8 +81,18 @@ func TestEnsureAdminExists_ErrorsWithoutPassword(t *testing.T) {
 
 	t.Setenv("LGB_AUTH_ADMIN_PASSWORD", "")
 
-	_, err := EnsureAdminExists(ctx, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	created, err := EnsureAdminExists(ctx, store, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err == nil {
-		t.Error("expected error when no password env is set")
+		t.Fatal("expected error when no password env is set")
+	}
+	if created {
+		t.Error("expected no user creation without a password")
+	}
+	want := `auth wizard: no users exist and LGB_AUTH_ADMIN_PASSWORD is not set — set it (12-72 characters; LGB_AUTH_ADMIN_USER defaults to "admin") to create the first admin user`
+	if err.Error() != want {
+		t.Errorf("error message:\n got: %s\nwant: %s", err, want)
+	}
+	if n, _ := store.Count(ctx); n != 0 {
+		t.Errorf("expected 0 users after failed bootstrap, got %d", n)
 	}
 }

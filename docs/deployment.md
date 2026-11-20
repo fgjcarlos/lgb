@@ -77,7 +77,26 @@ isolated development environment but should never be used in production.
 
 ## Container Deployment
 
-The production Docker image (`docker/Dockerfile`) embeds the compiled `lgb` binary.
+The production Docker image (`docker/Dockerfile`) builds the web UI bundle and embeds it
+in the `lgb` binary, so the container serves the web UI at `/` alongside the JSON API.
+
+```bash
+docker build -f docker/Dockerfile -t lgb:latest .
+```
+
+On first start (empty `users.db` in the data directory) the server creates the first
+admin user from `LGB_AUTH_ADMIN_PASSWORD` (at least 12 characters, at most 72 bytes) and the optional
+`LGB_AUTH_ADMIN_USER` (default `admin`). Without the password the container exits with
+`no users exist and LGB_AUTH_ADMIN_PASSWORD is not set`. Once a user exists the
+variables are ignored, so you can drop them after the first run.
+
+Pass the password through an env file with restricted permissions rather than an
+inline `-e` value, which would land in shell history and process listings:
+
+```bash
+(umask 077; printf 'LGB_AUTH_ADMIN_PASSWORD=%s\n' '<12+ character password>' > lgb-admin.env)
+```
+
 Mount your TLS cert and key as container secrets or volumes:
 
 ```bash
@@ -85,6 +104,7 @@ docker run -d \
   -e LGB_SERVER_TLSENABLED=true \
   -e LGB_SERVER_TLSCERTFILE=/run/secrets/server.crt \
   -e LGB_SERVER_TLSKEYFILE=/run/secrets/server.key \
+  --env-file lgb-admin.env \
   -v /path/to/certs:/run/secrets:ro \
   -p 8443:8080 \
   lgb:latest

@@ -1,7 +1,7 @@
 # docker-compose.dev.yml — development stack for LGB.
 #
 # Services:
-#   gateway  — LGB binary (live-reload via air on golang:1.24-alpine)
+#   gateway  — LGB binary (live-reload via air on golang:1.25-alpine)
 #   plcsim   — deterministic CIP PLC simulator (gologix, port 44818)
 #   mqtt     — Eclipse Mosquitto MQTT broker (port 1883)
 #

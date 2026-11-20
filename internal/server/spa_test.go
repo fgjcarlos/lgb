@@ -115,3 +115,30 @@ func TestServeSPA_APIRouteNotIntercepted(t *testing.T) {
 		t.Errorf("API route returned HTML — SPA handler intercepted; body: %q", body)
 	}
 }
+
+// TestServeSPA_UnknownAPIRouteIs404 verifies that an /api path with no
+// registered route gets a JSON 404 instead of the index.html shell, while a
+// non-API path that merely starts with "api" still falls back to the SPA.
+func TestServeSPA_UnknownAPIRouteIs404(t *testing.T) {
+	h := serveSPA(spaTestFS())
+	for _, path := range []string{"/api", "/api/", "/api/nonexistent", "/api/v1/tags"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404, got %d", path, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			t.Errorf("%s: expected application/json Content-Type, got %q", path, ct)
+		}
+		if want := `{"error":{"code":"not_found","message":"API route not found"}}`; strings.TrimSpace(rec.Body.String()) != want {
+			t.Errorf("%s: expected body %s, got %q", path, want, rec.Body.String())
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/apiary", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<div id="root">`) {
+		t.Errorf("/apiary: expected SPA index.html with 200, got %d %q", rec.Code, rec.Body.String())
+	}
+}

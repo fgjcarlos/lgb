@@ -14,12 +14,18 @@ import (
 // Callers must supply an FS rooted at the SPA output directory (e.g. a sub-FS
 // of frontend/dist).
 //
-// The handler does NOT need to special-case API routes: registerAPIRoutes
-// installs method-qualified patterns on the same ServeMux, which take
-// precedence over the bare "/" catch-all used to mount this handler.
+// registerAPIRoutes installs method-qualified patterns on the same ServeMux,
+// which take precedence over the bare "/" catch-all used to mount this
+// handler. An /api request still reaches it when the path is unknown or the
+// method is not registered for it (the catch-all wins over the mux's 405);
+// both get a JSON 404 instead of the index.html shell.
 func serveSPA(assets fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+			writeAPIError(w, http.StatusNotFound, "not_found", "API route not found")
+			return
+		}
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
 			path = "index.html"

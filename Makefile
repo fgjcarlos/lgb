@@ -28,7 +28,7 @@ frontend-build:
 	cd frontend && npm run build
 
 ## build-with-ui — install + build the frontend, then build the Go binary
-## WITHOUT `-tags no_embed` so the compiled SPA assets are embedded.
+## so the compiled SPA assets in frontend/dist are embedded.
 ## Failures in npm steps abort the Go build (shell `&&` chaining).
 ## Requirements: FE-CFG-1, FE-NFR-1.
 build-with-ui: frontend-install frontend-build

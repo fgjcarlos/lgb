@@ -44,7 +44,8 @@ RUN go mod download
 
 # Copy the full source and build.
 COPY . .
-# Replace the .gitkeep placeholder with the real bundle so the SPA is embedded.
+# The SPA bundle comes only from the frontend stage (.dockerignore excludes the
+# host frontend/dist), so //go:embed always ships a fresh build.
 COPY --from=frontend /src/frontend/dist ./frontend/dist
 
 ENV CGO_ENABLED=0

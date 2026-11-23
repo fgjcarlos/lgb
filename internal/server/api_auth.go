@@ -41,6 +41,11 @@ type authUserView struct {
 // returned in the JSON body (kept for CLI / API tooling) AND set as an
 // HttpOnly; SameSite=Strict cookie scoped to /api so browser sessions
 // ride on the cookie without exposing the token to page scripts.
+//
+// Brute-force protection (#74): attempts are rate limited per client IP,
+// and loginMaxFailures consecutive failures lock the username for
+// loginLockout. Both answer the same 429 for known and unknown usernames,
+// and every failed attempt is audited as "login_failed".
 // POST /api/auth/login (public)
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.userStore == nil || s.authTokens == nil {
@@ -48,17 +53,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if wait := s.loginLimiter.allowIP(loginIPKey(r)); wait > 0 {
+		writeTooManyLogins(w, wait)
+		return
+	}
+
+	// Bound the body so attacker-chosen usernames cannot bloat limiter state or the audit log.
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "username and password are required")
 		return
 	}
 
+	if wait := s.loginLimiter.beginUser(req.Username); wait > 0 {
+		s.auditLoginFailure(r, req.Username, "locked out")
+		writeTooManyLogins(w, wait)
+		return
+	}
+
 	user, err := s.userStore.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
+		s.auditLoginFailure(r, req.Username, "invalid credentials")
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 		return
 	}
+	s.loginLimiter.succeeded(req.Username)
 
 	token, err := s.authTokens.Issue(user.ID, user.Username, user.Role)
 	if err != nil {
@@ -87,6 +107,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tokenResponse{
 		Token:     token,
 		ExpiresAt: claims.ExpiresAt.Time,
+	})
+}
+
+func (s *Server) auditLoginFailure(r *http.Request, username, detail string) {
+	if s.auditLog == nil {
+		return
+	}
+	_ = s.auditLog.Log(auth.AuditEvent{
+		Action:   "login_failed",
+		Username: username,
+		Detail:   detail,
+		IP:       r.RemoteAddr,
 	})
 }
 

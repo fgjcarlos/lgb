@@ -98,6 +98,9 @@ type Server struct {
 	aclStore   *aclstore.Store   // nil until PR4 wires the admin CRUD API
 	writeGuard *writeguard.Guard // nil-safe; operative as soon as set (PR2+)
 
+	// loginLimiter guards POST /api/auth/login against brute force (#74).
+	loginLimiter *loginLimiter
+
 	// tlsConfig is the test seam injected via Opts.TLSConfig. When non-nil and
 	// cfg.Server.TLSEnabled is true, Run uses tls.NewListener instead of ServeTLS.
 	tlsConfig *tls.Config
@@ -185,6 +188,8 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		writeGuard: guard,
 		tlsConfig:  opts.TLSConfig,
 		bkpStatus:  backupStatus{status: "idle"},
+
+		loginLimiter: newLoginLimiter(),
 	}
 }
 

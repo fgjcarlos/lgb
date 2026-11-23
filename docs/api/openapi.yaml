@@ -442,7 +442,14 @@ paths:
   /api/auth/login:
     post:
       summary: Issue a JWT for a registered user
-      description: Public endpoint. Returns a signed bearer token on success.
+      description: >-
+        Public endpoint. Returns a signed bearer token on success.
+        Brute-force protection: at most 20 attempts per minute per client IP
+        (per /64 for IPv6), and 5 consecutive failed attempts lock the
+        username for 15 minutes (known and unknown usernames alike). Both limits answer 429 with a
+        Retry-After header. Failed attempts are audited as `login_failed`
+        with the username and source address. Request bodies over 4 KiB are
+        rejected with 400.
       security: []
       requestBody:
         required: true
@@ -465,6 +472,19 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            Too many login attempts (per-IP rate limit or username lockout).
+            Error code `too_many_requests`.
+          headers:
+            Retry-After:
+              description: Seconds until another attempt may succeed.
+              schema:
+                type: integer
           content:
             application/json:
               schema:

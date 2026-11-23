@@ -58,16 +58,21 @@ build-all:
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-darwin-arm64      ./cmd/lgb
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-windows-amd64.exe ./cmd/lgb
 
+# Compose only interpolates ${VAR} from the shell or a root .env, so pass
+# docker/.env.dev explicitly when it exists; shell exports still win. Both
+# up and down need it: down also interpolates the required variables.
+DEV_COMPOSE = docker compose -f docker-compose.dev.yml $(if $(wildcard docker/.env.dev),--env-file docker/.env.dev)
+
 ## docker-up — start the development stack (gateway + plcsim + mqtt).
-## Requires LGB_AUTH_JWT_SECRET to be set in the shell or in docker/.env.dev.
-## See docker/.env.dev.example. Requirements: MVP-FND-9.7.
+## Requires LGB_AUTH_JWTSECRET and LGB_MQTT_PASSWORD in the shell or in
+## docker/.env.dev. See docker/.env.dev.example. Requirements: MVP-FND-9.7.
 docker-up:
-	docker compose -f docker-compose.dev.yml up -d
+	$(DEV_COMPOSE) up -d
 
 ## docker-down — stop the development stack and remove volumes.
 ## Requirements: MVP-FND-9.7.
 docker-down:
-	docker compose -f docker-compose.dev.yml down -v
+	$(DEV_COMPOSE) down -v
 
 ## lint — run golangci-lint with the project configuration.
 ## Requirements: MVP-FND-9.9. Design: §19 decision #23.

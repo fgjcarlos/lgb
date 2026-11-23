@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/fgjcarlos/lgb/internal/auth"
 	"github.com/fgjcarlos/lgb/internal/backup"
 )
 
@@ -17,6 +21,74 @@ type backupStatus struct {
 	status  string    // "idle" | "running" | "failed"
 	lastRun time.Time // zero when no backup has ever completed
 	lastErr string
+	restore restoreState
+}
+
+// restoreState tracks the most recent restore run (guarded by backupStatus.mu).
+type restoreState struct {
+	status      string // "" (idle) | "running" | "succeeded" | "failed"
+	snapshotID  string
+	destination string
+	finishedAt  time.Time
+	lastErr     string
+}
+
+// handleBackupRestore validates a restore request, audits it and restores the
+// snapshot asynchronously into an empty destination directory.
+// POST /api/backup/restore  (admin only)
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req struct {
+		Repo        int    `json:"repo"`
+		SnapshotID  string `json:"snapshot_id"`
+		Destination string `json:"destination"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if err := s.bkpMgr.CheckRestore(req.Repo, req.SnapshotID, req.Destination); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	dest := filepath.Clean(req.Destination)
+
+	s.bkpStatus.mu.Lock()
+	if s.bkpStatus.restore.status == "running" {
+		s.bkpStatus.mu.Unlock()
+		writeAPIError(w, http.StatusConflict, "conflict", "a restore is already running")
+		return
+	}
+	s.bkpStatus.restore = restoreState{status: "running", snapshotID: req.SnapshotID, destination: dest}
+	s.bkpStatus.mu.Unlock()
+
+	if s.auditLog != nil {
+		_ = s.auditLog.Log(auth.AuditEvent{
+			Action:   "backup.restore",
+			Username: actorFromContext(r),
+			Detail:   fmt.Sprintf("repo=%d snapshot=%s destination=%s", req.Repo, req.SnapshotID, dest),
+			IP:       r.RemoteAddr,
+		})
+	}
+
+	go func() {
+		err := s.bkpMgr.Restore(context.Background(), req.Repo, req.SnapshotID, dest)
+		s.bkpStatus.mu.Lock()
+		defer s.bkpStatus.mu.Unlock()
+		s.bkpStatus.restore.finishedAt = time.Now()
+		s.bkpStatus.restore.status = "succeeded"
+		if err != nil {
+			s.log.Error("backup restore failed", "component", "backup", "snapshot", req.SnapshotID, "err", err)
+			s.bkpStatus.restore.status = "failed"
+			s.bkpStatus.restore.lastErr = err.Error()
+		}
+	}()
+
+	writeJSON(w, http.StatusAccepted, struct {
+		Status string `json:"status"`
+	}{Status: "started"})
 }
 
 // handleBackupTrigger starts a backup asynchronously.
@@ -76,19 +148,36 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	status := s.bkpStatus.status
 	lastRun := s.bkpStatus.lastRun
 	lastErr := s.bkpStatus.lastErr
+	rs := s.bkpStatus.restore
 	s.bkpStatus.mu.Unlock()
 
+	type restoreResponse struct {
+		Status      string  `json:"status"`
+		SnapshotID  string  `json:"snapshot_id,omitempty"`
+		Destination string  `json:"destination,omitempty"`
+		FinishedAt  *string `json:"finished_at,omitempty"`
+		Error       string  `json:"error,omitempty"`
+	}
 	resp := struct {
-		Status  string  `json:"status"`
-		LastRun *string `json:"last_run"`
-		LastErr string  `json:"last_error,omitempty"`
+		Status  string          `json:"status"`
+		LastRun *string         `json:"last_run"`
+		LastErr string          `json:"last_error,omitempty"`
+		Restore restoreResponse `json:"restore"`
 	}{
 		Status:  status,
 		LastErr: lastErr,
+		Restore: restoreResponse{Status: "idle", SnapshotID: rs.snapshotID, Destination: rs.destination, Error: rs.lastErr},
+	}
+	if rs.status != "" {
+		resp.Restore.Status = rs.status
 	}
 	if !lastRun.IsZero() {
 		s := lastRun.UTC().Format(time.RFC3339)
 		resp.LastRun = &s
+	}
+	if !rs.finishedAt.IsZero() {
+		s := rs.finishedAt.UTC().Format(time.RFC3339)
+		resp.Restore.FinishedAt = &s
 	}
 
 	writeJSON(w, http.StatusOK, resp)

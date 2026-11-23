@@ -189,6 +189,27 @@ components:
         last_error:
           type: string
           description: Error of the last failed run, including retention (`forget repo ...`) failures.
+        restore:
+          $ref: "#/components/schemas/BackupRestoreStatus"
+
+    BackupRestoreStatus:
+      type: object
+      description: Outcome of the most recent restore started with `POST /api/backup/restore`.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [idle, running, succeeded, failed]
+        snapshot_id:
+          type: string
+        destination:
+          type: string
+        finished_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+          description: restic error of a failed restore.
 
     Snapshot:
       type: object
@@ -1006,6 +1027,63 @@ paths:
           description: Missing or invalid bearer token.
         "403":
           description: Caller is not an admin.
+
+  /api/backup/restore:
+    post:
+      summary: Restore a snapshot into an empty directory
+      description: >-
+        Admin only. Validates the request, writes a `backup.restore` audit event and restores
+        asynchronously; progress is reported in `restore` of `GET /api/backup/status`. The
+        destination must be an absolute path to a missing or empty directory, so the live data
+        directory is never overwritten. See docs/backup-restore.md for the swap procedure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [snapshot_id, destination]
+              properties:
+                repo:
+                  type: integer
+                  minimum: 0
+                  default: 0
+                  description: 0-based index into `backup.repos`.
+                snapshot_id:
+                  type: string
+                  pattern: "^[0-9a-f]{8,64}$"
+                destination:
+                  type: string
+                  example: /var/lib/lgb-restore
+      responses:
+        "202":
+          description: Restore started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: started
+        "400":
+          description: Invalid JSON, unknown repository, invalid snapshot ID, or a relative or non-empty destination.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
+        "409":
+          description: A restore is already running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/plcs:
     get:

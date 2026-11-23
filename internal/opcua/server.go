@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,7 +134,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.srv = srv
+	s.mu.Lock()
+	s.srv = srv // under mu: Health reads it concurrently
+	s.mu.Unlock()
 
 	// Register the gateway's Write handler BEFORE srv.Start(ctx): gopcua
 	// registers its default Write service inside Server.Start (initHandlers)
@@ -222,6 +225,19 @@ func loadCertificate(certFile, keyFile string) ([]byte, *rsa.PrivateKey, error) 
 	}
 
 	return cert.Certificate[0], key, nil
+}
+
+// Health reports the OPC UA server state as gopcua tracks it ("Running",
+// "Suspended", "Shutdown", ...; "NotStarted" before Start) and the endpoint
+// URLs it listens on.
+func (s *Server) Health() (state string, endpoints []string) {
+	s.mu.Lock()
+	srv := s.srv
+	s.mu.Unlock()
+	if srv == nil {
+		return "NotStarted", nil
+	}
+	return strings.TrimPrefix(srv.Status().State.String(), "ServerState"), srv.URLs()
 }
 
 // Stop gracefully shuts down the OPC UA server.

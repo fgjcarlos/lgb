@@ -1019,3 +1019,18 @@ func buildDCMDPayload(t *testing.T, tag string, val float32) []byte {
 	}
 	return data
 }
+
+func TestEdgeNode_ConnectedReflectsClient(t *testing.T) {
+	t.Parallel()
+	mc := &mockMQTTClient{}
+	en := sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{GroupID: "plant-a", NodeID: "lgb-1", Client: mc})
+	if en.Connected() {
+		t.Fatal("Connected() = true before the client connects")
+	}
+	mc.mu.Lock()
+	mc.connected = true
+	mc.mu.Unlock()
+	if !en.Connected() {
+		t.Fatal("Connected() = false with a connected client")
+	}
+}

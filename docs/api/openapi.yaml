@@ -693,7 +693,16 @@ paths:
   /api/doctor:
     get:
       summary: Run gateway self-checks
-      description: Requires viewer role or higher. Returns the result of each registered doctor.Check plus an aggregated overall severity (`fail > warn > pass`).
+      description: |
+        Requires viewer role or higher. Returns the result of each registered
+        doctor.Check plus an aggregated overall severity (`fail > warn > pass`).
+
+        Besides the offline checks shared with `lgb doctor`, the running server
+        adds live checks: `mqtt-broker` (when Sparkplug is configured: `fail`
+        while the MQTT client is not connected; the broker password is
+        redacted) and `opcua-server` (when OPC UA is enabled: `fail` unless the
+        server state is `Running`). The OPC UA stack does not expose its
+        session count, so `opcua-server` reports state and endpoints only.
       responses:
         "200":
           description: Doctor report.

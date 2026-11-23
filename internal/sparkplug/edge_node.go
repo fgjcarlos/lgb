@@ -102,6 +102,11 @@ func (e *EdgeNode) State() State {
 	return e.sm.State()
 }
 
+// Connected reports whether the MQTT client is currently connected to the broker.
+func (e *EdgeNode) Connected() bool {
+	return e.client.IsConnected()
+}
+
 // BdSeq returns the current birth-death sequence counter value (R69-3).
 func (e *EdgeNode) BdSeq() uint64 {
 	return e.bdSeq.Load()

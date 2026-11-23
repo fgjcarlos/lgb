@@ -7,9 +7,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,4 +333,30 @@ func writeOPCUACertFiles(t *testing.T) (string, string) {
 		t.Fatalf("write key: %v", err)
 	}
 	return certFile, keyFile
+}
+
+func TestServer_Health(t *testing.T) {
+	t.Parallel()
+	port := freeTCPPort(t)
+	cfg := &config.Config{OPCUA: config.OPCUASection{Enabled: true, Host: "127.0.0.1", Port: port, SecurityMode: "None"}}
+	srv := New(cfg, &mockTagSource{}, nil)
+
+	if state, urls := srv.Health(); state != "NotStarted" || len(urls) != 0 {
+		t.Fatalf("before Start: Health() = %q %v, want NotStarted []", state, urls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	state, urls := srv.Health()
+	if state != "Running" || len(urls) == 0 || !strings.Contains(urls[0], fmt.Sprintf(":%d", port)) {
+		t.Fatalf("after Start: Health() = %q %v, want Running at port %d", state, urls, port)
+	}
+
+	srv.srv.Close()
+	if state, _ := srv.Health(); state != "Shutdown" {
+		t.Fatalf("after Close: state = %q, want Shutdown", state)
+	}
 }

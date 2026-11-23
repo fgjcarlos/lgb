@@ -112,10 +112,12 @@ func actorFromContext(r *http.Request) string {
 }
 
 // reloadPLCsFromStore lists PLCs from the store, builds a *config.Config with
-// those PLCs, and calls plcMgr.Reload. A reload error is logged WARN but does
-// NOT fail the HTTP response — the store write has already committed.
+// those PLCs, and reloads the PLC manager and the OPC UA address space with it.
+// A reload error is logged WARN but does NOT fail the HTTP response — the store
+// write has already committed.
 func (s *Server) reloadPLCsFromStore(r *http.Request) {
-	if s.plcMgr == nil {
+	opcua, _ := s.opcuaSrv.(OPCUAReloader)
+	if s.plcMgr == nil && opcua == nil {
 		return
 	}
 	plcs, err := s.plcStore.List(r.Context())
@@ -124,8 +126,13 @@ func (s *Server) reloadPLCsFromStore(r *http.Request) {
 		return
 	}
 	cfg := &config.Config{PLCs: plcs}
-	if err := s.plcMgr.Reload(r.Context(), cfg); err != nil {
-		s.log.Warn("plc manager reload error", "component", "api-plcs", "err", err)
+	if s.plcMgr != nil {
+		if err := s.plcMgr.Reload(r.Context(), cfg); err != nil {
+			s.log.Warn("plc manager reload error", "component", "api-plcs", "err", err)
+		}
+	}
+	if opcua != nil {
+		opcua.Reload(cfg)
 	}
 }
 

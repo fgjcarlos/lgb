@@ -336,13 +336,17 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	defer auditLog.Close()
 
 	// Create OPC UA server when enabled and PLCs are configured.
+	// The PLC reload paths find Reload through a type assertion: keep it compiled.
+	var _ server.OPCUAReloader = (*opcua.Server)(nil)
 	var opcuaSrv server.OPCUAServer
 	if cfg.OPCUA.Enabled && plcMgr != nil {
 		if tagSrc, ok := plcMgr.(opcua.TagSource); ok {
 			// The OPC UA write surface shares the guard with the HTTP and DCMD
 			// surfaces; the PLC manager is the writer and the audit logger is
 			// the audit sink. (TWA-OPCUA-3.3, T6)
-			opcuaSrv = opcua.New(cfg, tagSrc, logger, opcua.Options{
+			// liveCfg, not the frozen YAML cfg: the store is the PLC source
+			// of truth, and Reload keeps the address space following it. (#82)
+			opcuaSrv = opcua.New(&liveCfg, tagSrc, logger, opcua.Options{
 				Guard:  guard,
 				Writer: plcMgr,
 				Audit:  auditLog,
@@ -422,6 +426,9 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 					logger.Warn("plc manager reload error",
 						slog.String("component", "config-watch"),
 						slog.String("err", err.Error()))
+				}
+				if r, ok := opcuaSrv.(server.OPCUAReloader); ok {
+					r.Reload(&merged)
 				}
 			})
 		}()

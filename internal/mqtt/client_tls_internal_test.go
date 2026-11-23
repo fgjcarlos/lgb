@@ -164,7 +164,7 @@ func TestNewClient_InitErrorSurfacesOnConnect(t *testing.T) {
 		"key without cert":     {BrokerURL: "mqtts://b:8883", TLSKeyFile: keyPath},
 		"bad key pair":         {BrokerURL: "mqtts://b:8883", TLSCertFile: certPath, TLSKeyFile: notPEM},
 		"missing passwordFile": {BrokerURL: "tcp://b:1883", PasswordFile: missing},
-		"password and file":    {BrokerURL: "tcp://b:1883", Password: "x", PasswordFile: pwFile},
+		"password and file":    {BrokerURL: "tcp://b:1883", Password: rand.Text(), PasswordFile: pwFile},
 	}
 	for name, opts := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -189,8 +189,11 @@ func TestConnect_TLSHandshakeAndCredentialsOnWire(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	certPath, keyPath := writePEMPair(t, dir)
+	// GitGuardian: credential fixtures are generated at runtime (rand.Text) so
+	// no username/password-shaped literal appears in source.
+	user, secret := rand.Text(), rand.Text()
 	pwFile := filepath.Join(dir, "pw")
-	if err := os.WriteFile(pwFile, []byte("wire-secret\n"), 0o600); err != nil {
+	if err := os.WriteFile(pwFile, []byte(secret+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	serverCert, err := tls.LoadX509KeyPair(certPath, keyPath)
@@ -232,7 +235,7 @@ func TestConnect_TLSHandshakeAndCredentialsOnWire(t *testing.T) {
 			opts := Options{
 				BrokerURL:    "mqtts://" + ln.Addr().String(),
 				ClientID:     "lgb-tls-test",
-				Username:     "lgb-user",
+				Username:     user,
 				PasswordFile: pwFile,
 			}
 			if withCA {
@@ -254,7 +257,7 @@ func TestConnect_TLSHandshakeAndCredentialsOnWire(t *testing.T) {
 			if r.handshake != nil {
 				t.Fatalf("handshake failed: %v", r.handshake)
 			}
-			for _, want := range []string{"MQTT", "lgb-user", "wire-secret"} {
+			for _, want := range []string{"MQTT", user, secret} {
 				if !bytes.Contains(r.connect, []byte(want)) {
 					t.Errorf("CONNECT packet %q does not contain %q", r.connect, want)
 				}
@@ -266,15 +269,16 @@ func TestConnect_TLSHandshakeAndCredentialsOnWire(t *testing.T) {
 func TestNewClient_Credentials(t *testing.T) {
 	t.Parallel()
 	pwFile := filepath.Join(t.TempDir(), "pw")
-	if err := os.WriteFile(pwFile, []byte("from-file\r\n"), 0o600); err != nil {
+	user, inline, fromFile := rand.Text(), rand.Text(), rand.Text()
+	if err := os.WriteFile(pwFile, []byte(fromFile+"\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cases := map[string]struct {
 		opts             Options
 		wantUser, wantPw string
 	}{
-		"inline":    {Options{BrokerURL: "tcp://b:1883", Username: "lgb", Password: "inline"}, "lgb", "inline"},
-		"from file": {Options{BrokerURL: "tcp://b:1883", Username: "lgb", PasswordFile: pwFile}, "lgb", "from-file"},
+		"inline":    {Options{BrokerURL: "tcp://b:1883", Username: user, Password: inline}, user, inline},
+		"from file": {Options{BrokerURL: "tcp://b:1883", Username: user, PasswordFile: pwFile}, user, fromFile},
 		"none":      {Options{BrokerURL: "tcp://b:1883"}, "", ""},
 	}
 	for name, tc := range cases {
@@ -317,7 +321,7 @@ func TestNewClient_EmptyPasswordFileRejected(t *testing.T) {
 	if err := os.WriteFile(pwFile, []byte("\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := NewClient(Options{BrokerURL: "tcp://b:1883", Username: "u", PasswordFile: pwFile})
+	c := NewClient(Options{BrokerURL: "tcp://b:1883", Username: rand.Text(), PasswordFile: pwFile})
 	if err := c.Connect(context.Background()); !errors.Is(err, ErrMQTTConnect) || c.initErr == nil {
 		t.Fatalf("Connect = %v; want ErrMQTTConnect for an empty passwordFile", err)
 	}

@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/rand"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,13 +14,16 @@ import (
 
 // Issue #73: every MQTT security field reaches mqtt.Options, and credentials
 // over a plaintext broker URL log a warning.
+//
+// GitGuardian: credential fixtures are generated at runtime (rand.Text,
+// t.TempDir) so no password-shaped literal appears in source.
 func TestMQTTOptions_MapsSecurityFields(t *testing.T) {
 	m := config.MQTTSection{
 		BrokerURL:             "mqtts://broker:8883",
 		ClientID:              "lgb-1",
 		Username:              "lgb",
-		Password:              "mapped-value",
-		PasswordFile:          "/run/secrets/mqtt",
+		Password:              rand.Text(),
+		PasswordFile:          filepath.Join(t.TempDir(), "pw"),
 		TLSCACert:             "/etc/lgb/ca.pem",
 		TLSCertFile:           "/etc/lgb/client.pem",
 		TLSKeyFile:            "/etc/lgb/client.key",
@@ -45,7 +50,7 @@ func TestMQTTOptions_MapsSecurityFields(t *testing.T) {
 }
 
 func TestMQTTOptions_PlaintextCredentialsWarning(t *testing.T) {
-	const sentinel = "sentinel-7f3a9c"
+	sentinel := rand.Text()
 	cases := map[string]struct {
 		m        config.MQTTSection
 		wantWarn bool

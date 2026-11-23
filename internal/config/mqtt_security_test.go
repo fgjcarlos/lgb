@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 )
 
 // Issue #73: MQTT username, passwordFile and TLS validation.
+// GitGuardian: password fixtures are generated at runtime with rand.Text so no
+// credential-shaped literal appears in source.
 
 // mqttConfig returns a valid config with a broker set and a readable file
 // usable as password file, CA, cert or key (Validate only checks readability).
@@ -34,7 +37,7 @@ func TestMQTTValidateSecurityViolations(t *testing.T) {
 		mutate  func(m *config.MQTTSection, file string)
 		wantKey string
 	}{
-		"password and passwordFile": {func(m *config.MQTTSection, f string) { m.Password = "x"; m.PasswordFile = f }, "mqtt.passwordFile"},
+		"password and passwordFile": {func(m *config.MQTTSection, f string) { m.Password = rand.Text(); m.PasswordFile = f }, "mqtt.passwordFile"},
 		"passwordFile missing":      {func(m *config.MQTTSection, _ string) { m.PasswordFile = missing }, "mqtt.passwordFile"},
 		"passwordFile is dir":       {func(m *config.MQTTSection, f string) { m.PasswordFile = filepath.Dir(f) }, "mqtt.passwordFile"},
 		"tlsCACert missing":         {func(m *config.MQTTSection, _ string) { m.TLSCACert = missing }, "mqtt.tlsCACert"},
@@ -88,7 +91,7 @@ func TestMQTTValidateSecureConfigAccepted(t *testing.T) {
 
 	plain, _ := mqttConfig(t, "tcp://broker:1883")
 	plain.MQTT.Username = "lgb"
-	plain.MQTT.Password = "x"
+	plain.MQTT.Password = rand.Text()
 	if err := plain.Validate(); err != nil {
 		t.Fatalf("plaintext with credentials: Validate() = %v; want nil (warning only)", err)
 	}
@@ -111,11 +114,12 @@ func TestMQTTSecurityEnvOverlay(t *testing.T) {
 // TestMQTTValidateDoesNotLeakURLPassword: paho uses URL userinfo as
 // credentials, so violations must not echo the broker URL.
 func TestMQTTValidateDoesNotLeakURLPassword(t *testing.T) {
-	for _, u := range []string{"tcp://lgb:S3CRET-PW@broker:1883", "lgb:S3CRET-PW@broker:1883", "lgb:S3CRET-PW@broker:1883/x://y"} {
+	secret := rand.Text()
+	for _, u := range []string{"tcp://lgb:" + secret + "@broker:1883", "lgb:" + secret + "@broker:1883", "lgb:" + secret + "@broker:1883/x://y"} {
 		cfg, f := mqttConfig(t, u)
 		cfg.MQTT.TLSCACert = f
 		err := cfg.Validate()
-		if err == nil || strings.Contains(err.Error(), "S3CRET-PW") {
+		if err == nil || strings.Contains(err.Error(), secret) {
 			t.Errorf("%s: Validate() = %v; want an error without the URL password", u, err)
 		}
 	}

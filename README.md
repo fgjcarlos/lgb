@@ -127,6 +127,8 @@ The development stack runs the gateway binary, the PLC simulator, and an MQTT br
 - Docker Engine 24+ with the Compose plugin
 - `LGB_AUTH_JWTSECRET` (or the legacy spelling `LGB_AUTH_JWT_SECRET`) set in
   your shell or in a local `.env` file
+- `LGB_MQTT_PASSWORD` set the same way (the dev broker requires
+  authentication; see [MQTT broker security](#mqtt-broker-security))
 
 ### Quick start
 
@@ -162,7 +164,9 @@ The dev stack **requires** `LGB_AUTH_JWTSECRET` (or its legacy spelling
 start without it. Export the variable in your shell or fill in
 `docker/.env.dev` (copied from `docker/.env.dev.example`). The example file
 ships with the variable name only — you must generate the value yourself
-and never commit a real one.
+and never commit a real one. `make docker-up` / `make docker-down` pass
+`docker/.env.dev` to compose when it exists; plain `docker compose` does not
+read it, so add `--env-file docker/.env.dev` if you call compose directly.
 
 The dev compose also wires `LGB_AUTH_ADMIN_USER` and `LGB_AUTH_ADMIN_PASSWORD`
 into the gateway container with dev-only defaults. These seed the first
@@ -170,8 +174,8 @@ admin user on the first run (only when `users.db` is empty); see
 `docker-compose.dev.yml`. To reset the admin on a dev machine:
 
 ```sh
-docker compose -f docker-compose.dev.yml down -v
-docker compose -f docker-compose.dev.yml up
+make docker-down
+make docker-up
 ```
 
 Generate a suitable value with:
@@ -179,6 +183,33 @@ Generate a suitable value with:
 ```sh
 openssl rand -hex 32
 ```
+
+### MQTT broker security
+
+The dev Mosquitto broker rejects anonymous clients and does not publish port
+1883 to the host; only services on the compose network can reach it. Its
+password file is generated at start from `LGB_MQTT_USERNAME` (default `lgb`)
+and `LGB_MQTT_PASSWORD` (required), and the gateway receives the same values.
+
+For a real broker, configure the `mqtt` section:
+
+```yaml
+mqtt:
+  brokerURL: "mqtts://broker.example:8883"   # tcp:// or mqtt:// are plaintext
+  username: "lgb"
+  passwordFile: "/run/secrets/mqtt"          # or LGB_MQTT_PASSWORD; not both
+  tlsCACert: "/etc/lgb/mqtt-ca.pem"          # optional; default is system roots
+  tlsCertFile: "/etc/lgb/mqtt-client.pem"    # optional client certificate,
+  tlsKeyFile: "/etc/lgb/mqtt-client.key"     #   set both or neither
+  tlsInsecureSkipVerify: false               # testing only
+```
+
+TLS settings require a TLS scheme (`mqtts://`, `ssl://`, `tls://`, `tcps://`,
+`mqtt+ssl://`, `wss://`); on a plaintext URL `lgb config validate` rejects them
+and the gateway refuses to connect. Credentials on a plaintext URL are accepted
+but logged as a warning, because they and all Sparkplug traffic, including DCMD
+write commands, travel in cleartext. `tlsInsecureSkipVerify: true` is also
+logged as a warning.
 
 ---
 

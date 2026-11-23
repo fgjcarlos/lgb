@@ -2,7 +2,13 @@ package mqtt
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,7 +40,10 @@ type Client interface {
 // PahoClient wraps paho.mqtt.golang. Exported for compile-time interface
 // assertion in tests; construct via NewClient.
 type PahoClient struct {
-	client       paho.Client
+	client paho.Client
+	// initErr records invalid credential or TLS material found by NewClient;
+	// Connect returns it instead of dialing.
+	initErr      error
 	mu           sync.Mutex
 	onConnectFn  func()
 	onConnLostFn func(error)
@@ -50,11 +59,28 @@ func NewClient(opts Options) *PahoClient {
 	pahoOpts.SetOrderMatters(false)
 	pahoOpts.SetAutoReconnect(false)
 
+	pc := &PahoClient{}
+
 	if opts.Username != "" {
 		pahoOpts.SetUsername(opts.Username)
 	}
-	if opts.Password != "" {
-		pahoOpts.SetPassword(opts.Password)
+	password, err := resolvePassword(opts)
+	if err != nil {
+		pc.initErr = err
+	}
+	if password != "" {
+		pahoOpts.SetPassword(password)
+	}
+
+	if IsTLSScheme(opts.BrokerURL) {
+		tlsCfg, err := buildTLSConfig(opts)
+		if err != nil {
+			pc.initErr = errors.Join(pc.initErr, err)
+		}
+		pahoOpts.SetTLSConfig(tlsCfg)
+	} else if opts.TLSCACert != "" || opts.TLSCertFile != "" || opts.TLSKeyFile != "" || opts.TLSInsecureSkipVerify {
+		// Refuse rather than silently drop TLS settings the operator asked for.
+		pc.initErr = errors.Join(pc.initErr, errors.New("mqtt: TLS settings require a TLS broker URL scheme (mqtts://, ssl://, ...)"))
 	}
 
 	keepAlive := opts.KeepAlive
@@ -67,8 +93,6 @@ func NewClient(opts Options) *PahoClient {
 	if opts.WillTopic != "" && len(opts.WillPayload) > 0 {
 		pahoOpts.SetWill(opts.WillTopic, string(opts.WillPayload), opts.WillQoS, opts.WillRetain)
 	}
-
-	pc := &PahoClient{}
 
 	pahoOpts.SetOnConnectHandler(func(_ paho.Client) {
 		pc.mu.Lock()
@@ -90,6 +114,66 @@ func NewClient(opts Options) *PahoClient {
 
 	pc.client = paho.NewClient(pahoOpts)
 	return pc
+}
+
+// IsTLSScheme reports whether paho dials brokerURL over TLS.
+func IsTLSScheme(brokerURL string) bool {
+	u, err := url.Parse(brokerURL)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "ssl", "tls", "mqtts", "mqtt+ssl", "tcps", "wss":
+		return true
+	}
+	return false
+}
+
+func resolvePassword(opts Options) (string, error) {
+	if opts.PasswordFile == "" {
+		return opts.Password, nil
+	}
+	if opts.Password != "" {
+		return "", errors.New("mqtt: password and passwordFile are mutually exclusive")
+	}
+	b, err := os.ReadFile(opts.PasswordFile)
+	if err != nil {
+		return "", fmt.Errorf("mqtt: reading passwordFile: %w", err)
+	}
+	password := strings.TrimRight(string(b), "\r\n")
+	if password == "" {
+		return "", errors.New("mqtt: passwordFile is empty")
+	}
+	return password, nil
+}
+
+func buildTLSConfig(opts Options) (*tls.Config, error) {
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: opts.TLSInsecureSkipVerify, // operator opt-in; the server logs a warning
+	}
+	if opts.TLSCACert != "" {
+		pem, err := os.ReadFile(opts.TLSCACert)
+		if err != nil {
+			return cfg, fmt.Errorf("mqtt: reading tlsCACert: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return cfg, fmt.Errorf("mqtt: tlsCACert %q contains no PEM certificates", opts.TLSCACert)
+		}
+		cfg.RootCAs = pool
+	}
+	if (opts.TLSCertFile == "") != (opts.TLSKeyFile == "") {
+		return cfg, errors.New("mqtt: tlsCertFile and tlsKeyFile must be set together")
+	}
+	if opts.TLSCertFile != "" {
+		cert, err := tls.LoadX509KeyPair(opts.TLSCertFile, opts.TLSKeyFile)
+		if err != nil {
+			return cfg, fmt.Errorf("mqtt: loading client certificate: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
 }
 
 // waitToken waits for the token to complete or for ctx to be cancelled,
@@ -120,6 +204,9 @@ func (c *PahoClient) Connect(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("mqtt: connect: %w: %w", ErrMQTTConnect, ctx.Err())
 	default:
+	}
+	if c.initErr != nil {
+		return fmt.Errorf("mqtt: connect: %w: %w", ErrMQTTConnect, c.initErr)
 	}
 
 	token := c.client.Connect()

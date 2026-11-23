@@ -242,3 +242,14 @@ func TestHandleBackupStatus_RestoreIdleByDefault(t *testing.T) {
 		t.Fatalf("status body = %s; want restore idle", raw)
 	}
 }
+
+func TestHandleBackupRestore_StatusErrorDoesNotLeakRepoURL(t *testing.T) {
+	env := newRestoreEnv(t, "echo \"Fatal: unable to open repository at $2\" >&2\nexit 1\n")
+	resp := doRequest(t, http.MethodPost, env.baseURL+"/api/backup/restore",
+		restoreBody("abcdef12", filepath.Join(t.TempDir(), "r")), env.admin(t))
+	resp.Body.Close()
+	st := env.waitRestoreDone(t)
+	if st.Status != "failed" || strings.Contains(st.Error, "repo-a") || !strings.Contains(st.Error, "unable to open repository at <repository 0>") {
+		t.Fatalf("status = %+v; want failed with redacted repo URL", st)
+	}
+}

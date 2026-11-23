@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -103,7 +104,12 @@ func (m *Manager) Restore(ctx context.Context, repo int, snapshotID, dest string
 		return err
 	}
 	if _, err := m.runner.Restore(ctx, m.repos[repo], snapshotID, filepath.Clean(dest)); err != nil {
-		return fmt.Errorf("restore from repository %d: %w", repo, err)
+		// restic may echo the repository URL, which can embed credentials.
+		msg := err.Error()
+		if u := m.repos[repo].URL; u != "" {
+			msg = strings.ReplaceAll(msg, u, fmt.Sprintf("<repository %d>", repo))
+		}
+		return fmt.Errorf("restore from repository %d: %s", repo, msg)
 	}
 	return nil
 }

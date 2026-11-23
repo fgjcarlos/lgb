@@ -219,9 +219,9 @@ func TestLoginLimit_IPv6GroupedBy64(t *testing.T) {
 	expectStatus(t, loginFrom(srv, "[2001:db8:0:1::1]:1", "alice", "secret"), http.StatusOK, "other /64")
 }
 
-// A flood of distinct usernames must never lift an existing lockout; while the
-// table is full of live entries, untracked usernames fail closed.
-func TestLoginLimit_FullTableFailsClosed(t *testing.T) {
+// A flood of distinct usernames must neither lift an existing lockout nor
+// lock out untracked users; only a table where every key is blocking fails closed.
+func TestLoginLimit_FullTableKeepsLockouts(t *testing.T) {
 	l := newLoginLimiter()
 	clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	l.now = clock.now
@@ -237,16 +237,34 @@ func TestLoginLimit_FullTableFailsClosed(t *testing.T) {
 	if wait := l.beginUser("alice"); wait <= 0 {
 		t.Fatal("flood lifted alice's lockout")
 	}
-	if wait := l.beginUser("newcomer"); wait <= 0 {
-		t.Fatal("untracked username allowed while the table is full")
+	if wait := l.beginUser("newcomer"); wait != 0 {
+		t.Fatalf("untracked username refused while the table is full: %v", wait)
 	}
 	if n := len(l.users.m); n > loginMaxKeys {
 		t.Fatalf("tracked %d usernames, cap is %d", n, loginMaxKeys)
 	}
 
+	// Full of blocking entries only: fail closed instead of evicting a lockout.
+	for k := range l.users.m {
+		l.users.m[k] = &attemptCounter{n: loginMaxFailures, t: clock.now()}
+	}
+	if wait := l.beginUser("latecomer"); wait <= 0 {
+		t.Fatal("evicted a lockout to admit a new username")
+	}
+
 	clock.advance(loginLockout)
-	if wait := l.beginUser("newcomer"); wait != 0 {
+	if wait := l.beginUser("latecomer"); wait != 0 {
 		t.Fatalf("stale entries not pruned after the lockout window: %v", wait)
+	}
+}
+
+func TestLoginLimit_FullIPTableAdmitsNewClient(t *testing.T) {
+	l := newLoginLimiter()
+	for i := 0; i < loginMaxKeys; i++ {
+		l.allowIP(fmt.Sprintf("ip%d", i))
+	}
+	if wait := l.allowIP("192.0.2.200"); wait != 0 {
+		t.Fatalf("new client refused while the IP table is full: %v", wait)
 	}
 }
 

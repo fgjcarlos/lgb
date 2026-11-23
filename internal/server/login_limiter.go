@@ -29,13 +29,15 @@ type attemptCounter struct {
 type counterMap struct {
 	m         map[string]*attemptCounter
 	ttl       time.Duration
+	limit     int // a live entry with n >= limit is actively blocking its key
 	lastPrune time.Time
 }
 
 // get returns the live counter for key, replacing a stale or missing one
-// with a fresh counter started at now. It returns nil when the table is full
-// of live entries: callers must then refuse the attempt (fail closed), since
-// evicting a live entry could lift an active lockout.
+// with a fresh counter started at now. When the table is full it drops a
+// non-blocking entry, so a flood of keys can neither lift an active lockout
+// nor lock out untracked clients. It returns nil only when every tracked key
+// is blocking: callers must then refuse the attempt (fail closed).
 func (c *counterMap) get(key string, now time.Time) *attemptCounter {
 	if e, ok := c.m[key]; ok && now.Sub(e.t) < c.ttl {
 		return e
@@ -46,6 +48,14 @@ func (c *counterMap) get(key string, now time.Time) *attemptCounter {
 		for k, e := range c.m {
 			if now.Sub(e.t) >= c.ttl {
 				delete(c.m, k)
+			}
+		}
+	}
+	if len(c.m) >= loginMaxKeys {
+		for k, e := range c.m { // map order is random, so the victim is too
+			if e.n < c.limit {
+				delete(c.m, k)
+				break
 			}
 		}
 	}
@@ -67,8 +77,8 @@ type loginLimiter struct {
 func newLoginLimiter() *loginLimiter {
 	return &loginLimiter{
 		now:   time.Now,
-		users: counterMap{m: map[string]*attemptCounter{}, ttl: loginLockout},
-		ips:   counterMap{m: map[string]*attemptCounter{}, ttl: loginIPWindow},
+		users: counterMap{m: map[string]*attemptCounter{}, ttl: loginLockout, limit: loginMaxFailures},
+		ips:   counterMap{m: map[string]*attemptCounter{}, ttl: loginIPWindow, limit: loginIPLimit},
 	}
 }
 

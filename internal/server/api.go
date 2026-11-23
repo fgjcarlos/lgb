@@ -120,10 +120,13 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 				withMiddleware(http.HandlerFunc(s.handleBackupStatus), adminMWs...))
 			mux.Handle("GET /api/backup/snapshots",
 				withMiddleware(http.HandlerFunc(s.handleBackupSnapshots), adminMWs...))
+			mux.Handle("POST /api/backup/restore",
+				withMiddleware(http.HandlerFunc(s.handleBackupRestore), adminMWs...))
 		} else {
 			mux.HandleFunc("POST /api/backup/trigger", s.handleBackupTrigger)
 			mux.HandleFunc("GET /api/backup/status", s.handleBackupStatus)
 			mux.HandleFunc("GET /api/backup/snapshots", s.handleBackupSnapshots)
+			mux.HandleFunc("POST /api/backup/restore", s.handleBackupRestore)
 		}
 	}
 

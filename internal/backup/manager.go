@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -55,6 +59,59 @@ func (m *Manager) Snapshots(ctx context.Context) ([]Snapshot, error) {
 		return []Snapshot{}, nil
 	}
 	return m.runner.Snapshots(ctx, m.repos[0])
+}
+
+var snapshotIDPattern = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
+
+// CheckRestore validates a restore request without side effects: repo is the
+// 0-based index into the configured repositories, and dest must be an absolute
+// path to a missing or empty directory, so a restore never overwrites live data.
+func (m *Manager) CheckRestore(repo int, snapshotID, dest string) error {
+	if repo < 0 || repo >= len(m.repos) {
+		return fmt.Errorf("unknown backup repository 0-based index %d", repo)
+	}
+	if !snapshotIDPattern.MatchString(snapshotID) {
+		return errors.New("snapshot_id must be 8-64 lowercase hex characters")
+	}
+	if !filepath.IsAbs(dest) {
+		return errors.New("destination must be an absolute path")
+	}
+	dest = filepath.Clean(dest)
+	info, err := os.Stat(dest)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("restore destination %s is not a directory", dest)
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("restore destination %s must be empty", dest)
+	}
+	return nil
+}
+
+// Restore validates the request with CheckRestore and restores snapshotID from
+// the repo-th repository into dest.
+func (m *Manager) Restore(ctx context.Context, repo int, snapshotID, dest string) error {
+	if err := m.CheckRestore(repo, snapshotID, dest); err != nil {
+		return err
+	}
+	if _, err := m.runner.Restore(ctx, m.repos[repo], snapshotID, filepath.Clean(dest)); err != nil {
+		// restic may echo the repository URL, which can embed credentials.
+		msg := err.Error()
+		if u := m.repos[repo].URL; u != "" {
+			msg = strings.ReplaceAll(msg, u, fmt.Sprintf("<repository %d>", repo))
+		}
+		return fmt.Errorf("restore from repository %d: %s", repo, msg)
+	}
+	return nil
 }
 
 func (m *Manager) CheckAll(ctx context.Context) error {

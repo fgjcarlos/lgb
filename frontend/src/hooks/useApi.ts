@@ -158,10 +158,19 @@ export function useUsers(): UseQueryResult<
   });
 }
 
+export interface BackupRestoreStatus {
+  status: "idle" | "running" | "succeeded" | "failed";
+  snapshot_id?: string;
+  destination?: string;
+  finished_at?: string;
+  error?: string;
+}
+
 export interface BackupStatusResponse {
   status: "idle" | "running" | "failed";
   last_run?: string | null;
   last_error?: string;
+  restore?: BackupRestoreStatus;
 }
 
 export function useBackupStatus(

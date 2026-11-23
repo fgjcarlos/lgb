@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -18,11 +19,31 @@ func NewManager(runner *Runner, repos []Repository) *Manager {
 	return &Manager{runner: runner, repos: repos}
 }
 
+// RetentionError reports retention (forget) failures from a BackupAll run in
+// which every backup succeeded, so fresh snapshots exist despite the error.
+type RetentionError struct{ Err error }
+
+func (e *RetentionError) Error() string { return e.Err.Error() }
+func (e *RetentionError) Unwrap() error { return e.Err }
+
+// BackupAll backs up every repository in order and stops at the first backup
+// failure. After a repository's successful backup its retention policy, if any,
+// is applied; forget failures do not stop later repositories. When every backup
+// succeeded they are returned as a *RetentionError.
 func (m *Manager) BackupAll(ctx context.Context, paths []string) error {
+	var forgetErrs []error
 	for _, repo := range m.repos {
 		if _, err := m.runner.Backup(ctx, repo, paths); err != nil {
-			return fmt.Errorf("backup repo %s: %w", repo.URL, err)
+			return errors.Join(append(forgetErrs, fmt.Errorf("backup repo %s: %w", repo.URL, err))...)
 		}
+		if repo.Retention.Enabled() {
+			if _, err := m.runner.Forget(ctx, repo, repo.Retention); err != nil {
+				forgetErrs = append(forgetErrs, fmt.Errorf("forget repo %s: %w", repo.URL, err))
+			}
+		}
+	}
+	if len(forgetErrs) > 0 {
+		return &RetentionError{Err: errors.Join(forgetErrs...)}
 	}
 	return nil
 }
@@ -50,6 +71,8 @@ type Scheduler struct {
 	paths     []string
 	Every     time.Duration
 	PreBackup func(ctx context.Context) error
+	// OnResult, when set, receives the outcome of every scheduled run.
+	OnResult func(err error)
 
 	done chan struct{}
 }
@@ -84,7 +107,14 @@ func (s *Scheduler) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			_ = s.runOnce(ctx)
+			err := s.runOnce(ctx)
+			// A run cut short by shutdown is not a backup failure.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if s.OnResult != nil {
+				s.OnResult(err)
+			}
 		}
 	}
 }

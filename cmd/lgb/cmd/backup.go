@@ -131,7 +131,13 @@ func runBackupCheckTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) er
 func configRepos(cfg *config.Config) []backup.Repository {
 	repos := make([]backup.Repository, len(cfg.Backup.Repos))
 	for i, r := range cfg.Backup.Repos {
-		repos[i] = backup.Repository{URL: r.URL, Password: r.Password}
+		repos[i] = backup.Repository{URL: r.URL, Password: r.Password, Retention: backup.RetentionPolicy{
+			KeepHourly:  r.Retention.KeepHourly,
+			KeepDaily:   r.Retention.KeepDaily,
+			KeepWeekly:  r.Retention.KeepWeekly,
+			KeepMonthly: r.Retention.KeepMonthly,
+			Prune:       r.Retention.Prune,
+		}}
 	}
 	return repos
 }

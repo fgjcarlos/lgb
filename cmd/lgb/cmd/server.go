@@ -259,16 +259,14 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	// bkpMgr is hoisted to outer scope so it can be passed to server.Opts.
 	var bkpSch server.BackupScheduler
 	var bkpMgr *backup.Manager
+	var bkpSched *backup.Scheduler
 	if len(cfg.Backup.Repos) > 0 {
 		interval, _ := time.ParseDuration(cfg.Backup.Interval)
 		if interval <= 0 {
 			interval = 24 * time.Hour
 		}
 
-		repos := make([]backup.Repository, len(cfg.Backup.Repos))
-		for i, r := range cfg.Backup.Repos {
-			repos[i] = backup.Repository{URL: r.URL, Password: r.Password}
-		}
+		repos := configRepos(cfg)
 		bkpMgr = backup.NewManager(nil, repos)
 		snapshotDir := filepath.Join(resolvedPath, "backup-tmp")
 		sched := backup.NewScheduler(bkpMgr, []string{snapshotDir}, interval)
@@ -281,6 +279,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		}
 
 		bkpSch = sched
+		bkpSched = sched
 		logger.Info("backup scheduler created",
 			slog.String("component", "backup"),
 			slog.Int("repo_count", len(repos)),
@@ -377,6 +376,10 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		// instance the OPC UA server uses. (T6)
 		WriteGuard: guard,
 	})
+	if bkpSched != nil {
+		// Set before srv starts the scheduler, so no run is missed.
+		bkpSched.OnResult = srv.RecordScheduledBackup
+	}
 
 	// Store server reference for tests.
 	if d.serverRef != nil {

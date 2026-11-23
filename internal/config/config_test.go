@@ -1207,3 +1207,59 @@ func validConfig(t *testing.T) *config.Config {
 		Backup:    config.BackupSection{Interval: "24h"},
 	}
 }
+
+func TestBackupValidateRetention(t *testing.T) {
+	cases := []struct {
+		name    string
+		policy  config.RetentionPolicy
+		wantErr string
+	}{
+		{"valid daily with prune", config.RetentionPolicy{KeepDaily: 7, Prune: true}, ""},
+		{"empty policy", config.RetentionPolicy{}, ""},
+		{"negative keep", config.RetentionPolicy{KeepWeekly: -1}, "backup.repos[0].retention.keepWeekly: must not be negative"},
+		{"prune without keep", config.RetentionPolicy{Prune: true}, "backup.repos[0].retention.prune: requires at least one keep* value greater than zero"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig(t)
+			cfg.Backup.Repos = []config.BackupRepo{{URL: "/tmp/repo", Password: "pass", Retention: tc.policy}}
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid config, got: %v", err)
+				}
+				return
+			}
+			if err == nil || !errors.Is(err, errs.ErrConfigInvalid) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v; want ErrConfigInvalid containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestBackupRetentionFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "retention.yaml")
+	content := `backup:
+  repos:
+    - url: /backups/lgb
+      password: pw
+      retention:
+        keepHourly: 24
+        keepDaily: 7
+        keepWeekly: 4
+        keepMonthly: 12
+        prune: true
+`
+	if err := os.WriteFile(y, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := config.RetentionPolicy{KeepHourly: 24, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 12, Prune: true}
+	if got := cfg.Backup.Repos[0].Retention; got != want {
+		t.Fatalf("retention = %+v; want %+v", got, want)
+	}
+}

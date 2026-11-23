@@ -11,8 +11,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -738,4 +742,62 @@ func freeTCPPort(t *testing.T) int {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// syncBuffer is a goroutine-safe bytes.Buffer for capturing server logs.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestServerCmd_ScheduledBackupResultReachesServer proves the scheduler's
+// OnResult is wired to the server: a scheduled forget failure is logged by
+// Server.recordBackupResult.
+func TestServerCmd_ScheduledBackupResultReachesServer(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$3\" = forget ]; then echo locked >&2; exit 1; fi\necho '{}'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "restic"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake restic: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := testutil.MinimalConfig(t)
+	cfg.Auth.JwtSecret = fixtureJwtValue
+	cfg.Historian.RetentionDays = 0
+	cfg.MQTT.GroupID = ""
+	cfg.MQTT.BrokerURL = ""
+	cfg.Backup.Interval = "20ms"
+	cfg.Backup.Repos = []config.BackupRepo{{URL: t.TempDir(), Password: "pw", Retention: config.RetentionPolicy{KeepDaily: 1}}}
+
+	logs := &syncBuffer{}
+	d := &Deps{
+		Config:           cfg,
+		Logger:           slog.New(slog.NewTextHandler(logs, nil)),
+		UserStoreFactory: seededUserStoreFactory(t),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServerTo(ctx, d, &bytes.Buffer{}, &bytes.Buffer{}) }()
+	defer func() { cancel(); <-errCh }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if out := logs.String(); strings.Contains(out, "backup run failed") && strings.Contains(out, "forget repo") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("scheduled forget failure never reached the server log:\n%s", logs.String())
 }

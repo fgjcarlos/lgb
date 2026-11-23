@@ -2,7 +2,9 @@ package plc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +21,9 @@ type gologixClient interface {
 	Connect() error
 	Disconnect() error
 	Read(tag string, data any) error
+	// ReadList reads many tags with CIP Multi-Service requests, splitting them
+	// into as many packets as the connection size requires.
+	ReadList(tagnames []string, types []any, elements []int) ([]any, error)
 	Write(tag string, val any) error
 	Connected() bool
 }
@@ -196,19 +201,85 @@ func (d *gologixDriver) WriteTag(tag string, val any) error {
 	return nil
 }
 
-// ReadMulti reads multiple tags sequentially. tags and dests must have the
-// same length; if not, an error wrapping ErrPLCRead is returned immediately
-// without touching the client (design §5 decision #7).
-func (d *gologixDriver) ReadMulti(tags []string, dests []any) error {
+// ReadMulti reads all scalar tags with one gologix ReadList call (CIP
+// Multi-Service packets, O(1) round-trips per scan) and the rest (strings,
+// slices) with ReadTag. tags and dests must have the same length; if not, an
+// error wrapping ErrPLCRead is returned without touching the client (design §5
+// decision #7).
+//
+// gologix aborts the whole batch on the first failing service and does not
+// expose per-service status, so a non-transport batch failure falls back to
+// per-tag reads of the batched tags to isolate the failing one. Transport
+// failures (ErrPLCConnect, ErrPLCTimeout) skip the fallback and fail every
+// batched tag.
+func (d *gologixDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
 	if len(tags) != len(dests) {
-		return fmt.Errorf("plc: ReadMulti: len(tags)=%d != len(dests)=%d: %w",
+		return nil, fmt.Errorf("plc: ReadMulti: len(tags)=%d != len(dests)=%d: %w",
 			len(tags), len(dests), ErrPLCRead)
 	}
-	for i, tag := range tags {
-		if err := d.ReadTag(tag, dests[i]); err != nil {
-			return fmt.Errorf("plc: ReadMulti tag[%d] %q: %w", i, tag, err)
+	errs := make([]error, len(tags))
+	var idx []int
+	var names []string
+	var types []any
+	for i, dest := range dests {
+		if zero, ok := batchZero(dest); ok {
+			idx = append(idx, i)
+			names = append(names, tags[i])
+			types = append(types, zero)
+			continue
+		}
+		errs[i] = d.ReadTag(tags[i], dest)
+	}
+	if len(idx) == 0 {
+		return errs, nil
+	}
+
+	elements := make([]int, len(idx))
+	for k := range elements {
+		elements[k] = 1
+	}
+	vals, err := d.client.ReadList(names, types, elements)
+	if err != nil {
+		err = translateError(err, "read", fmt.Sprintf("%d batched tags", len(idx)))
+		transport := errors.Is(err, ErrPLCConnect) || errors.Is(err, ErrPLCTimeout)
+		for _, i := range idx {
+			if transport {
+				errs[i] = err
+			} else {
+				errs[i] = d.ReadTag(tags[i], dests[i])
+			}
+		}
+		return errs, nil
+	}
+	for k, i := range idx {
+		errs[i] = assignValue(dests[i], vals[k], tags[i])
+	}
+	return errs, nil
+}
+
+// batchZero returns the zero value gologix needs to type a batched read of
+// dest, or false when dest cannot be batched (non-pointer, slice, string —
+// Logix STRING is a structure gologix only decodes through Read).
+func batchZero(dest any) (any, bool) {
+	switch dest.(type) {
+	case *bool, *int8, *int16, *int32, *int64,
+		*uint8, *uint16, *uint32, *uint64, *float32, *float64:
+		if v := reflect.ValueOf(dest); !v.IsNil() {
+			return v.Elem().Interface(), true
 		}
 	}
+	return nil, false
+}
+
+// assignValue stores a batched result in dest, failing the tag when the PLC
+// returned a different type than the configured one.
+func assignValue(dest, val any, tag string) error {
+	dv := reflect.ValueOf(dest).Elem()
+	vv := reflect.ValueOf(val)
+	if !vv.IsValid() || vv.Type() != dv.Type() {
+		return fmt.Errorf("plc: read %q: got %T, want %s: %w", tag, val, dv.Type(), ErrPLCRead)
+	}
+	dv.Set(vv)
 	return nil
 }
 

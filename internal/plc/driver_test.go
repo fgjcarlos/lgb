@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	errs "github.com/fgjcarlos/lgb/internal/errors"
 	"github.com/fgjcarlos/lgb/internal/config"
+	errs "github.com/fgjcarlos/lgb/internal/errors"
 	"github.com/fgjcarlos/lgb/internal/plc"
 )
 
@@ -19,12 +19,14 @@ type mockDriver struct {
 	connected bool
 }
 
-func (m *mockDriver) Connect(_ context.Context) error         { m.connected = true; return nil }
-func (m *mockDriver) Close() error                            { m.connected = false; return nil }
-func (m *mockDriver) ReadTag(_ string, _ any) error           { return nil }
-func (m *mockDriver) WriteTag(_ string, _ any) error          { return nil }
-func (m *mockDriver) ReadMulti(_ []string, _ []any) error     { return nil }
-func (m *mockDriver) Connected() bool                         { return m.connected }
+func (m *mockDriver) Connect(_ context.Context) error { m.connected = true; return nil }
+func (m *mockDriver) Close() error                    { m.connected = false; return nil }
+func (m *mockDriver) ReadTag(_ string, _ any) error   { return nil }
+func (m *mockDriver) WriteTag(_ string, _ any) error  { return nil }
+func (m *mockDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
+	return plc.ReadEach(m, tags, dests)
+}
+func (m *mockDriver) Connected() bool { return m.connected }
 
 // Compile-time assertion: *mockDriver must satisfy Driver.
 var _ plc.Driver = (*mockDriver)(nil)
@@ -73,13 +75,13 @@ func TestErrReExports(t *testing.T) {
 // fakePLCClient implements the gologixClient interface for unit testing.
 // All methods are controlled via fields and mutexes.
 type fakePLCClient struct {
-	mu          sync.Mutex
-	connectErr  error
+	mu            sync.Mutex
+	connectErr    error
 	disconnectErr error
-	readErr     error
-	writeErr    error
-	connected   bool
-	connectCalls int
+	readErr       error
+	writeErr      error
+	connected     bool
+	connectCalls  int
 }
 
 func (f *fakePLCClient) Connect() error {
@@ -107,6 +109,12 @@ func (f *fakePLCClient) Read(tag string, data any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.readErr
+}
+
+func (f *fakePLCClient) ReadList(_ []string, _ []any, _ []int) ([]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return nil, f.readErr
 }
 
 func (f *fakePLCClient) Write(tag string, val any) error {
@@ -261,7 +269,7 @@ func TestGologixDriver_ReadMulti_LengthMismatch(t *testing.T) {
 	var v1 int16
 	var v2 float32
 	// 2 tags, 1 dest — mismatch.
-	err := d.ReadMulti([]string{"Tag1", "Tag2"}, []any{&v1})
+	_, err := d.ReadMulti([]string{"Tag1", "Tag2"}, []any{&v1})
 	if err == nil {
 		t.Fatal("expected error for len mismatch, got nil")
 	}

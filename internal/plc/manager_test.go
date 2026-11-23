@@ -50,9 +50,11 @@ func (m *trackingMockDriver) ReadTag(_ string, dest any) error {
 	}
 	return nil
 }
-func (m *trackingMockDriver) WriteTag(_ string, _ any) error      { return nil }
-func (m *trackingMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
-func (m *trackingMockDriver) Connected() bool                     { return true }
+func (m *trackingMockDriver) WriteTag(_ string, _ any) error { return nil }
+func (m *trackingMockDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
+	return plc.ReadEach(m, tags, dests)
+}
+func (m *trackingMockDriver) Connected() bool { return true }
 
 // Compile-time assertion: *trackingMockDriver must satisfy Driver.
 var _ plc.Driver = (*trackingMockDriver)(nil)
@@ -382,8 +384,10 @@ func (m *tagReadMockDriver) ReadTag(tag string, dest any) error {
 	return nil
 }
 
-func (m *tagReadMockDriver) WriteTag(_ string, _ any) error      { return nil }
-func (m *tagReadMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
+func (m *tagReadMockDriver) WriteTag(_ string, _ any) error { return nil }
+func (m *tagReadMockDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
+	return plc.ReadEach(m, tags, dests)
+}
 func (m *tagReadMockDriver) Connected() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -879,10 +883,12 @@ func (d *callbackMockDriver) Close() error {
 	return nil
 }
 
-func (d *callbackMockDriver) ReadTag(_ string, _ any) error       { return nil }
-func (d *callbackMockDriver) WriteTag(_ string, _ any) error      { return nil }
-func (d *callbackMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
-func (d *callbackMockDriver) Connected() bool                     { return true }
+func (d *callbackMockDriver) ReadTag(_ string, _ any) error  { return nil }
+func (d *callbackMockDriver) WriteTag(_ string, _ any) error { return nil }
+func (d *callbackMockDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
+	return plc.ReadEach(d, tags, dests)
+}
+func (d *callbackMockDriver) Connected() bool { return true }
 
 var _ plc.Driver = (*callbackMockDriver)(nil)
 
@@ -1202,8 +1208,10 @@ func (d *controllableMockDriver) setReadErr(fn func(tag string) error) {
 	d.readErrFn = fn
 }
 
-func (d *controllableMockDriver) WriteTag(_ string, _ any) error      { return nil }
-func (d *controllableMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
+func (d *controllableMockDriver) WriteTag(_ string, _ any) error { return nil }
+func (d *controllableMockDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
+	return plc.ReadEach(d, tags, dests)
+}
 func (d *controllableMockDriver) Connected() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

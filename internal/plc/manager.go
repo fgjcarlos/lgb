@@ -376,8 +376,12 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 				status.setConnected(time.Now())
 			}
 			scanStart := time.Now()
+			// Collect every readable tag so the driver can batch them into
+			// CIP Multi-Service requests (one round-trip per packet, not per tag).
+			readTags := make([]config.TagDef, 0, len(plcCfg.Tags))
+			names := make([]string, 0, len(plcCfg.Tags))
+			dests := make([]any, 0, len(plcCfg.Tags))
 			for _, tag := range plcCfg.Tags {
-				deadband := cov.Deadband(tag.Deadband)
 				dest := m.AllocDest(tag.Type, tag.Name)
 				if dest == nil {
 					// Unknown type: AllocDest already logged warning once.
@@ -389,13 +393,24 @@ func (m *Manager) runWorker(ctx context.Context, name string, d Driver, plcCfg c
 							Value:     nil,
 							Timestamp: time.Now(),
 							Quality:   "bad",
-							Deadband:  deadband,
+							Deadband:  cov.Deadband(tag.Deadband),
 						})
 						lastQuality[tag.Name] = "bad"
 					}
 					continue
 				}
-				err := d.ReadTag(tag.Name, dest)
+				readTags = append(readTags, tag)
+				names = append(names, tag.Name)
+				dests = append(dests, dest)
+			}
+			readErrs, argErr := d.ReadMulti(names, dests)
+			for i, tag := range readTags {
+				deadband := cov.Deadband(tag.Deadband)
+				dest := dests[i]
+				err := argErr
+				if err == nil && i < len(readErrs) {
+					err = readErrs[i]
+				}
 				status.recordRead(err, time.Now())
 				if err != nil {
 					log.Warn("plc manager: ReadTag error",

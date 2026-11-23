@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,3 +231,104 @@ func TestHandleBackupSnapshots_EmptyArray200(t *testing.T) {
 
 // compile-time guard
 var _ = context.Background
+
+// ─── Retention (issue #83) ───────────────────────────────────────────────────
+
+type backupStatusBody struct {
+	Status  string  `json:"status"`
+	LastRun *string `json:"last_run"`
+	LastErr string  `json:"last_error"`
+}
+
+func getBackupStatus(t *testing.T, baseURL string) backupStatusBody {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/backup/status")
+	if err != nil {
+		t.Fatalf("GET status: %v", err)
+	}
+	defer resp.Body.Close()
+	var body backupStatusBody
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return body
+}
+
+// waitBackupStatus polls until status is no longer "running".
+func waitBackupStatus(t *testing.T, baseURL string) backupStatusBody {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if body := getBackupStatus(t, baseURL); body.Status != "running" {
+			return body
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("backup still running after 5s")
+	return backupStatusBody{}
+}
+
+func TestHandleBackupTrigger_AppliesRetentionAndSurfacesForgetFailure(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	fake := writeFakeRestic(t, `#!/bin/sh
+printf '%s\n' "$*" >> "`+logPath+`"
+if [ "$3" = "forget" ]; then echo "repo locked" >&2; exit 1; fi
+printf '{"message_type":"summary"}\n'
+`)
+	mgr := backup.NewManager(backup.NewRunner(fake), []backup.Repository{
+		{URL: "repo", Password: "pw", Retention: backup.RetentionPolicy{KeepDaily: 7, Prune: true}},
+	})
+	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{BkpMgr: mgr})
+	defer stop()
+
+	resp, err := http.Post(baseURL+"/api/backup/trigger", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST trigger: %v", err)
+	}
+	resp.Body.Close()
+
+	body := waitBackupStatus(t, baseURL)
+	if body.Status != "failed" || !strings.Contains(body.LastErr, "forget repo repo") || !strings.Contains(body.LastErr, "repo locked") {
+		t.Fatalf("status = %+v; want failed with forget error", body)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read calls: %v", err)
+	}
+	if !strings.Contains(string(data), "-r repo forget --keep-daily 7 --prune --json") {
+		t.Fatalf("forget not invoked with policy args; calls:\n%s", data)
+	}
+}
+
+func TestRecordScheduledBackup_UpdatesStatus(t *testing.T) {
+	fake := writeFakeRestic(t, "#!/bin/sh\nprintf '{}\n'")
+	mgr := backup.NewManager(backup.NewRunner(fake), nil)
+	srv, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{BkpMgr: mgr})
+	defer stop()
+
+	srv.RecordScheduledBackup(errors.New("forget repo r: boom"))
+	if body := getBackupStatus(t, baseURL); body.Status != "failed" || body.LastErr != "forget repo r: boom" || body.LastRun != nil {
+		t.Fatalf("after failure status = %+v", body)
+	}
+	srv.RecordScheduledBackup(nil)
+	if body := getBackupStatus(t, baseURL); body.Status != "idle" || body.LastErr != "" || body.LastRun == nil {
+		t.Fatalf("after success status = %+v", body)
+	}
+}
+
+func TestRecordScheduledBackup_KeepsManualRunning(t *testing.T) {
+	fake := writeFakeRestic(t, "#!/bin/sh\nsleep 2\nprintf '{}\n'")
+	mgr := backup.NewManager(backup.NewRunner(fake), []backup.Repository{{URL: "repo", Password: "pw"}})
+	srv, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{BkpMgr: mgr})
+	defer stop()
+
+	resp, err := http.Post(baseURL+"/api/backup/trigger", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST trigger: %v", err)
+	}
+	resp.Body.Close()
+	srv.RecordScheduledBackup(nil)
+	if body := getBackupStatus(t, baseURL); body.Status != "running" {
+		t.Fatalf("scheduled result released the manual run: status = %q", body.Status)
+	}
+}

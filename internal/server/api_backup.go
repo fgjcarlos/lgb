@@ -29,22 +29,38 @@ func (s *Server) handleBackupTrigger(w http.ResponseWriter, r *http.Request) {
 	s.bkpStatus.mu.Unlock()
 
 	go func() {
-		err := s.bkpMgr.BackupAll(context.Background(), nil)
-		s.bkpStatus.mu.Lock()
-		defer s.bkpStatus.mu.Unlock()
-		if err != nil {
-			s.bkpStatus.status = "failed"
-			s.bkpStatus.lastErr = err.Error()
-		} else {
-			s.bkpStatus.status = "idle"
-			s.bkpStatus.lastRun = time.Now()
-			s.bkpStatus.lastErr = ""
-		}
+		s.recordBackupResult(s.bkpMgr.BackupAll(context.Background(), nil), true)
 	}()
 
 	writeJSON(w, http.StatusAccepted, struct {
 		Status string `json:"status"`
 	}{Status: "started"})
+}
+
+// RecordScheduledBackup records the outcome of a scheduled backup run (wired to
+// backup.Scheduler.OnResult) so it shows in GET /api/backup/status and the log.
+func (s *Server) RecordScheduledBackup(err error) {
+	s.recordBackupResult(err, false)
+}
+
+// recordBackupResult stores a run outcome (backup plus retention). Only the
+// manual run owns the "running" state, so a scheduled result never releases it.
+func (s *Server) recordBackupResult(err error, manual bool) {
+	s.bkpStatus.mu.Lock()
+	defer s.bkpStatus.mu.Unlock()
+	if err != nil {
+		s.log.Error("backup run failed", "component", "backup", "manual", manual, "err", err)
+		s.bkpStatus.lastErr = err.Error()
+	} else {
+		s.bkpStatus.lastRun = time.Now()
+		s.bkpStatus.lastErr = ""
+	}
+	if manual || s.bkpStatus.status != "running" {
+		s.bkpStatus.status = "idle"
+		if err != nil {
+			s.bkpStatus.status = "failed"
+		}
+	}
 }
 
 // handleBackupStatus returns the current backup status.
@@ -102,4 +118,3 @@ func (s *Server) handleBackupSnapshots(w http.ResponseWriter, r *http.Request) {
 		Data []snapshotResponse `json:"data"`
 	}{Data: data})
 }
-

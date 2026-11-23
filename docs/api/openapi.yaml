@@ -170,6 +170,10 @@ components:
 
     BackupStatus:
       type: object
+      description: >-
+        Outcome of the most recent backup run, manual or scheduled. A run backs up every
+        repository and then applies each repository's retention policy
+        (`restic forget --keep-* [--prune]`).
       required: [status]
       properties:
         status:
@@ -181,6 +185,7 @@ components:
           nullable: true
         last_error:
           type: string
+          description: Error of the last failed run, including retention (`forget repo ...`) failures.
 
     Snapshot:
       type: object

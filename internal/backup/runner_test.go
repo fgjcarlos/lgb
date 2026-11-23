@@ -146,3 +146,71 @@ func TestRunner_RestoreRequiresCleanDestination(t *testing.T) {
 		t.Fatal("Restore returned nil error for non-empty destination")
 	}
 }
+
+// writeLoggingRestic writes a fake restic that appends "$*" to logPath and
+// exits with failCode when its first argument after "-r URL" equals failCmd.
+func writeLoggingRestic(t *testing.T, logPath, failCmd string) string {
+	t.Helper()
+	fake := filepath.Join(t.TempDir(), "restic")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "` + logPath + `"
+if [ "$3" = "` + failCmd + `" ]; then echo "boom" >&2; exit 1; fi
+printf '{"message_type":"summary"}\n'
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake restic: %v", err)
+	}
+	return fake
+}
+
+func readCalls(t *testing.T, logPath string) []string {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read calls: %v", err)
+	}
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+func TestRunner_ForgetArgs(t *testing.T) {
+	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
+	cases := []struct {
+		name   string
+		policy backup.RetentionPolicy
+		want   string
+	}{
+		{"all keeps with prune",
+			backup.RetentionPolicy{KeepHourly: 24, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 12, Prune: true},
+			"-r repo forget --keep-hourly 24 --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune --json"},
+		{"daily only without prune",
+			backup.RetentionPolicy{KeepDaily: 7},
+			"-r repo forget --keep-daily 7 --json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "calls.log")
+			runner := backup.NewRunner(writeLoggingRestic(t, logPath, ""))
+			if _, err := runner.Forget(context.Background(), backup.Repository{URL: "repo"}, tc.policy); err != nil {
+				t.Fatalf("Forget: %v", err)
+			}
+			if got := readCalls(t, logPath); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("calls = %q; want [%q]", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunner_ForgetRejectsEmptyPolicy(t *testing.T) {
+	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	runner := backup.NewRunner(writeLoggingRestic(t, logPath, ""))
+	if _, err := runner.Forget(context.Background(), backup.Repository{URL: "repo"}, backup.RetentionPolicy{Prune: true}); err == nil {
+		t.Fatal("Forget with no keep-* returned nil error")
+	}
+	if got := readCalls(t, logPath); len(got) != 0 {
+		t.Fatalf("restic was invoked: %q", got)
+	}
+}

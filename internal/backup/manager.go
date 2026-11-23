@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -18,13 +19,23 @@ func NewManager(runner *Runner, repos []Repository) *Manager {
 	return &Manager{runner: runner, repos: repos}
 }
 
+// BackupAll backs up every repository in order and stops at the first backup
+// failure. After a repository's successful backup its retention policy, if any,
+// is applied; forget failures do not stop later repositories and are returned
+// joined once every repository was processed.
 func (m *Manager) BackupAll(ctx context.Context, paths []string) error {
+	var forgetErrs []error
 	for _, repo := range m.repos {
 		if _, err := m.runner.Backup(ctx, repo, paths); err != nil {
-			return fmt.Errorf("backup repo %s: %w", repo.URL, err)
+			return errors.Join(append(forgetErrs, fmt.Errorf("backup repo %s: %w", repo.URL, err))...)
+		}
+		if repo.Retention.Enabled() {
+			if _, err := m.runner.Forget(ctx, repo, repo.Retention); err != nil {
+				forgetErrs = append(forgetErrs, fmt.Errorf("forget repo %s: %w", repo.URL, err))
+			}
 		}
 	}
-	return nil
+	return errors.Join(forgetErrs...)
 }
 
 // Snapshots returns the snapshots for the first configured repository.
@@ -50,6 +61,8 @@ type Scheduler struct {
 	paths     []string
 	Every     time.Duration
 	PreBackup func(ctx context.Context) error
+	// OnResult, when set, receives the outcome of every scheduled run.
+	OnResult func(err error)
 
 	done chan struct{}
 }
@@ -84,7 +97,10 @@ func (s *Scheduler) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			_ = s.runOnce(ctx)
+			err := s.runOnce(ctx)
+			if s.OnResult != nil {
+				s.OnResult(err)
+			}
 		}
 	}
 }

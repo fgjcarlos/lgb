@@ -153,8 +153,19 @@ type BackupSection struct {
 
 // BackupRepo holds a single restic repository configuration.
 type BackupRepo struct {
-	URL      string `koanf:"url"`
-	Password string `koanf:"password" secret:"true"`
+	URL       string          `koanf:"url"`
+	Password  string          `koanf:"password" secret:"true"`
+	Retention RetentionPolicy `koanf:"retention"`
+}
+
+// RetentionPolicy maps to `restic forget --keep-* [--prune]`, applied after each
+// backup of the repo. All-zero keep values disable it.
+type RetentionPolicy struct {
+	KeepHourly  int  `koanf:"keepHourly"`
+	KeepDaily   int  `koanf:"keepDaily"`
+	KeepWeekly  int  `koanf:"keepWeekly"`
+	KeepMonthly int  `koanf:"keepMonthly"`
+	Prune       bool `koanf:"prune"`
 }
 
 // PLC holds CIP/gologix PLC settings.
@@ -303,6 +314,20 @@ func (c *Config) Validate() error {
 	for i, repo := range c.Backup.Repos {
 		if repo.URL == "" {
 			violations = append(violations, errorf("backup.repos[%d].url: must not be empty: %w", i, ErrConfigInvalid))
+		}
+		r := repo.Retention
+		anyKeep := false
+		for _, k := range []struct {
+			name string
+			n    int
+		}{{"keepHourly", r.KeepHourly}, {"keepDaily", r.KeepDaily}, {"keepWeekly", r.KeepWeekly}, {"keepMonthly", r.KeepMonthly}} {
+			if k.n < 0 {
+				violations = append(violations, errorf("backup.repos[%d].retention.%s: must not be negative, got %d: %w", i, k.name, k.n, ErrConfigInvalid))
+			}
+			anyKeep = anyKeep || k.n > 0
+		}
+		if r.Prune && !anyKeep {
+			violations = append(violations, errorf("backup.repos[%d].retention.prune: requires at least one keep* value greater than zero: %w", i, ErrConfigInvalid))
 		}
 	}
 

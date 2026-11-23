@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -20,8 +21,24 @@ type Snapshot struct {
 }
 
 type Repository struct {
-	URL      string
-	Password string
+	URL       string
+	Password  string
+	Retention RetentionPolicy
+}
+
+// RetentionPolicy maps to `restic forget --keep-* [--prune]`. Zero values are omitted.
+type RetentionPolicy struct {
+	KeepHourly  int
+	KeepDaily   int
+	KeepWeekly  int
+	KeepMonthly int
+	Prune       bool
+}
+
+// Enabled reports whether the policy keeps anything; without a keep-* rule
+// forget has nothing to apply.
+func (p RetentionPolicy) Enabled() bool {
+	return p.KeepHourly > 0 || p.KeepDaily > 0 || p.KeepWeekly > 0 || p.KeepMonthly > 0
 }
 
 type Runner struct {
@@ -46,6 +63,32 @@ func (r *Runner) Init(ctx context.Context, repo Repository) error {
 
 func (r *Runner) Backup(ctx context.Context, repo Repository, paths []string) (CommandResult, error) {
 	args := append([]string{"backup"}, paths...)
+	return r.run(ctx, repo, args...)
+}
+
+// Forget applies the retention policy with `restic forget`, pruning unreferenced
+// data when policy.Prune is set. It refuses a policy without keep-* rules.
+func (r *Runner) Forget(ctx context.Context, repo Repository, policy RetentionPolicy) (CommandResult, error) {
+	if !policy.Enabled() {
+		return CommandResult{}, fmt.Errorf("restic forget: retention policy has no keep-* rule")
+	}
+	args := []string{"forget"}
+	for _, k := range []struct {
+		flag string
+		n    int
+	}{
+		{"--keep-hourly", policy.KeepHourly},
+		{"--keep-daily", policy.KeepDaily},
+		{"--keep-weekly", policy.KeepWeekly},
+		{"--keep-monthly", policy.KeepMonthly},
+	} {
+		if k.n > 0 {
+			args = append(args, k.flag, strconv.Itoa(k.n))
+		}
+	}
+	if policy.Prune {
+		args = append(args, "--prune")
+	}
 	return r.run(ctx, repo, args...)
 }
 

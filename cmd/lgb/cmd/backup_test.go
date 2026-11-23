@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fgjcarlos/lgb/internal/backup"
 	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
@@ -80,7 +81,7 @@ func TestConfigRepos_ConvertsCorrectly(t *testing.T) {
 		Backup: config.BackupSection{
 			Repos: []config.BackupRepo{
 				{URL: "/local/repo", Password: "secret1"},
-				{URL: "s3:bucket/path", Password: "secret2"},
+				{URL: "s3:bucket/path", Password: "secret2", Retention: config.RetentionPolicy{KeepHourly: 1, KeepDaily: 2, KeepWeekly: 3, KeepMonthly: 4, Prune: true}},
 			},
 		},
 	}
@@ -90,6 +91,10 @@ func TestConfigRepos_ConvertsCorrectly(t *testing.T) {
 	}
 	if repos[0].URL != "/local/repo" || repos[1].URL != "s3:bucket/path" {
 		t.Errorf("unexpected repo URLs: %+v", repos)
+	}
+	want := backup.RetentionPolicy{KeepHourly: 1, KeepDaily: 2, KeepWeekly: 3, KeepMonthly: 4, Prune: true}
+	if repos[1].Retention != want || repos[0].Retention.Enabled() {
+		t.Errorf("retention = %+v / %+v; want %+v / disabled", repos[0].Retention, repos[1].Retention, want)
 	}
 }
 

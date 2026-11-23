@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fgjcarlos/lgb/internal/backup"
 )
@@ -88,4 +90,78 @@ func countLines(s string) int {
 		}
 	}
 	return count
+}
+
+func TestManager_BackupAllForgetsPerRepoPolicy(t *testing.T) {
+	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "")), []backup.Repository{
+		{URL: "with-policy", Retention: backup.RetentionPolicy{KeepDaily: 7, Prune: true}},
+		{URL: "no-policy"},
+	})
+	if err := mgr.BackupAll(context.Background(), []string{"/data"}); err != nil {
+		t.Fatalf("BackupAll: %v", err)
+	}
+	want := []string{
+		"-r with-policy backup /data --json",
+		"-r with-policy forget --keep-daily 7 --prune --json",
+		"-r no-policy backup /data --json",
+	}
+	if got := readCalls(t, logPath); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %q; want %q", got, want)
+	}
+}
+
+func TestManager_BackupAllForgetFailureDoesNotStopOtherRepos(t *testing.T) {
+	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	policy := backup.RetentionPolicy{KeepDaily: 7}
+	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "forget")), []backup.Repository{
+		{URL: "a", Retention: policy},
+		{URL: "b", Retention: policy},
+	})
+	err := mgr.BackupAll(context.Background(), []string{"/data"})
+	if err == nil || !strings.Contains(err.Error(), "forget repo a") || !strings.Contains(err.Error(), "forget repo b") {
+		t.Fatalf("err = %v; want forget failures for a and b", err)
+	}
+	if got := readCalls(t, logPath); len(got) != 4 {
+		t.Fatalf("calls = %q; want backup+forget for both repos", got)
+	}
+}
+
+func TestManager_BackupFailureSkipsForget(t *testing.T) {
+	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "backup")), []backup.Repository{
+		{URL: "a", Retention: backup.RetentionPolicy{KeepDaily: 7, Prune: true}},
+	})
+	if err := mgr.BackupAll(context.Background(), []string{"/data"}); err == nil || !strings.Contains(err.Error(), "backup repo a") {
+		t.Fatalf("err = %v; want backup failure", err)
+	}
+	if got := readCalls(t, logPath); len(got) != 1 {
+		t.Fatalf("calls = %q; forget must not run after a failed backup", got)
+	}
+}
+
+func TestScheduler_OnResultReceivesScheduledRunError(t *testing.T) {
+	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "forget")), []backup.Repository{
+		{URL: "a", Retention: backup.RetentionPolicy{KeepDaily: 7}},
+	})
+	sched := backup.NewScheduler(mgr, []string{"/data"}, 10*time.Millisecond)
+	results := make(chan error, 8)
+	sched.OnResult = func(err error) { results <- err }
+	ctx, cancel := context.WithCancel(context.Background())
+	sched.Start(ctx)
+	defer func() { cancel(); _ = sched.Stop() }()
+
+	select {
+	case err := <-results:
+		if err == nil || !strings.Contains(err.Error(), "forget repo a") {
+			t.Fatalf("OnResult err = %v; want forget failure", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnResult never called")
+	}
 }

@@ -354,6 +354,8 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		}
 	}
 
+	checks = append(checks, runtimeChecks(cfg, spNode, opcuaSrv)...)
+
 	srv := server.New(cfg, logger, checks, server.Opts{
 		PLCMgr:     plcMgr,
 		SpNode:     spNode,
@@ -455,6 +457,20 @@ func (d *Deps) getServerForTest() *server.Server {
 // defaultPLCManagerFactory is the production PLCManagerFactory.
 func defaultPLCManagerFactory(cfg *config.Config, tagCb plc.TagCallback) server.PLCManager {
 	return plc.NewManager(cfg, slog.Default(), nil, tagCb)
+}
+
+// runtimeChecks returns the doctor checks that read live components: MQTT
+// broker connectivity when the Sparkplug node reports it, and OPC UA server
+// health when the OPC UA server reports it.
+func runtimeChecks(cfg *config.Config, spNode server.SparkplugNode, opcuaSrv server.OPCUAServer) []doctor.Check {
+	var checks []doctor.Check
+	if n, ok := spNode.(interface{ Connected() bool }); ok {
+		checks = append(checks, doctor.NewMQTTBrokerCheck(cfg.MQTT.BrokerURL, n.Connected))
+	}
+	if o, ok := opcuaSrv.(interface{ Health() (string, []string) }); ok {
+		checks = append(checks, doctor.NewOPCUAServerCheck(o.Health))
+	}
+	return checks
 }
 
 // defaultSparkplugNodeFactory is the production SparkplugNodeFactory.

@@ -62,7 +62,9 @@ func (d *statusMockDriver) WriteTag(_ string, _ any) error {
 	defer d.mu.Unlock()
 	return d.writeErr
 }
-func (d *statusMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
+func (d *statusMockDriver) ReadMulti(tags []string, dests []any) ([]error, error) {
+	return plc.ReadEach(d, tags, dests)
+}
 func (d *statusMockDriver) Connected() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

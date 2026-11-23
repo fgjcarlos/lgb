@@ -199,26 +199,38 @@ Phase 1 restriction: only `bool`, `int8`, `int16`, `int32`, `int64`, `uint8`, `u
 
 ### [PLC-DRV-1.8] ReadMulti — batch read
 
-`ReadMulti(tags []string, dests []any) error` MUST:
+`ReadMulti(tags []string, dests []any) ([]error, error)` MUST:
 
-1. Require `len(tags) == len(dests)` — return `ErrPLCRead` immediately if lengths differ.
-2. Execute a single multi-tag read if gologix supports it, or fall back to sequential `ReadTag` calls.
-3. Return the first error encountered; partial results in `dests` for completed reads before the error are valid.
+1. Require `len(tags) == len(dests)` — return a non-nil second value wrapping `ErrPLCRead` without any I/O if lengths differ.
+2. Read every scalar destination (`*bool`, signed/unsigned integers, `*float32`, `*float64`) with CIP Multi-Service requests, issuing O(1) round-trips for N tags (one per packet that fits the connection size).
+3. Read destinations that cannot be batched (strings, slices) with `ReadTag`.
+4. Return one error per tag (nil on success) so a failing tag degrades only itself.
+5. When the batch fails for a non-transport reason, fall back to per-tag `ReadTag` for the batched tags to isolate the failing one (gologix does not expose per-service status). When it fails with `ErrPLCConnect` or `ErrPLCTimeout`, mark every batched tag failed without extra round-trips.
+
+The manager scan loop MUST read all tags of a PLC with one `ReadMulti` call per scan tick.
 
 #### Scenario: ReadMulti returns error on length mismatch
 
 - GIVEN `tags` has 3 elements and `dests` has 2 elements
 - WHEN `ReadMulti(tags, dests)` is called
-- THEN it returns a non-nil error wrapping `ErrPLCRead`
-- AND `errors.Is(err, ErrPLCRead)` returns `true`
+- THEN the second return value wraps `ErrPLCRead`
+- AND the client is not touched
 
 #### Scenario: ReadMulti reads all tags in one call
 
 - GIVEN `tags = ["SimBool", "SimInt", "SimFloat"]` and correctly typed `dests`
 - AND the driver is connected to plcsim
 - WHEN `ReadMulti(tags, dests)` is called
-- THEN it returns nil
+- THEN every per-tag error is nil
 - AND all three `dests` are populated with the expected values
+- AND exactly one Multi-Service read and no per-tag reads were issued
+
+#### Scenario: One bad tag degrades only that tag
+
+- GIVEN a batch where one tag does not exist on the PLC
+- WHEN `ReadMulti(tags, dests)` is called
+- THEN only that tag's error wraps `ErrPLCRead`
+- AND the other tags are read successfully
 
 ---
 

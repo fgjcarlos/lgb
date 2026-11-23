@@ -57,10 +57,13 @@ type Driver interface {
 	// or slice type.
 	WriteTag(tag string, val any) error
 
-	// ReadMulti reads multiple tags in sequential calls using ReadTag. tags and
-	// dests must have equal length; each dests[i] must be a valid dest for
-	// ReadTag(tags[i], dests[i]).
-	ReadMulti(tags []string, dests []any) error
+	// ReadMulti reads multiple tags, batching scalar tags into as few CIP
+	// Multi-Service requests as possible. tags and dests must have equal
+	// length; each dests[i] must be a valid dest for ReadTag(tags[i], dests[i]).
+	// The returned slice holds one error per tag (nil on success) so a failing
+	// tag degrades only itself. The second return value is non-nil only when
+	// the arguments are invalid (length mismatch), in which case no I/O occurs.
+	ReadMulti(tags []string, dests []any) ([]error, error)
 
 	// Connected returns true if the CIP session is currently established.
 	Connected() bool

@@ -25,7 +25,7 @@ const cipServerAddr = "127.0.0.1:44818"
 //
 // All gologix integration tests MUST call this function rather than the
 // lightweight TCP stub in testutil.StartPLCSim.
-func startRealCIPSim(t *testing.T) string {
+func startRealCIPSim(t testing.TB) string {
 	t.Helper()
 
 	// Verify the port is reachable before we try to bind.
@@ -79,7 +79,8 @@ func startRealCIPSim(t *testing.T) string {
 		}
 	})
 
-	return cipServerAddr
+	// gologix.NewClient appends the default EtherNet/IP port, so hand out the host only.
+	return "127.0.0.1"
 }
 
 // newIntegrationDriver creates a Driver pointing at the given CIP server address.
@@ -169,17 +170,48 @@ func TestIntegration_WriteTag(t *testing.T) {
 	}
 }
 
-// TestIntegration_ReadMulti verifies that ReadMulti reads SimBool, SimInt, and
-// SimFloat in a single call and returns the correct values.
-func TestIntegration_ReadMulti(t *testing.T) {
-	addr := startRealCIPSim(t)
-	d := newIntegrationDriver(t, addr)
+// countingClient wraps a real *gologix.Client and counts the CIP read calls
+// the driver issues, so tests can assert round-trips per scan.
+type countingClient struct {
+	*gologix.Client
+	reads, lists int
+}
 
-	ctx := context.Background()
-	if err := d.Connect(ctx); err != nil {
+func (c *countingClient) Read(tag string, data any) error {
+	c.reads++
+	return c.Client.Read(tag, data)
+}
+
+func (c *countingClient) ReadList(names []string, types []any, elements []int) ([]any, error) {
+	c.lists++
+	return c.Client.ReadList(names, types, elements)
+}
+
+// newCountingDriver connects a driver backed by a countingClient to addr,
+// configured like NewDriver (AutoConnect off, backplane path 1,0).
+func newCountingDriver(t testing.TB, addr string) (plc.Driver, *countingClient) {
+	t.Helper()
+	c := gologix.NewClient(addr)
+	c.AutoConnect = false
+	path, err := gologix.ParsePath("1,0")
+	if err != nil {
+		t.Fatalf("ParsePath: %v", err)
+	}
+	c.Controller.Path = path
+	cc := &countingClient{Client: c}
+	d := plc.NewDriverWithClient(config.PLC{Name: "sim", Address: addr}, cc, plc.WithMaxAttempts(1))
+	if err := d.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
+	return d, cc
+}
+
+// TestIntegration_ReadMulti verifies that ReadMulti reads SimBool, SimInt, and
+// SimFloat with a single CIP Multi-Service request and no per-tag reads.
+func TestIntegration_ReadMulti(t *testing.T) {
+	addr := startRealCIPSim(t)
+	d, cc := newCountingDriver(t, addr)
 
 	var b bool
 	var i int16
@@ -188,8 +220,14 @@ func TestIntegration_ReadMulti(t *testing.T) {
 	tags := []string{"SimBool", "SimInt", "SimFloat"}
 	dests := []any{&b, &i, &f}
 
-	if err := d.ReadMulti(tags, dests); err != nil {
+	readErrs, err := d.ReadMulti(tags, dests)
+	if err != nil {
 		t.Fatalf("ReadMulti: %v", err)
+	}
+	for k, e := range readErrs {
+		if e != nil {
+			t.Errorf("ReadMulti %s: %v", tags[k], e)
+		}
 	}
 
 	if !b {
@@ -201,6 +239,47 @@ func TestIntegration_ReadMulti(t *testing.T) {
 	if f != float32(3.14) {
 		t.Errorf("ReadMulti SimFloat: got %v, want 3.14", f)
 	}
+	if cc.lists != 1 || cc.reads != 0 {
+		t.Errorf("CIP calls: ReadList=%d Read=%d; want 1, 0", cc.lists, cc.reads)
+	}
+}
+
+// A missing tag inside a batch is not exercised here: the gologix sim server
+// aborts the whole connection on an unknown tag in a Multi-Service request,
+// whereas a real controller answers with a per-service status. The per-tag
+// fallback is covered by the unit tests in gologix_batch_test.go.
+
+// BenchmarkIntegration_ReadMulti compares one scan of 30 scalar tags read
+// through the batched ReadMulti against one ReadTag round-trip per tag.
+//
+//	go test -tags integration -run '^$' -bench ReadMulti ./internal/plc/
+func BenchmarkIntegration_ReadMulti(b *testing.B) {
+	addr := startRealCIPSim(b)
+	d, _ := newCountingDriver(b, addr)
+
+	var tags []string
+	var dests []any
+	for k := 0; k < 10; k++ {
+		tags = append(tags, "SimBool", "SimInt", "SimFloat")
+		dests = append(dests, new(bool), new(int16), new(float32))
+	}
+
+	b.Run("batched", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			if _, err := d.ReadMulti(tags, dests); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("per-tag", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			for k, tag := range tags {
+				if err := d.ReadTag(tag, dests[k]); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
 }
 
 // TestIntegration_ConnectRetry verifies that Connect retries when the server

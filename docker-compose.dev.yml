@@ -12,10 +12,12 @@
 #        (gateway go:embeds frontend/dist — without this step /  returns 404)
 #   3. Fill in LGB_AUTH_JWTSECRET and LGB_MQTT_PASSWORD in docker/.env.dev
 #        (openssl rand -hex 32 for each)
-#   4. `docker compose -f docker-compose.dev.yml up`
+#   4. `make docker-up`
+#        (= `docker compose --env-file docker/.env.dev -f docker-compose.dev.yml up -d`;
+#        compose does not read docker/.env.dev on its own)
 #
 # Resetting the admin wizard:
-#   `docker compose -f docker-compose.dev.yml down -v`
+#   `make docker-down`
 #   removes the lgb-data volume so the next `up` recreates users.db empty and
 #   EnsureAdminExists seeds the user from LGB_AUTH_ADMIN_* env vars.
 #

@@ -164,7 +164,9 @@ The dev stack **requires** `LGB_AUTH_JWTSECRET` (or its legacy spelling
 start without it. Export the variable in your shell or fill in
 `docker/.env.dev` (copied from `docker/.env.dev.example`). The example file
 ships with the variable name only — you must generate the value yourself
-and never commit a real one.
+and never commit a real one. `make docker-up` / `make docker-down` pass
+`docker/.env.dev` to compose when it exists; plain `docker compose` does not
+read it, so add `--env-file docker/.env.dev` if you call compose directly.
 
 The dev compose also wires `LGB_AUTH_ADMIN_USER` and `LGB_AUTH_ADMIN_PASSWORD`
 into the gateway container with dev-only defaults. These seed the first
@@ -172,8 +174,8 @@ admin user on the first run (only when `users.db` is empty); see
 `docker-compose.dev.yml`. To reset the admin on a dev machine:
 
 ```sh
-docker compose -f docker-compose.dev.yml down -v
-docker compose -f docker-compose.dev.yml up
+make docker-down
+make docker-up
 ```
 
 Generate a suitable value with:

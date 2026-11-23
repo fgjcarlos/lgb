@@ -76,6 +76,12 @@ type OPCUAServer interface {
 	Stop() error
 }
 
+// OPCUAReloader is optionally implemented by an OPCUAServer whose address
+// space follows PLC changes: only cfg.PLCs is used. (#82)
+type OPCUAReloader interface {
+	Reload(cfg *config.Config)
+}
+
 // Server is the LGB HTTP server stub.
 type Server struct {
 	cfg        *config.Config

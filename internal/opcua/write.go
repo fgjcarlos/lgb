@@ -188,7 +188,11 @@ func (s *Server) resolveTag(nodeID *ua.NodeID) (plcName, tagName, declaredType s
 	if nodeID == nil {
 		return "", "", "", false
 	}
-	plcName, ok = s.nsPLC[nodeID.Namespace()]
+	sp := s.space.Load()
+	if sp == nil {
+		return "", "", "", false
+	}
+	plcName, ok = sp.nsPLC[nodeID.Namespace()]
 	if !ok {
 		return "", "", "", false
 	}
@@ -196,11 +200,11 @@ func (s *Server) resolveTag(nodeID *ua.NodeID) (plcName, tagName, declaredType s
 	if tagName == "" {
 		return "", "", "", false
 	}
-	declaredType, ok = s.tagTypes[tagKey{plc: plcName, tag: tagName}]
+	node, ok := sp.tags[tagKey{plc: plcName, tag: tagName}]
 	if !ok {
 		return "", "", "", false
 	}
-	return plcName, tagName, declaredType, true
+	return plcName, tagName, node.typ, true
 }
 
 // emitWriteAudit emits exactly one tag.write audit event for an OPC UA write

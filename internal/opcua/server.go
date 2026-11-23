@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopcua/opcua/id"
@@ -31,6 +32,23 @@ type tagKey struct {
 	tag string
 }
 
+// tagNode describes a tag node exposed by the address space.
+type tagNode struct {
+	typ string // declared tag type
+	id  *ua.NodeID
+}
+
+// addressSpace is an immutable snapshot of the PLC namespaces and tag nodes
+// the server exposes. Reload builds a new one and swaps it atomically, so the
+// value callbacks, the write path and the refresh loop read it without locks.
+type addressSpace struct {
+	// nsPLC maps a namespace id to the PLC that owns it, so the write handler
+	// resolves a node id to its (plc, tag) pair without parsing namespace URIs.
+	nsPLC map[uint16]string
+	// tags is the authoritative set of exposed tag nodes and their types.
+	tags map[tagKey]tagNode
+}
+
 // Server wraps a gopcua OPC UA server and populates the address space
 // from the configured PLCs.
 type Server struct {
@@ -39,17 +57,22 @@ type Server struct {
 	log  *slog.Logger
 	srv  *opcserver.Server
 
-	// namespaces tracks per-PLC NodeNameSpace instances for value updates.
+	// space is the current address space snapshot (nil before population).
+	space atomic.Pointer[addressSpace]
+
+	// reloadMu serializes address space rebuilds and guards the fields below.
+	reloadMu sync.Mutex
+	// plcs is the PLC list the address space is built from: the boot config,
+	// then whatever the last Reload received.
+	plcs []config.PLC
+	// namespaces holds every per-PLC namespace ever created. gopcua cannot
+	// delete namespaces or nodes, so a removed PLC keeps its namespace (and
+	// its index, reused if the PLC comes back); only space decides what is
+	// served.
 	namespaces map[string]*opcserver.NodeNameSpace
-
-	// nsPLC maps a namespace id to the PLC that owns it. It is recorded while
-	// populating the address space so the write handler can resolve a node id
-	// to its (plc, tag) pair without parsing namespace URIs.
-	nsPLC map[uint16]string
-
-	// tagTypes maps a tag node to its declared type. It is the authoritative
-	// map of the tag nodes exposed by the address space.
-	tagTypes map[tagKey]string
+	// nodeLevels records the AccessLevel of the node created for each tag, so
+	// a reload only replaces a node when its AccessLevel changes.
+	nodeLevels map[tagKey]ua.AccessLevelType
 
 	// Write surface dependencies (see Options). They are nil-safe: without a
 	// guard or a writer every write is denied.
@@ -83,9 +106,9 @@ func New(cfg *config.Config, tags TagSource, log *slog.Logger, opts ...Options) 
 		cfg:        cfg,
 		tags:       tags,
 		log:        log,
+		plcs:       cfg.PLCs,
 		namespaces: make(map[string]*opcserver.NodeNameSpace),
-		nsPLC:      make(map[uint16]string),
-		tagTypes:   make(map[tagKey]string),
+		nodeLevels: make(map[tagKey]ua.AccessLevelType),
 		guard:      o.Guard,
 		writer:     o.Writer,
 		audit:      o.Audit,
@@ -134,9 +157,14 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.reloadMu.Lock()
 	s.mu.Lock()
 	s.srv = srv // under mu: Health reads it concurrently
 	s.mu.Unlock()
+	// Namespaces and nodes belong to the previous gopcua server, if any.
+	s.namespaces = make(map[string]*opcserver.NodeNameSpace)
+	s.nodeLevels = make(map[tagKey]ua.AccessLevelType)
+	s.reloadMu.Unlock()
 
 	// Register the gateway's Write handler BEFORE srv.Start(ctx): gopcua
 	// registers its default Write service inside Server.Start (initHandlers)
@@ -155,7 +183,7 @@ func (s *Server) Start(ctx context.Context) error {
 		slog.String("host", host),
 		slog.Int("port", port))
 
-	go s.refreshLoop(ctx)
+	go s.refreshLoop(ctx, srv)
 
 	err = srv.Start(ctx)
 
@@ -265,37 +293,96 @@ func dataValueForTV(tv plc.TagValue) *ua.DataValue {
 	return opcserver.DataValueFromValue(tv.Value)
 }
 
+// Reload replaces the PLCs and tags exposed by the address space with those of
+// cfg (only cfg.PLCs is used). New PLCs and tags become readable and writable,
+// removed ones answer BadNodeIDUnknown, and unaffected nodes are left as they
+// are, so sessions using them are not disrupted. It is safe to call
+// concurrently with Start, client requests and other Reload calls; before the
+// OPC UA server exists it only records the PLCs for Start to build from. (#82)
+func (s *Server) Reload(cfg *config.Config) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	s.plcs = cfg.PLCs
+	s.mu.Lock()
+	built := s.srv != nil
+	s.mu.Unlock()
+	if built {
+		s.buildAddressSpace()
+	}
+}
+
+// populateAddressSpace builds the address space from the current PLC list.
 func (s *Server) populateAddressSpace() {
-	for _, plcCfg := range s.cfg.PLCs {
-		ns := opcserver.NewNodeNameSpace(s.srv, fmt.Sprintf("urn:lgb:plc:%s", plcCfg.Name))
-		s.namespaces[plcCfg.Name] = ns
-		s.nsPLC[ns.ID()] = plcCfg.Name
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	s.buildAddressSpace()
+}
+
+// buildAddressSpace creates the namespaces and nodes s.plcs needs and
+// publishes the new snapshot. Existing nodes are reused. Callers hold reloadMu.
+func (s *Server) buildAddressSpace() {
+	next := &addressSpace{nsPLC: make(map[uint16]string), tags: make(map[tagKey]tagNode)}
+	for _, plcCfg := range s.plcs {
+		ns, ok := s.namespaces[plcCfg.Name]
+		if !ok {
+			ns = opcserver.NewNodeNameSpace(s.srv, fmt.Sprintf("urn:lgb:plc:%s", plcCfg.Name))
+			s.namespaces[plcCfg.Name] = ns
+		}
+		next.nsPLC[ns.ID()] = plcCfg.Name
 
 		for _, tag := range plcCfg.Tags {
-			plcName := plcCfg.Name
-			tagName := tag.Name
-			node := ns.AddNewVariableStringNode(tagName, func() *ua.DataValue {
-				tv, ok := s.tags.CurrentTag(plcName, tagName)
-				if !ok {
-					return opcserver.DataValueFromValue(nil)
-				}
-				return dataValueForTV(tv)
-			})
-
-			s.tagTypes[tagKey{plc: plcName, tag: tagName}] = tag.Type
+			key := tagKey{plc: plcCfg.Name, tag: tag.Name}
+			nodeID := ua.NewStringNodeID(ns.ID(), tag.Name)
+			next.tags[key] = tagNode{typ: tag.Type, id: nodeID}
 
 			// The AccessLevel attribute is a client hint that mirrors the
 			// server policy: CurrentRead|CurrentWrite only when the tag is
 			// OPC UA writable, CurrentRead alone otherwise. The guard stays
 			// the enforcement point. (TWA-OPCUA-3.3)
 			level := ua.AccessLevelTypeCurrentRead
-			if s.tagOPCUAWritable(plcName, tagName, tag) {
+			if s.tagOPCUAWritable(key.plc, key.tag, tag) {
 				level |= ua.AccessLevelTypeCurrentWrite
 			}
-			// The attribute is set on the node directly: Namespace.SetAttribute
-			// would notify the (not yet started) monitored-item service.
+			if prev, ok := s.nodeLevels[key]; ok && prev == level {
+				continue
+			}
+			// A changed node is replaced, never mutated: node attributes are a
+			// plain map that concurrent client requests read without locks.
+			node := opcserver.NewVariableNode(nodeID, tag.Name, func() *ua.DataValue {
+				return s.tagValue(key)
+			})
 			_ = node.SetAttribute(ua.AttributeIDAccessLevel, opcserver.DataValueFromValue(uint8(level)))
+			ns.AddNode(node)
+			s.nodeLevels[key] = level
 		}
+	}
+	s.space.Store(next)
+}
+
+// tagValue serves the Value attribute of a tag node: BadNodeIDUnknown once the
+// tag is no longer part of the address space, its live value otherwise.
+//
+// shortcut: a removed node's other attributes (BrowseName, AccessLevel...) stay
+// readable because gopcua v0.8 cannot delete nodes; drop the node instead if
+// gopcua gains node removal.
+func (s *Server) tagValue(key tagKey) *ua.DataValue {
+	if sp := s.space.Load(); sp == nil {
+		return unknownNode()
+	} else if _, ok := sp.tags[key]; !ok {
+		return unknownNode()
+	}
+	tv, ok := s.tags.CurrentTag(key.plc, key.tag)
+	if !ok {
+		return opcserver.DataValueFromValue(nil)
+	}
+	return dataValueForTV(tv)
+}
+
+func unknownNode() *ua.DataValue {
+	return &ua.DataValue{
+		EncodingMask:    ua.DataValueServerTimestamp | ua.DataValueStatusCode,
+		ServerTimestamp: time.Now(),
+		Status:          ua.StatusBadNodeIDUnknown,
 	}
 }
 
@@ -328,24 +415,32 @@ func (s *Server) DataValueForTag(plcName, tag string) *ua.DataValue {
 	return dataValueForTV(tv)
 }
 
-func (s *Server) refreshLoop(ctx context.Context) {
+// refreshLoop notifies monitored items of every exposed tag periodically. Tags
+// removed by a Reload get one last notification so subscribers see
+// BadNodeIDUnknown instead of keeping a stale value.
+func (s *Server) refreshLoop(ctx context.Context, srv *opcserver.Server) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	var prev *addressSpace
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for plcName, ns := range s.namespaces {
-				for _, plcCfg := range s.cfg.PLCs {
-					if plcCfg.Name != plcName {
-						continue
-					}
-					for _, tag := range plcCfg.Tags {
-						nodeID := ua.NewStringNodeID(ns.ID(), tag.Name)
-						ns.ChangeNotification(nodeID)
+			sp := s.space.Load()
+			if sp == nil {
+				continue
+			}
+			if prev != nil && prev != sp {
+				for key, t := range prev.tags {
+					if _, ok := sp.tags[key]; !ok {
+						srv.ChangeNotification(t.id)
 					}
 				}
+			}
+			prev = sp
+			for _, t := range sp.tags {
+				srv.ChangeNotification(t.id)
 			}
 		}
 	}

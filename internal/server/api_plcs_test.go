@@ -825,3 +825,69 @@ func TestHandleGetPLC_OpcuaWriteEnabledInResponse(t *testing.T) {
 
 // compile-time guard: bytes import used by doRequest (defined in api_users_test.go).
 var _ = bytes.NewBuffer
+
+// ─── #82: PLC CRUD reaches the OPC UA address space ──────────────────────────
+
+// fakeOPCUAReloader is an OPC UA server double that records the PLC names of
+// every Reload.
+type fakeOPCUAReloader struct {
+	mu      sync.Mutex
+	reloads [][]string
+}
+
+func (f *fakeOPCUAReloader) Start(ctx context.Context) error { <-ctx.Done(); return nil }
+func (f *fakeOPCUAReloader) Stop() error                     { return nil }
+func (f *fakeOPCUAReloader) Reload(cfg *config.Config) {
+	var names []string
+	for _, p := range cfg.PLCs {
+		names = append(names, p.Name)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reloads = append(f.reloads, names)
+}
+
+func (f *fakeOPCUAReloader) last() ([]string, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.reloads) == 0 {
+		return nil, 0
+	}
+	return f.reloads[len(f.reloads)-1], len(f.reloads)
+}
+
+// TestPLCCRUD_ReloadsOPCUAAddressSpace verifies that creating and deleting a
+// PLC through the API reloads the OPC UA server with the store's PLC list. (#82)
+func TestPLCCRUD_ReloadsOPCUAAddressSpace(t *testing.T) {
+	ctx := context.Background()
+	store, err := plcstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open plcstore: %v", err)
+	}
+	defer store.Close()
+	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
+	opcua := &fakeOPCUAReloader{}
+	_, baseURL, stop := startAPITestServerWithPLCStore(t, &fakePLCManager{},
+		Opts{AuthTokens: tokens, OPCUASrv: opcua}, store)
+	defer stop()
+	tok, _ := tokens.Issue(1, "admin", auth.RoleAdmin)
+
+	body := `{"name":"line1","address":"10.0.0.1:44818","slot":0,"socket_timeout":"5s","scan_rate":"1s","keep_alive":false,"path":"","tags":[]}`
+	resp := doRequest(t, http.MethodPost, baseURL+"/api/plcs", body, tok)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d", resp.StatusCode)
+	}
+	if names, n := opcua.last(); n != 1 || len(names) != 1 || names[0] != "line1" {
+		t.Fatalf("after create: %d reloads, last = %v; want 1 reload with [line1]", n, names)
+	}
+
+	resp = doRequest(t, http.MethodDelete, baseURL+"/api/plcs/line1", "", tok)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: expected 204, got %d", resp.StatusCode)
+	}
+	if names, n := opcua.last(); n != 2 || len(names) != 0 {
+		t.Fatalf("after delete: %d reloads, last = %v; want 2 reloads, last empty", n, names)
+	}
+}

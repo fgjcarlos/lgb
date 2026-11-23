@@ -320,7 +320,13 @@ components:
       description: |
         Point-in-time operational status of one PLC worker. Timestamps that
         never happened are `null`.
-      required: [name, state, scan_rate, scan_health, scan_count, read_count, read_error_count, connect_error_count, last_error]
+
+        Counter reset semantics: counters are cumulative for the lifetime of
+        the PLC's worker. They survive reconnects and a config reload that
+        leaves the PLC unchanged. They start over from zero when the gateway
+        restarts and when a reload changes the PLC's config (its worker is
+        replaced); a PLC removed by a reload is no longer reported.
+      required: [name, state, scan_rate, scan_health, scan_count, read_count, read_error_count, connect_error_count, write_count, write_error_count, last_error, scan_latency_samples]
       properties:
         name:
           type: string
@@ -366,13 +372,32 @@ components:
         connect_error_count:
           type: integer
           format: int64
+        write_count:
+          type: integer
+          format: int64
+          description: Tag writes attempted through the gateway (REST, OPC UA, Sparkplug DCMD).
+        write_error_count:
+          type: integer
+          format: int64
+          description: Tag writes the PLC driver rejected (CIP or connection errors).
         last_error:
           type: string
-          description: Last read or connect error; empty when none.
+          description: Last read, write or connect error; empty when none.
         last_error_at:
           type: string
           format: date-time
           nullable: true
+        scan_latency_avg_ms:
+          type: number
+          nullable: true
+          description: Mean scan duration over the last `scan_latency_samples` scans; `null` before the first scan.
+        scan_latency_max_ms:
+          type: number
+          nullable: true
+          description: Longest scan duration over the last `scan_latency_samples` scans; `null` before the first scan.
+        scan_latency_samples:
+          type: integer
+          description: Completed scans in the rolling latency window (at most 60).
 
     PLCResponse:
       type: object
@@ -1123,6 +1148,37 @@ paths:
           description: Caller is not an admin.
         "404":
           description: PLC not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/diagnostics:
+    get:
+      summary: Runtime diagnostics for every PLC
+      description: |
+        Viewer or higher. The `PLCStatus` of every PLC managed by the running
+        PLC manager, sorted by name; an empty list when none is configured.
+        MQTT broker and OPC UA server health are reported by `/api/doctor`.
+      responses:
+        "200":
+          description: One status per managed PLC.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PLCStatus"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller's role is not permitted.
+        "503":
+          description: The PLC manager does not report status (`diagnostics_unavailable`).
           content:
             application/json:
               schema:

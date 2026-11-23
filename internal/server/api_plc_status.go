@@ -30,8 +30,18 @@ type plcStatusResponse struct {
 	ReadCount          uint64     `json:"read_count"`
 	ReadErrorCount     uint64     `json:"read_error_count"`
 	ConnectErrorCount  uint64     `json:"connect_error_count"`
+	WriteCount         uint64     `json:"write_count"`
+	WriteErrorCount    uint64     `json:"write_error_count"`
 	LastError          string     `json:"last_error"`
 	LastErrorAt        *time.Time `json:"last_error_at"`
+	ScanLatencyAvgMs   *float64   `json:"scan_latency_avg_ms"`
+	ScanLatencyMaxMs   *float64   `json:"scan_latency_max_ms"`
+	ScanLatencySamples int        `json:"scan_latency_samples"`
+}
+
+func durationMs(d time.Duration) *float64 {
+	ms := float64(d) / float64(time.Millisecond)
+	return &ms
 }
 
 func optionalTime(t time.Time) *time.Time {
@@ -43,39 +53,76 @@ func optionalTime(t time.Time) *time.Time {
 
 func toPLCStatusResponse(st plc.Status) plcStatusResponse {
 	resp := plcStatusResponse{
-		Name:              st.Name,
-		State:             st.State,
-		ScanRate:          st.ScanRate.String(),
-		ScanHealth:        st.ScanHealth,
-		ConnectedSince:    optionalTime(st.ConnectedSince),
-		LastScan:          optionalTime(st.LastScan),
-		ScanCount:         st.ScanCount,
-		ReadCount:         st.ReadCount,
-		ReadErrorCount:    st.ReadErrorCount,
-		ConnectErrorCount: st.ConnectErrorCount,
-		LastError:         st.LastError,
-		LastErrorAt:       optionalTime(st.LastErrorAt),
+		Name:               st.Name,
+		State:              st.State,
+		ScanRate:           st.ScanRate.String(),
+		ScanHealth:         st.ScanHealth,
+		ConnectedSince:     optionalTime(st.ConnectedSince),
+		LastScan:           optionalTime(st.LastScan),
+		ScanCount:          st.ScanCount,
+		ReadCount:          st.ReadCount,
+		ReadErrorCount:     st.ReadErrorCount,
+		ConnectErrorCount:  st.ConnectErrorCount,
+		WriteCount:         st.WriteCount,
+		WriteErrorCount:    st.WriteErrorCount,
+		LastError:          st.LastError,
+		LastErrorAt:        optionalTime(st.LastErrorAt),
+		ScanLatencySamples: st.ScanLatencySamples,
 	}
 	if !st.LastScan.IsZero() {
-		ms := float64(st.LastScanDuration) / float64(time.Millisecond)
-		resp.LastScanDurationMs = &ms
+		resp.LastScanDurationMs = durationMs(st.LastScanDuration)
+	}
+	if st.ScanLatencySamples > 0 {
+		resp.ScanLatencyAvgMs = durationMs(st.ScanLatencyAvg)
+		resp.ScanLatencyMaxMs = durationMs(st.ScanLatencyMax)
 	}
 	return resp
 }
 
-// registerPLCStatusRoute registers GET /api/plcs/{name}/status. It reads the
-// live PLC manager, not the PLC store, so it is registered regardless of
-// whether a store is wired. Viewer+ when auth is enabled.
+// plcDiagnosticsProvider is the optional PLCManager capability behind
+// GET /api/diagnostics.
+type plcDiagnosticsProvider interface {
+	Statuses() []plc.Status
+}
+
+var _ plcDiagnosticsProvider = (*plc.Manager)(nil)
+
+// registerPLCStatusRoute registers GET /api/plcs/{name}/status and
+// GET /api/diagnostics. They read the live PLC manager, not the PLC store, so
+// they are registered regardless of whether a store is wired. Viewer+ when
+// auth is enabled.
 func (s *Server) registerPLCStatusRoute(mux *http.ServeMux) {
-	const pattern = "GET /api/plcs/{name}/status"
+	s.registerViewerRoute(mux, "GET /api/plcs/{name}/status", s.handlePLCStatus)
+	s.registerViewerRoute(mux, "GET /api/diagnostics", s.handleDiagnostics)
+}
+
+func (s *Server) registerViewerRoute(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
 	if s.authTokens == nil {
-		mux.HandleFunc(pattern, s.handlePLCStatus)
+		mux.HandleFunc(pattern, h)
 		return
 	}
 	// RequireRole is an exact-match allowlist, so viewer+ lists every role.
-	mux.Handle(pattern, withMiddleware(http.HandlerFunc(s.handlePLCStatus),
+	mux.Handle(pattern, withMiddleware(h,
 		authMiddleware(s.authTokens),
 		auth.RequireRole(auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin)))
+}
+
+// handleDiagnostics returns the operational status of every managed PLC,
+// sorted by name, in a {"data":[...]} envelope.
+func (s *Server) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
+	provider, ok := s.plcMgr.(plcDiagnosticsProvider)
+	if !ok {
+		writeAPIError(w, http.StatusServiceUnavailable, "diagnostics_unavailable", "PLC diagnostics are not available")
+		return
+	}
+	statuses := provider.Statuses()
+	out := make([]plcStatusResponse, 0, len(statuses))
+	for _, st := range statuses {
+		out = append(out, toPLCStatusResponse(st))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Data []plcStatusResponse `json:"data"`
+	}{Data: out})
 }
 
 func (s *Server) handlePLCStatus(w http.ResponseWriter, r *http.Request) {

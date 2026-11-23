@@ -19,6 +19,7 @@ type statusMockDriver struct {
 	connected  bool
 	connectErr error
 	readErr    error
+	writeErr   error
 	block      chan struct{} // when non-nil, ReadTag waits on it
 }
 
@@ -56,7 +57,11 @@ func (d *statusMockDriver) ReadTag(_ string, dest any) error {
 	return nil
 }
 
-func (d *statusMockDriver) WriteTag(_ string, _ any) error      { return nil }
+func (d *statusMockDriver) WriteTag(_ string, _ any) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.writeErr
+}
 func (d *statusMockDriver) ReadMulti(_ []string, _ []any) error { return nil }
 func (d *statusMockDriver) Connected() bool {
 	d.mu.Lock()

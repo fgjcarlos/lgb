@@ -520,7 +520,11 @@ func (m *Manager) WriteTag(plcName, tag string, val any) error {
 	if !ok {
 		return ErrPLCNotFound
 	}
-	return w.driver.WriteTag(tag, val)
+	err := w.driver.WriteTag(tag, val)
+	if w.status != nil {
+		w.status.recordWrite(err, time.Now())
+	}
+	return err
 }
 
 func (m *Manager) storeTag(update TagUpdate) {

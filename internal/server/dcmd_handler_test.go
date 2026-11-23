@@ -213,6 +213,9 @@ func TestDCMDHandler_AllowWhenBothFlagsTrue(t *testing.T) {
 	if ev.Username != "" {
 		t.Errorf("Username = %q; want empty string (DCMD has no actor)", ev.Username)
 	}
+	if ev.IP != "<mqtt-dcmd>" {
+		t.Errorf("IP = %q; want source marker <mqtt-dcmd>", ev.IP)
+	}
 }
 
 // ─── TWA-DCMD-3.2 Scenario (b): DCMDEnabled=false → deny; ACL row irrelevant ─
@@ -255,6 +258,9 @@ func TestDCMDHandler_DenyWhenDCMDEnabledFalse(t *testing.T) {
 	}
 	if !strings.Contains(ev.Detail, "reason=dcmd not enabled") {
 		t.Errorf("Detail = %q; want reason=dcmd not enabled", ev.Detail)
+	}
+	if ev.IP != "<mqtt-dcmd>" {
+		t.Errorf("IP = %q; want source marker <mqtt-dcmd>", ev.IP)
 	}
 	// ACL is never consulted for DCMD: proved by the fact that an operator HTTP-allow
 	// row exists for Feed.Rate but the DCMD for NoCommand.Tag (DCMDEnabled=false)

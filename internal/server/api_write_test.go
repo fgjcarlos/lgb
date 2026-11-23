@@ -496,6 +496,9 @@ func TestHandleWriteTag_Deny_EmitsAuditEventWithSourceHTTP(t *testing.T) {
 	if !strings.Contains(ev.Detail, `outcome=deny`) {
 		t.Errorf("expected Detail to contain 'outcome=deny', got %q", ev.Detail)
 	}
+	if !strings.HasPrefix(ev.IP, "127.0.0.1:") {
+		t.Errorf("expected IP to be the client RemoteAddr 127.0.0.1:<port>, got %q", ev.IP)
+	}
 }
 
 // TestHandleWriteTag_Allow_EmitsAuditEventWithSourceHTTP verifies that an allowed
@@ -530,6 +533,9 @@ func TestHandleWriteTag_Allow_EmitsAuditEventWithSourceHTTP(t *testing.T) {
 	}
 	if ev.Username != "op1" {
 		t.Errorf("expected Username 'op1', got %q", ev.Username)
+	}
+	if !strings.HasPrefix(ev.IP, "127.0.0.1:") {
+		t.Errorf("expected IP to be the client RemoteAddr 127.0.0.1:<port>, got %q", ev.IP)
 	}
 }
 

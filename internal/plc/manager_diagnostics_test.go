@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,5 +122,37 @@ func TestManagerStatuses_AllPLCsSortedByName(t *testing.T) {
 	empty := plc.NewManager(&config.Config{}, nil, nil, nil)
 	if got := empty.Statuses(); got == nil || len(got) != 0 {
 		t.Fatalf("Statuses() on empty manager = %#v, want empty non-nil slice", got)
+	}
+}
+
+// TestManagerStatus_ConcurrentWritesAndReads runs WriteTag and Status readers
+// against a live scan loop; under -race it pins the status lock discipline.
+func TestManagerStatus_ConcurrentWritesAndReads(t *testing.T) {
+	t.Parallel()
+	mgr := startStatusManager(t, &statusMockDriver{}, "1ms")
+	waitStatus(t, mgr, func(s plc.Status) bool { return s.ScanCount >= 1 })
+
+	const workers, perWorker = 8, 200
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perWorker; j++ {
+				_ = mgr.WriteTag("plc-a", "Pressure", float32(j))
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perWorker; j++ {
+				_, _ = mgr.Status("plc-a")
+				_ = mgr.Statuses()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if st, _ := mgr.Status("plc-a"); st.WriteCount != workers*perWorker {
+		t.Fatalf("WriteCount = %d, want %d", st.WriteCount, workers*perWorker)
 	}
 }

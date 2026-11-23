@@ -22,6 +22,7 @@ package config
 import (
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -368,11 +369,26 @@ func validateMQTTSecurity(m MQTTSection) []error {
 	}
 	tlsSet := m.TLSCACert != "" || m.TLSCertFile != "" || m.TLSKeyFile != "" || m.TLSInsecureSkipVerify
 	if tlsSet && m.BrokerURL != "" && !isTLSBrokerURL(m.BrokerURL) {
-		// Only the scheme is echoed: the URL may embed user:pass.
-		scheme, _, _ := strings.Cut(m.BrokerURL, "://")
-		violations = append(violations, errorf("mqtt.brokerURL: TLS settings require a TLS scheme (mqtts://, ssl://, ...), got %q: %w", scheme+"://", ErrConfigInvalid))
+		// Only the scheme is echoed, never the URL: it may embed user:pass.
+		got := "no scheme"
+		if scheme, _, ok := strings.Cut(m.BrokerURL, "://"); ok && isSchemeToken(scheme) {
+			got = strconv.Quote(scheme + "://")
+		}
+		violations = append(violations, errorf("mqtt.brokerURL: TLS settings require a TLS scheme (mqtts://, ssl://, ...), got %s: %w", got, ErrConfigInvalid))
 	}
 	return violations
+}
+
+// isSchemeToken reports whether s is a valid URL scheme (RFC 3986 §3.1), so
+// that userinfo before a later "://" is never mistaken for one.
+func isSchemeToken(s string) bool {
+	for i, r := range s {
+		letter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !letter && (i == 0 || !((r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.')) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // isTLSBrokerURL mirrors mqtt.IsTLSScheme; config must not import the client.

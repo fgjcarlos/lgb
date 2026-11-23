@@ -13,9 +13,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -501,7 +503,17 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 // mqttOptions maps the MQTT config section to client options and warns when
 // credentials would travel in cleartext (issue #73).
 func mqttOptions(m config.MQTTSection, keepAlive time.Duration, logger *slog.Logger) mqtt.Options {
-	if !mqtt.IsTLSScheme(m.BrokerURL) && (m.Username != "" || m.Password != "" || m.PasswordFile != "") {
+	// paho also sends URL userinfo (tcp://user:pass@host) as credentials, and
+	// treats a scheme-less broker as tcp://, so normalize the same way.
+	raw := m.BrokerURL
+	if !strings.Contains(raw, "://") {
+		raw = "tcp://" + raw
+	}
+	urlCreds := false
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		urlCreds = true
+	}
+	if !mqtt.IsTLSScheme(m.BrokerURL) && (m.Username != "" || m.Password != "" || m.PasswordFile != "" || urlCreds) {
 		logger.Warn("mqtt credentials configured over a plaintext broker URL; they and all Sparkplug traffic travel in cleartext, use mqtts://",
 			slog.String("component", "mqtt")) // brokerURL omitted: it may embed user:pass
 	}

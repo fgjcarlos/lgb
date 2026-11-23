@@ -150,7 +150,7 @@ func resolvePassword(opts Options) (string, error) {
 func buildTLSConfig(opts Options) (*tls.Config, error) {
 	cfg := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: opts.TLSInsecureSkipVerify, // opt-in, validated config only
+		InsecureSkipVerify: opts.TLSInsecureSkipVerify, // operator opt-in; the server logs a warning
 	}
 	if opts.TLSCACert != "" {
 		pem, err := os.ReadFile(opts.TLSCACert)

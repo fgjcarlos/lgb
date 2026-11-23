@@ -111,10 +111,12 @@ func TestMQTTSecurityEnvOverlay(t *testing.T) {
 // TestMQTTValidateDoesNotLeakURLPassword: paho uses URL userinfo as
 // credentials, so violations must not echo the broker URL.
 func TestMQTTValidateDoesNotLeakURLPassword(t *testing.T) {
-	cfg, f := mqttConfig(t, "tcp://lgb:S3CRET-PW@broker:1883")
-	cfg.MQTT.TLSCACert = f
-	err := cfg.Validate()
-	if err == nil || strings.Contains(err.Error(), "S3CRET-PW") {
-		t.Fatalf("Validate() = %v; want an error without the URL password", err)
+	for _, u := range []string{"tcp://lgb:S3CRET-PW@broker:1883", "lgb:S3CRET-PW@broker:1883", "lgb:S3CRET-PW@broker:1883/x://y"} {
+		cfg, f := mqttConfig(t, u)
+		cfg.MQTT.TLSCACert = f
+		err := cfg.Validate()
+		if err == nil || strings.Contains(err.Error(), "S3CRET-PW") {
+			t.Errorf("%s: Validate() = %v; want an error without the URL password", u, err)
+		}
 	}
 }

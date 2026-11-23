@@ -291,6 +291,9 @@ printf '{"message_type":"summary"}\n'
 	if body.Status != "failed" || !strings.Contains(body.LastErr, "forget repo repo") || !strings.Contains(body.LastErr, "repo locked") {
 		t.Fatalf("status = %+v; want failed with forget error", body)
 	}
+	if body.LastRun == nil {
+		t.Fatal("last_run = null; a forget-only failure still produced a fresh snapshot")
+	}
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read calls: %v", err)
@@ -306,8 +309,8 @@ func TestRecordScheduledBackup_UpdatesStatus(t *testing.T) {
 	srv, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{BkpMgr: mgr})
 	defer stop()
 
-	srv.RecordScheduledBackup(errors.New("forget repo r: boom"))
-	if body := getBackupStatus(t, baseURL); body.Status != "failed" || body.LastErr != "forget repo r: boom" || body.LastRun != nil {
+	srv.RecordScheduledBackup(errors.New("backup repo r: boom"))
+	if body := getBackupStatus(t, baseURL); body.Status != "failed" || body.LastErr != "backup repo r: boom" || body.LastRun != nil {
 		t.Fatalf("after failure status = %+v", body)
 	}
 	srv.RecordScheduledBackup(nil)

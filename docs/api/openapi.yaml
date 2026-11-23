@@ -183,6 +183,9 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: >-
+            End of the last run in which every repository was backed up, even if a
+            retention policy then failed (status is still `failed`).
         last_error:
           type: string
           description: Error of the last failed run, including retention (`forget repo ...`) failures.

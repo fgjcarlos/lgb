@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/fgjcarlos/lgb/internal/backup"
 )
 
 // backupStatus tracks the state of the most recent backup operation.
@@ -45,15 +48,18 @@ func (s *Server) RecordScheduledBackup(err error) {
 
 // recordBackupResult stores a run outcome (backup plus retention). Only the
 // manual run owns the "running" state, so a scheduled result never releases it.
+// last_run advances whenever every backup succeeded, even if retention failed.
 func (s *Server) recordBackupResult(err error, manual bool) {
 	s.bkpStatus.mu.Lock()
 	defer s.bkpStatus.mu.Unlock()
+	var retErr *backup.RetentionError
+	if err == nil || errors.As(err, &retErr) {
+		s.bkpStatus.lastRun = time.Now()
+	}
+	s.bkpStatus.lastErr = ""
 	if err != nil {
 		s.log.Error("backup run failed", "component", "backup", "manual", manual, "err", err)
 		s.bkpStatus.lastErr = err.Error()
-	} else {
-		s.bkpStatus.lastRun = time.Now()
-		s.bkpStatus.lastErr = ""
 	}
 	if manual || s.bkpStatus.status != "running" {
 		s.bkpStatus.status = "idle"

@@ -173,9 +173,9 @@ func (s *Server) handleWriteTag(w http.ResponseWriter, r *http.Request) {
 // emitWriteAuditDetail emits a tag.write audit event with all fields supplied
 // directly. It is nil-safe — if auditLog is nil, the call is a no-op.
 // This is the canonical implementation; both the HTTP and DCMD paths use it.
-// The DCMD path passes ip="" because MQTT has no network-level request object.
-// (TWA-AUDIT-4.1)
-func (s *Server) emitWriteAuditDetail(plcName, tagName string, value any, outcome, reason, source, username string) {
+// The DCMD path has no network-level request object, so it passes the
+// dcmdAuditIP source marker instead of a client address. (TWA-AUDIT-4.1)
+func (s *Server) emitWriteAuditDetail(plcName, tagName string, value any, outcome, reason, source, username, ip string) {
 	if s.auditLog == nil {
 		return
 	}
@@ -187,14 +187,19 @@ func (s *Server) emitWriteAuditDetail(plcName, tagName string, value any, outcom
 		Action:   "tag.write",
 		Username: username,
 		Detail:   detail,
+		IP:       ip,
 	})
 }
+
+// dcmdAuditIP marks DCMD-sourced writes in the audit IP field: the command
+// arrives through the MQTT broker, so no client address is available.
+const dcmdAuditIP = "<mqtt-dcmd>"
 
 // emitWriteAudit is the HTTP-path wrapper around emitWriteAuditDetail.
 // It exists to preserve the existing call sites in handleWriteTag.
 // (TWA-AUDIT-4.1)
 func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value any, outcome, reason, source, username string) {
-	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username)
+	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username, r.RemoteAddr)
 }
 
 // SparkplugCommandHandler returns a sparkplug.CommandHandler closure that
@@ -217,14 +222,14 @@ func (s *Server) SparkplugCommandHandler() sparkplug.CommandHandler {
 		plcName := deviceID // deviceID IS the PLC name in this system
 		decision := s.writeGuard.AuthorizeDCMD(ctx, plcName, tag)
 		if !decision.Allowed {
-			s.emitWriteAuditDetail(plcName, tag, value, "deny", decision.Reason, "dcmd", "")
+			s.emitWriteAuditDetail(plcName, tag, value, "deny", decision.Reason, "dcmd", "", dcmdAuditIP)
 			return
 		}
 		// Allow path: write then audit.
 		if err := s.plcMgr.WriteTag(plcName, tag, value); err != nil {
-			s.emitWriteAuditDetail(plcName, tag, value, "deny", fmt.Sprintf("write error: %v", err), "dcmd", "")
+			s.emitWriteAuditDetail(plcName, tag, value, "deny", fmt.Sprintf("write error: %v", err), "dcmd", "", dcmdAuditIP)
 			return
 		}
-		s.emitWriteAuditDetail(plcName, tag, value, "allow", "", "dcmd", "")
+		s.emitWriteAuditDetail(plcName, tag, value, "allow", "", "dcmd", "", dcmdAuditIP)
 	}
 }

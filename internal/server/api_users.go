@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -97,6 +98,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditUserAction(r, "user.create", user.ID, userAuditDetail(user))
 	writeJSON(w, http.StatusCreated, struct {
 		Data userResponse `json:"data"`
 	}{Data: userToResponse(user)})
@@ -154,7 +156,13 @@ func (s *Server) handleUpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The role change is committed: audit it even if the re-read fails.
 	user, err := s.userStore.GetByID(r.Context(), id)
+	detail := "role=" + string(req.Role)
+	if err == nil {
+		detail = userAuditDetail(user)
+	}
+	s.auditUserAction(r, "user.role_change", id, detail)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not retrieve updated user")
 		return
@@ -194,6 +202,8 @@ func (s *Server) handleUpdateUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Never put the password (or its hash) in the audit detail.
+	s.auditUserAction(r, "user.password_reset", id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -248,7 +258,29 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditUserAction(r, "user.delete", id, userAuditDetail(user))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditUserAction records a successful user-management mutation with the
+// acting admin, the target user ID and the client address. Nil-safe.
+func (s *Server) auditUserAction(r *http.Request, action string, targetID int64, detail string) {
+	if s.auditLog == nil {
+		return
+	}
+	_ = s.auditLog.Log(auth.AuditEvent{
+		Action:   action,
+		Username: actorFromContext(r),
+		TargetID: targetID,
+		Detail:   detail,
+		IP:       r.RemoteAddr,
+	})
+}
+
+// userAuditDetail quotes the username so a crafted name cannot forge extra
+// key=value pairs in the audit detail.
+func userAuditDetail(u *auth.User) string {
+	return fmt.Sprintf("username=%q role=%s", u.Username, u.Role)
 }
 
 // parseUserID extracts and validates the {id} path parameter.

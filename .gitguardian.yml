@@ -5,7 +5,7 @@
 # the slog redaction handler in internal/log). Those placeholders are
 # never real credentials. Real secrets are sourced exclusively from
 # environment variables at runtime per the LGB_{SECTION}_{FIELD}
-# convention (see openspec/changes/mvp-foundation/proposal.md).
+# convention (see openspec/changes/archive/2026-05-23-mvp-foundation/proposal.md).
 #
 # If a real secret ever ends up in production code (outside of test
 # paths) GitGuardian will still catch it.

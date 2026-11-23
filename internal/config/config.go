@@ -384,7 +384,8 @@ func validateMQTTSecurity(m MQTTSection) []error {
 func isSchemeToken(s string) bool {
 	for i, r := range s {
 		letter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-		if !letter && (i == 0 || !((r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.')) {
+		later := (r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.'
+		if !letter && (i == 0 || !later) {
 			return false
 		}
 	}

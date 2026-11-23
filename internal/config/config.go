@@ -11,6 +11,9 @@
 //   - mqtt.password   → LGB_MQTT_PASSWORD
 //   - mqtt.passwordFile → LGB_MQTT_PASSWORDFILE
 //
+// mqtt.passwordFile names a file whose contents (trailing newline trimmed) are
+// used as the broker password; it is mutually exclusive with mqtt.password.
+//
 // Use (*Config).Redacted() when logging config objects. Per MVP-FND-3.1 and ADR-0002.
 //
 // Requirements: MVP-FND-2.1–2.6, MVP-FND-3.1, MVP-FND-3.2. Design: §4.1, §5.1–5.4.
@@ -19,6 +22,7 @@ package config
 import (
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	errs "github.com/fgjcarlos/lgb/internal/errors"
@@ -112,15 +116,27 @@ type AuthSection struct {
 
 // MQTTSection holds MQTT broker and Sparkplug B settings.
 type MQTTSection struct {
-	BrokerURL    string `koanf:"brokerURL"`
-	ClientID     string `koanf:"clientID"`
+	// BrokerURL selects the transport: tcp:// or mqtt:// are plaintext;
+	// mqtts://, ssl://, tls://, tcps://, mqtt+ssl:// and wss:// use TLS.
+	BrokerURL string `koanf:"brokerURL"`
+	ClientID  string `koanf:"clientID"`
+	Username  string `koanf:"username"`
+	// Password and PasswordFile are mutually exclusive (issue #73).
 	Password     string `koanf:"password"     secret:"true"`
 	PasswordFile string `koanf:"passwordFile" secret:"true"`
-	GroupID      string `koanf:"groupID"`
-	EdgeNodeID   string `koanf:"edgeNodeID"`
-	QoS          int    `koanf:"qos"`
-	KeepAlive    string `koanf:"keepAlive"`
-	CleanSession bool   `koanf:"cleanSession"`
+	// TLS settings require a TLS BrokerURL scheme. TLSCACert is a PEM bundle
+	// that replaces the system roots; TLSCertFile and TLSKeyFile form an
+	// optional client certificate and must be set together.
+	// TLSInsecureSkipVerify disables broker certificate checks (testing only).
+	TLSCACert             string `koanf:"tlsCACert"`
+	TLSCertFile           string `koanf:"tlsCertFile"`
+	TLSKeyFile            string `koanf:"tlsKeyFile"`
+	TLSInsecureSkipVerify bool   `koanf:"tlsInsecureSkipVerify"`
+	GroupID               string `koanf:"groupID"`
+	EdgeNodeID            string `koanf:"edgeNodeID"`
+	QoS                   int    `koanf:"qos"`
+	KeepAlive             string `koanf:"keepAlive"`
+	CleanSession          bool   `koanf:"cleanSession"`
 }
 
 // HistorianSection holds historian/SQLite settings.
@@ -315,8 +331,61 @@ func (c *Config) Validate() error {
 			violations = append(violations, errorf("mqtt.edgeNodeID: must not be empty when mqtt.brokerURL is set: %w", ErrConfigInvalid))
 		}
 	}
+	violations = append(violations, validateMQTTSecurity(c.MQTT)...)
 
 	return errs.Join(violations...)
+}
+
+// validateMQTTSecurity checks credential and TLS settings (issue #73).
+func validateMQTTSecurity(m MQTTSection) []error {
+	var violations []error
+	if m.PasswordFile != "" {
+		if m.Password != "" {
+			violations = append(violations, errorf("mqtt.passwordFile: mutually exclusive with mqtt.password: %w", ErrConfigInvalid))
+		}
+		if err := requireReadableFile(m.PasswordFile); err != nil {
+			violations = append(violations, errorf("mqtt.passwordFile: not readable: %v: %w", err, ErrConfigInvalid))
+		}
+	}
+	files := []struct{ key, path string }{
+		{"mqtt.tlsCACert", m.TLSCACert},
+		{"mqtt.tlsCertFile", m.TLSCertFile},
+		{"mqtt.tlsKeyFile", m.TLSKeyFile},
+	}
+	for _, f := range files {
+		if f.path == "" {
+			continue
+		}
+		if err := requireReadableFile(f.path); err != nil {
+			violations = append(violations, errorf("%s: not readable: %v: %w", f.key, err, ErrConfigInvalid))
+		}
+	}
+	if m.TLSCertFile != "" && m.TLSKeyFile == "" {
+		violations = append(violations, errorf("mqtt.tlsKeyFile: required when mqtt.tlsCertFile is set: %w", ErrConfigInvalid))
+	}
+	if m.TLSKeyFile != "" && m.TLSCertFile == "" {
+		violations = append(violations, errorf("mqtt.tlsCertFile: required when mqtt.tlsKeyFile is set: %w", ErrConfigInvalid))
+	}
+	tlsSet := m.TLSCACert != "" || m.TLSCertFile != "" || m.TLSKeyFile != "" || m.TLSInsecureSkipVerify
+	if tlsSet && m.BrokerURL != "" && !isTLSBrokerURL(m.BrokerURL) {
+		// Only the scheme is echoed: the URL may embed user:pass.
+		scheme, _, _ := strings.Cut(m.BrokerURL, "://")
+		violations = append(violations, errorf("mqtt.brokerURL: TLS settings require a TLS scheme (mqtts://, ssl://, ...), got %q: %w", scheme+"://", ErrConfigInvalid))
+	}
+	return violations
+}
+
+// isTLSBrokerURL mirrors mqtt.IsTLSScheme; config must not import the client.
+func isTLSBrokerURL(brokerURL string) bool {
+	scheme, _, ok := strings.Cut(brokerURL, "://")
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(scheme) {
+	case "ssl", "tls", "mqtts", "mqtt+ssl", "tcps", "wss":
+		return true
+	}
+	return false
 }
 
 func requireReadableFile(path string) error {

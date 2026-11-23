@@ -471,18 +471,12 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 		}
 	}
 
-	mqttClient := mqtt.NewClient(mqtt.Options{
-		BrokerURL:    cfg.MQTT.BrokerURL,
-		ClientID:     cfg.MQTT.ClientID,
-		Password:     cfg.MQTT.Password,
-		QoS:          byte(cfg.MQTT.QoS),
-		KeepAlive:    keepAlive,
-		CleanSession: cfg.MQTT.CleanSession,
-		WillTopic:    ndeathTopic,
-		WillPayload:  ndeathPayload,
-		WillQoS:      1,
-		WillRetain:   false,
-	})
+	mqttOpts := mqttOptions(cfg.MQTT, keepAlive, slog.Default())
+	mqttOpts.WillTopic = ndeathTopic
+	mqttOpts.WillPayload = ndeathPayload
+	mqttOpts.WillQoS = 1
+	mqttOpts.WillRetain = false
+	mqttClient := mqtt.NewClient(mqttOpts)
 
 	var devices []sparkplug.DeviceConfig
 	for _, p := range cfg.PLCs {
@@ -502,6 +496,33 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 		// #60: DDATA only on change, per tag deadband; reset on every birth.
 		ChangeOnValue: cfg.ChangeOnValue.Sparkplug,
 	})
+}
+
+// mqttOptions maps the MQTT config section to client options and warns when
+// credentials would travel in cleartext (issue #73).
+func mqttOptions(m config.MQTTSection, keepAlive time.Duration, logger *slog.Logger) mqtt.Options {
+	if !mqtt.IsTLSScheme(m.BrokerURL) && (m.Username != "" || m.Password != "" || m.PasswordFile != "") {
+		logger.Warn("mqtt credentials configured over a plaintext broker URL; they and all Sparkplug traffic travel in cleartext, use mqtts://",
+			slog.String("component", "mqtt")) // brokerURL omitted: it may embed user:pass
+	}
+	if m.TLSInsecureSkipVerify {
+		logger.Warn("mqtt tlsInsecureSkipVerify is enabled; the broker certificate is not verified",
+			slog.String("component", "mqtt"))
+	}
+	return mqtt.Options{
+		BrokerURL:             m.BrokerURL,
+		ClientID:              m.ClientID,
+		Username:              m.Username,
+		Password:              m.Password,
+		PasswordFile:          m.PasswordFile,
+		TLSCACert:             m.TLSCACert,
+		TLSCertFile:           m.TLSCertFile,
+		TLSKeyFile:            m.TLSKeyFile,
+		TLSInsecureSkipVerify: m.TLSInsecureSkipVerify,
+		QoS:                   byte(m.QoS),
+		KeepAlive:             keepAlive,
+		CleanSession:          m.CleanSession,
+	}
 }
 
 // buildTagCallback creates a fan-out callback that sends tag updates to both

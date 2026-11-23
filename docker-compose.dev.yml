@@ -3,13 +3,15 @@
 # Services:
 #   gateway  — LGB binary (live-reload via air on golang:1.25-alpine)
 #   plcsim   — deterministic CIP PLC simulator (gologix, port 44818)
-#   mqtt     — Eclipse Mosquitto MQTT broker (port 1883)
+#   mqtt     — Eclipse Mosquitto MQTT broker (auth required; port 1883 is
+#              reachable only inside the lgb-dev network, not from the host)
 #
 # Usage (fix for #65 — onboarding in 4 steps):
 #   1. `cp docker/.env.dev.example docker/.env.dev`
 #   2. `cd frontend && npm ci && npm run build && cd -`
 #        (gateway go:embeds frontend/dist — without this step /  returns 404)
-#   3. Fill in LGB_AUTH_JWTSECRET in docker/.env.dev (openssl rand -hex 32)
+#   3. Fill in LGB_AUTH_JWTSECRET and LGB_MQTT_PASSWORD in docker/.env.dev
+#        (openssl rand -hex 32 for each)
 #   4. `docker compose -f docker-compose.dev.yml up`
 #
 # Resetting the admin wizard:
@@ -42,6 +44,10 @@ services:
       # docker/.env.dev. NEVER use `changeme-dev` outside the dev stack.
       LGB_AUTH_ADMIN_USER: ${LGB_AUTH_ADMIN_USER:-admin}
       LGB_AUTH_ADMIN_PASSWORD: ${LGB_AUTH_ADMIN_PASSWORD:-changeme-dev}
+      # MQTT broker credentials (#73). The same values seed the mqtt service's
+      # password file, so the gateway and the broker always agree.
+      LGB_MQTT_USERNAME: ${LGB_MQTT_USERNAME:-lgb}
+      LGB_MQTT_PASSWORD: ${LGB_MQTT_PASSWORD:?LGB_MQTT_PASSWORD must be set — see docker/.env.dev.example}
     networks:
       - lgb-dev
     healthcheck:
@@ -69,8 +75,20 @@ services:
 
   mqtt:
     image: eclipse-mosquitto:2
-    ports:
-      - "1883:1883"
+    # Anonymous access disabled and no host port published (#73): only
+    # services on lgb-dev can reach the broker, and they must authenticate.
+    # Runs as the image's mosquitto user so it can read the generated
+    # password file.
+    user: "1883:1883"
+    environment:
+      MQTT_USERNAME: ${LGB_MQTT_USERNAME:-lgb}
+      MQTT_PASSWORD: ${LGB_MQTT_PASSWORD:?LGB_MQTT_PASSWORD must be set — see docker/.env.dev.example}
+    command:
+      - sh
+      - -c
+      - mosquitto_passwd -c -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD" && exec mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - lgb-dev
 

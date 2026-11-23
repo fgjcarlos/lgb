@@ -317,8 +317,13 @@ export interface PLCStatus {
   read_count: number;
   read_error_count: number;
   connect_error_count: number;
+  write_count: number;
+  write_error_count: number;
   last_error: string;
   last_error_at: string | null;
+  scan_latency_avg_ms: number | null;
+  scan_latency_max_ms: number | null;
+  scan_latency_samples: number;
 }
 
 export function usePLCStatus(
@@ -337,6 +342,22 @@ export function usePLCStatus(
     // neither retry nor keep polling them.
     refetchInterval: (query) =>
       isPermanentStatusError(query.state.error) ? false : 2_000,
+    retry: (count, err) => !isPermanentStatusError(err) && count < 3,
+  });
+}
+
+// Runtime diagnostics for every managed PLC (GET /api/diagnostics), polled.
+export function usePLCDiagnostics(): UseQueryResult<
+  { data: PLCStatus[] },
+  ApiError | Error
+> {
+  const { getWsToken } = useAuth();
+  return useQuery({
+    queryKey: ["diagnostics"],
+    queryFn: () => apiFetch<{ data: PLCStatus[] }>("/api/diagnostics", {}),
+    enabled: !!getWsToken,
+    refetchInterval: (query) =>
+      isPermanentStatusError(query.state.error) ? false : 5_000,
     retry: (count, err) => !isPermanentStatusError(err) && count < 3,
   });
 }

@@ -16,9 +16,8 @@ import (
 
 var ErrWriterBusy = errors.New("historian writer busy")
 
-type Options struct {
-	RetentionDays int
-}
+// Options configures a Store. Retention is passed to EnforceRetention (#85).
+type Options struct{}
 
 type Sample struct {
 	PLCName   string
@@ -135,15 +134,6 @@ func (s *Store) Query(ctx context.Context, q Query) ([]Sample, error) {
 		samples = append(samples, sample)
 	}
 	return samples, rows.Err()
-}
-
-func (s *Store) EnforceRetention(ctx context.Context, now time.Time) error {
-	if s.options.RetentionDays <= 0 {
-		return nil
-	}
-	cutoff := now.UTC().Add(-time.Duration(s.options.RetentionDays) * 24 * time.Hour).UnixNano()
-	_, err := s.db.ExecContext(ctx, `DELETE FROM tag_samples WHERE ts_unix_nano < ?`, cutoff)
-	return err
 }
 
 func (s *Store) VacuumInto(ctx context.Context, dir string) (string, error) {

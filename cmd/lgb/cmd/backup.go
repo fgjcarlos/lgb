@@ -72,9 +72,7 @@ func runBackupTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 
 	if cfg.Historian.RetentionDays > 0 {
 		dbPath := filepath.Join(resolvedPath, "lgb.db")
-		store, err := historian.Open(ctx, dbPath, historian.Options{
-			RetentionDays: cfg.Historian.RetentionDays,
-		})
+		store, err := historian.Open(ctx, dbPath, historian.Options{})
 		if err != nil {
 			return fmt.Errorf("backup: open historian: %w", err)
 		}

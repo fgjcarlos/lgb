@@ -401,9 +401,6 @@ func TestServerCmd_WithHistorian_CreatesStoreAndWriter(t *testing.T) {
 		UserStoreFactory: seededUserStoreFactory(t),
 		HistorianStoreFactory: func(ctx context.Context, path string, opts historian.Options) (*historian.Store, error) {
 			storeOpened = true
-			if opts.RetentionDays != 30 {
-				t.Errorf("expected RetentionDays=30, got %d", opts.RetentionDays)
-			}
 			return historian.Open(ctx, ":memory:", opts)
 		},
 	}

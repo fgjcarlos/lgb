@@ -538,7 +538,7 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
               const deadbandEnabled = NUMERIC_TAG_TYPES.has(
                 watchedTags?.[index]?.type ?? field.type,
               );
-              const deadbandError =
+              const tagFieldError =
                 errors.tags?.[index]?.deadband?.absolute?.message ??
                 errors.tags?.[index]?.deadband?.percent?.message ??
                 errors.tags?.[index]?.retention_days?.message;
@@ -640,9 +640,9 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
-                {deadbandError && (
+                {tagFieldError && (
                   <p className="col-span-full text-xs text-destructive">
-                    {deadbandError}
+                    {tagFieldError}
                   </p>
                 )}
               </div>

@@ -46,7 +46,9 @@ The following fields MUST be present after load+validation or MUST resolve to th
 | `server.tlsEnabled` | NO | `false` | TLS on the HTTP server |
 | `auth.jwtSecret` | conditional | — | MUST be non-empty if `lgb server` is started; see §MVP-FND-3.x |
 | `auth.sessionTTL` | NO | `"8h"` | Valid Go duration string |
-| `historian.retentionDays` | NO | `90` | Integer 0–36500; global default overridden per PLC/tag by `plcs[i].retentionDays` and `plcs[i].tags[j].retentionDays` (0 inherits) |
+| `historian.retentionDays` | NO | `90` | Integer 0–36500; `0` disables the historian. Global default for tags without a PLC or tag override |
+| `plcs[i].retentionDays` | NO | `0` | Integer 0–36500; retention for this PLC's tags; `0` inherits `historian.retentionDays` |
+| `plcs[i].tags[j].retentionDays` | NO | `0` | Integer 0–36500; overrides the PLC and global retention for this tag; `0` inherits |
 
 #### Scenario: Default values are applied when fields are absent
 

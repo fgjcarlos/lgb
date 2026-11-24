@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fgjcarlos/lgb/internal/config"
@@ -106,6 +107,30 @@ func TestHandleHistorianRetention_ConfigFallback(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(body.Data, want) {
 		t.Errorf("retention = %+v\nwant %+v", body.Data, want)
+	}
+}
+
+// TestHandleHistorianRetention_StoreListError500 verifies a PLC store read
+// failure surfaces as 500 internal_error instead of a partial view.
+func TestHandleHistorianRetention_StoreListError500(t *testing.T) {
+	ctx := context.Background()
+	hist, err := historian.Open(ctx, ":memory:", historian.Options{})
+	if err != nil {
+		t.Fatalf("historian.Open: %v", err)
+	}
+	defer hist.Close()
+	plcs, err := plcstore.Open(ctx, filepath.Join(t.TempDir(), "plcs.db"))
+	if err != nil {
+		t.Fatalf("plcstore.Open: %v", err)
+	}
+	_ = plcs.Close() // every List call now fails
+
+	_, baseURL, stop := startAPITestServerWithOpts(t, &snapshotPLCManager{}, Opts{HistStore: hist, PLCStore: plcs})
+	defer stop()
+
+	status, _, raw := getRetention(t, baseURL)
+	if status != http.StatusInternalServerError || !strings.Contains(raw, "internal_error") {
+		t.Fatalf("expected 500 internal_error, got %d: %s", status, raw)
 	}
 }
 

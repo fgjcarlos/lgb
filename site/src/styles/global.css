@@ -13,6 +13,30 @@ html {
   -webkit-font-smoothing: antialiased;
 }
 
+.prose {
+  line-height: 1.65;
+}
+
+.prose :is(h1, h2, h3) {
+  margin-block: 1.5em 0.5em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.prose h1 { font-size: 2rem; }
+.prose h2 { font-size: 1.4rem; }
+.prose h3 { font-size: 1.15rem; }
+
+.prose :is(p, ol, ul, pre, table, blockquote) { margin-block: 1em; }
+.prose :is(ol, ul) { padding-inline-start: 1.75rem; }
+.prose ol { list-style: decimal; }
+.prose ul { list-style: disc; }
+.prose a { color: var(--color-lgb-amber); text-decoration: underline; }
+.prose :is(pre, table) { display: block; overflow-x: auto; }
+.prose :is(pre, th, td) { padding: 0.5rem; }
+.prose :is(pre, th) { background: var(--color-lgb-deep); }
+.prose :not(pre) > code { overflow-wrap: anywhere; }
+
 ::selection {
   background: var(--color-lgb-amber);
   color: var(--color-lgb-deep);

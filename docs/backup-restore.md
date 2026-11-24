@@ -8,14 +8,27 @@ restoring a snapshot on the same host and on a different host.
 Before each backup, LGB writes a consistent copy of the historian database (`VACUUM INTO`) to
 `<dataDir>/backup-tmp/lgb-snapshot.db` and backs up that file. The live historian is `<dataDir>/lgb.db`.
 
-The YAML config file, TLS material and the `restic` repository password are **not** in the snapshot.
-Keep them in your own secret store: without the repository URL and password, no snapshot can be read.
+This is a **historian-only** backup: it contains the consistent SQLite historian snapshot, not the rest of the gateway state. User accounts (`users.db`), PLC configuration/store, YAML configuration, TLS material, and the `restic` repository password are **not** included. Back up those files and secrets separately using your approved protected backup process; do not assume restoring the historian restores users or configuration. Keep the repository URL and password separately: without them, no snapshot can be read.
 
 ## Safety model: restore to a path, then swap manually
 
 A restore never writes into the live data directory. It goes into a new or empty directory, and you swap
 files while the gateway is stopped. This keeps a running gateway from reading a half-restored database,
 and you can inspect the result before it goes into service.
+
+## Backup checks and manual commands
+
+Set `historian.retentionDays` above zero and configure `backup.repos` with a repository URL and password stored in protected configuration. Set `backup.interval` for scheduled backups. The Compose example does not configure a backup destination; mount a protected, site-specific copy of its LGB configuration and provision any storage/credentials required by your backend before relying on backups.
+
+Use the **Backup** UI to trigger a snapshot on a running gateway. Use `lgb backup run --config /path/to/lgb.yaml` from an instance with access to the configured data directory and restic; avoid overlapping it with scheduled or UI runs. Confirm the command succeeds and the repository contains a fresh snapshot. Run `lgb backup check --config /path/to/lgb.yaml` to check all configured repositories. For a single repository, use restic directly with the password supplied securely:
+
+```bash
+export RESTIC_PASSWORD='<repository password>'
+restic -r '<repository URL>' snapshots
+restic -r '<repository URL>' check
+```
+
+`check` verifies repository integrity; it does not prove the gateway can start from a restored database. Perform a test restore periodically and keep config, user/PLC state, TLS files, and repository credentials in a separate protected backup.
 
 ## Restore from the UI
 
@@ -46,9 +59,8 @@ restic keeps the original absolute path under the destination. A snapshot taken 
    exist. A stale WAL must not be replayed onto the restored file.
 3. Copy the restored file into place:
    `cp <destination>/<dataDir>/backup-tmp/lgb-snapshot.db <dataDir>/lgb.db`.
-4. Give the file to the service user, for example `chown lgb:lgb <dataDir>/lgb.db && chmod 600 <dataDir>/lgb.db`.
-5. Start the gateway, check `lgb doctor` and the historian view, then delete the `.pre-restore` files
-   and the restore directory.
+4. Give the file to the service user and set mode `0600`. For Compose, use the host `LGB_DATA_DIR` path and ownership `65532:65532` (or the daemon's mapped IDs); for a native install use the account running LGB.
+5. Start the gateway and check `lgb doctor`, the historian view, and application logs. Keep the `.pre-restore` database and restore directory until recovery has been verified; they are your rollback copy. If validation fails, stop LGB, move the failed database aside, restore the saved `.pre-restore` database and any matching WAL/SHM files, then restart and investigate. Do not delete rollback copies until the recovered service is accepted.
 
 ## Restore on another host
 

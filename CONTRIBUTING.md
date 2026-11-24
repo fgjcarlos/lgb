@@ -47,6 +47,20 @@ For the Go backend, run:
 go test ./...
 ```
 
+To build the local gateway binary (the SPA is embedded in it), build the UI
+first and then compile Go with Make:
+
+```bash
+make build-with-ui
+```
+
+`bin/` is ignored and generated binaries should not be committed. Version tags
+(`v*.*.*`) trigger a GitHub Release containing Linux, Windows, and macOS
+archives for amd64 and arm64, plus SHA-256 checksums. The same release publishes
+a multi-platform `ghcr.io/fgjcarlos/lgb:<tag>` image. Pull requests touching
+release inputs run a GoReleaser snapshot; no image or release is published from
+pull requests.
+
 ## Review and merge policy
 
 - All changes to `main` go through pull requests.

@@ -118,6 +118,18 @@ Non-goals for the MVP:
 
 ---
 
+## Install or build LGB
+
+Download the archive for your platform and `checksums.txt` from [GitHub Releases](https://github.com/fgjcarlos/lgb/releases), or pull the matching `ghcr.io/fgjcarlos/lgb:<version-tag>` image for Linux amd64 or arm64.
+
+To build from source, use Make, Go (see [`go.mod`](go.mod)) and Node.js/npm (see [`frontend/.nvmrc`](frontend/.nvmrc)):
+
+```sh
+make build-with-ui
+```
+
+This writes `bin/lgb` with the web UI embedded. `bin/` is not tracked by Git.
+
 ## Getting started (development stack)
 
 The development stack runs the gateway binary, the PLC simulator, and an MQTT broker locally using Docker Compose.
@@ -125,6 +137,7 @@ The development stack runs the gateway binary, the PLC simulator, and an MQTT br
 ### Prerequisites
 
 - Docker Engine 24+ with the Compose plugin
+- Node.js/npm (see [`frontend/.nvmrc`](frontend/.nvmrc)) to build the web UI
 - `LGB_AUTH_JWTSECRET` (or the legacy spelling `LGB_AUTH_JWT_SECRET`) set in
   your shell or in a local `.env` file
 - `LGB_MQTT_PASSWORD` set the same way (the dev broker requires

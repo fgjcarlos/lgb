@@ -12,12 +12,13 @@ import (
 
 // plcTagResponse is the API-safe tag representation.
 type plcTagResponse struct {
-	Name         string           `json:"name"`
-	Type         string           `json:"type"`
-	Writable     bool             `json:"writable"`
-	DcmdEnabled  bool             `json:"dcmd_enabled"`        // PCS-CFG-5.2
-	OpcuaEnabled bool             `json:"opcua_write_enabled"` // PCS-CFG-5.3
-	Deadband     deadbandResponse `json:"deadband"`            // change-on-value (#60)
+	Name          string           `json:"name"`
+	Type          string           `json:"type"`
+	Writable      bool             `json:"writable"`
+	DcmdEnabled   bool             `json:"dcmd_enabled"`        // PCS-CFG-5.2
+	OpcuaEnabled  bool             `json:"opcua_write_enabled"` // PCS-CFG-5.3
+	Deadband      deadbandResponse `json:"deadband"`            // change-on-value (#60)
+	RetentionDays int              `json:"retention_days"`      // historian override, 0 = inherit (#85)
 }
 
 // deadbandResponse is the wire form of a tag's change-on-value deadband.
@@ -37,6 +38,7 @@ type plcResponse struct {
 	KeepAlive     bool             `json:"keep_alive"`
 	Path          string           `json:"path"`
 	Tags          []plcTagResponse `json:"tags"`
+	RetentionDays int              `json:"retention_days"` // historian default, 0 = inherit (#85)
 }
 
 // plcToResponse converts a config.PLC to the API wire format.
@@ -44,12 +46,13 @@ func plcToResponse(p config.PLC) plcResponse {
 	tags := make([]plcTagResponse, 0, len(p.Tags))
 	for _, t := range p.Tags {
 		tags = append(tags, plcTagResponse{
-			Name:         t.Name,
-			Type:         t.Type,
-			Writable:     t.Writable,
-			DcmdEnabled:  t.DCMDEnabled,
-			OpcuaEnabled: t.OPCUAEnabled,
-			Deadband:     deadbandResponse(t.Deadband),
+			Name:          t.Name,
+			Type:          t.Type,
+			Writable:      t.Writable,
+			DcmdEnabled:   t.DCMDEnabled,
+			OpcuaEnabled:  t.OPCUAEnabled,
+			Deadband:      deadbandResponse(t.Deadband),
+			RetentionDays: t.RetentionDays,
 		})
 	}
 	return plcResponse{
@@ -61,6 +64,7 @@ func plcToResponse(p config.PLC) plcResponse {
 		KeepAlive:     p.KeepAlive,
 		Path:          p.Path,
 		Tags:          tags,
+		RetentionDays: p.RetentionDays,
 	}
 }
 
@@ -75,6 +79,7 @@ func decodePLCRequest(r *http.Request) (config.PLC, error) {
 		KeepAlive     bool             `json:"keep_alive"`
 		Path          string           `json:"path"`
 		Tags          []plcTagResponse `json:"tags"`
+		RetentionDays int              `json:"retention_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return config.PLC{}, err
@@ -82,12 +87,13 @@ func decodePLCRequest(r *http.Request) (config.PLC, error) {
 	tags := make([]config.TagDef, 0, len(req.Tags))
 	for _, t := range req.Tags {
 		tags = append(tags, config.TagDef{
-			Name:         t.Name,
-			Type:         t.Type,
-			Writable:     t.Writable,
-			DCMDEnabled:  t.DcmdEnabled,
-			OPCUAEnabled: t.OpcuaEnabled,
-			Deadband:     config.Deadband(t.Deadband),
+			Name:          t.Name,
+			Type:          t.Type,
+			Writable:      t.Writable,
+			DCMDEnabled:   t.DcmdEnabled,
+			OPCUAEnabled:  t.OpcuaEnabled,
+			Deadband:      config.Deadband(t.Deadband),
+			RetentionDays: t.RetentionDays,
 		})
 	}
 	return config.PLC{
@@ -99,6 +105,7 @@ func decodePLCRequest(r *http.Request) (config.PLC, error) {
 		KeepAlive:     req.KeepAlive,
 		Path:          req.Path,
 		Tags:          tags,
+		RetentionDays: req.RetentionDays,
 	}, nil
 }
 

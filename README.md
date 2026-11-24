@@ -19,7 +19,7 @@ Connecting Rockwell PLCs to modern IIoT systems usually requires expensive comme
 - Bidirectional MQTT Sparkplug B Edge Node (one Edge Node, multiple Devices)
 - Visual tag mapping with explicit write ACL per tag
 - Audit trail for all PLC writes and admin actions
-- Local historian with configurable retention
+- Local historian with per-tag, per-PLC and global retention ([docs](docs/historian-retention.md))
 - Per-consumer change-on-value with optional per-tag deadband ([docs](docs/change-on-value.md))
 - Built-in backup system with rotation, schedules, and remote repositories (restic) and restore from the UI ([runbook](docs/backup-restore.md))
 - Multi-platform: Docker first, native binaries for Linux / Windows / macOS / ARM (Raspberry Pi)

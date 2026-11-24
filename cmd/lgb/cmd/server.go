@@ -152,9 +152,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 			openFn = historian.Open
 		}
 		var storeErr error
-		histStore, storeErr = openFn(ctx, dbPath, historian.Options{
-			RetentionDays: cfg.Historian.RetentionDays,
-		})
+		histStore, storeErr = openFn(ctx, dbPath, historian.Options{})
 		if storeErr != nil {
 			return fmt.Errorf("server: open historian: %w", storeErr)
 		}
@@ -164,8 +162,6 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 			slog.String("component", "historian"),
 			slog.String("db", dbPath),
 			slog.Int("retention_days", cfg.Historian.RetentionDays))
-
-		go runRetentionLoop(ctx, histStore, logger)
 	}
 
 	// Build the fan-out TagCallback that feeds both historian and sparkplug.
@@ -192,6 +188,12 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	logger.Info("plc store opened",
 		slog.String("component", "plc-store"),
 		slog.String("path", plcStorePath))
+
+	// The retention loop reads per-PLC and per-tag overrides from the PLC
+	// store on every tick (#85), so it starts once the store is open.
+	if histStore != nil {
+		go runRetentionLoop(ctx, histStore, plcStore.List, cfg.Historian.RetentionDays, logger)
+	}
 
 	// Open the ACL store (acl.db). Deny-by-default: an empty store denies all
 	// HTTP writes; the DCMD path reads dcmd_enabled from plcstore, not aclstore.
@@ -606,8 +608,8 @@ func buildTagCallback(ctx context.Context, hw *historian.Writer, historianCOV bo
 	}
 }
 
-// runRetentionLoop runs EnforceRetention every hour until ctx is cancelled.
-func runRetentionLoop(ctx context.Context, store *historian.Store, logger *slog.Logger) {
+// runRetentionLoop runs enforceRetentionTick every hour until ctx is cancelled.
+func runRetentionLoop(ctx context.Context, store *historian.Store, listPLCs func(context.Context) ([]config.PLC, error), globalDays int, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
@@ -615,13 +617,25 @@ func runRetentionLoop(ctx context.Context, store *historian.Store, logger *slog.
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := store.EnforceRetention(ctx, time.Now()); err != nil {
+			if err := enforceRetentionTick(ctx, store, listPLCs, globalDays, time.Now()); err != nil {
 				logger.Warn("historian retention error",
 					slog.String("component", "historian"),
 					slog.String("err", err.Error()))
 			}
 		}
 	}
+}
+
+// enforceRetentionTick applies the current per-tag > per-PLC > global retention
+// (#85). It re-reads the PLC list each call so edits apply without a restart;
+// when that read fails it deletes nothing, because a global-only fallback would
+// drop samples that longer overrides must keep.
+func enforceRetentionTick(ctx context.Context, store *historian.Store, listPLCs func(context.Context) ([]config.PLC, error), globalDays int, now time.Time) error {
+	plcs, err := listPLCs(ctx)
+	if err != nil {
+		return fmt.Errorf("load retention overrides: %w", err)
+	}
+	return store.EnforceRetention(ctx, now, historian.NewRetentionPolicy(globalDays, plcs))
 }
 
 // probePlCSim performs a TCP dial to addr with a 5-second timeout.

@@ -18,7 +18,7 @@ import (
 func runTagCallback(t *testing.T, historianCOV bool, values []float64, db cov.Deadband) (stored []any, sp []sparkplug.TagUpdate) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "h.db"), historian.Options{RetentionDays: 1})
+	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "h.db"), historian.Options{})
 	if err != nil {
 		t.Fatalf("historian.Open: %v", err)
 	}

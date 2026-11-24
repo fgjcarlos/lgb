@@ -139,6 +139,33 @@ export function useHistorianQuery(
   });
 }
 
+// Effective historian retention per PLC and tag (#85).
+export type RetentionSource = "tag" | "plc" | "global";
+
+export interface HistorianRetention {
+  default_days: number;
+  plcs: {
+    name: string;
+    retention_days: number;
+    source: RetentionSource;
+    tags: { name: string; retention_days: number; source: RetentionSource }[];
+  }[];
+}
+
+export function useHistorianRetention(): UseQueryResult<
+  { data: HistorianRetention },
+  ApiError | Error
+> {
+  const { getWsToken } = useAuth();
+  return useQuery({
+    queryKey: ["historian", "retention"],
+    queryFn: () =>
+      apiFetch<{ data: HistorianRetention }>("/api/historian/retention", {}),
+    enabled: !!getWsToken,
+    retry: false,
+  });
+}
+
 export interface UserRow {
   id: number;
   username: string;
@@ -217,6 +244,7 @@ export interface PLCTag {
   dcmd_enabled: boolean; // PCS-CFG-5.2 — per-tag DCMD opt-in
   opcua_write_enabled: boolean; // PCS-CFG-5.3 — per-tag OPC UA write opt-in (default false)
   deadband: { absolute: number; percent: number }; // change-on-value deadband (S2/S4; zeros = any change)
+  retention_days: number; // historian retention override; 0 = inherit the PLC/global default (#85)
 }
 
 export interface PLCRow {
@@ -228,6 +256,7 @@ export interface PLCRow {
   keep_alive: boolean;
   path: string;
   tags: PLCTag[];
+  retention_days: number; // historian retention default for its tags; 0 = inherit the global (#85)
 }
 
 export function usePLCs(): UseQueryResult<

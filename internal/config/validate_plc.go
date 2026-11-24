@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 //   - each tag: name and type must be non-empty; type must be a Sparkplug scalar (SPK-CFG-2.6/2.7)
 //   - tag deadband: finite and >= 0, percent <= 100, numeric types only (#60)
 //   - tag Writable is accepted without validation (PCS-CFG-5.1 — stored, not enforced)
+//   - PLC and tag retentionDays in [0, MaxRetentionDays]; 0 inherits (#85)
 func ValidatePLC(p PLC) error {
 	var violations []error
 
@@ -51,6 +53,10 @@ func ValidatePLC(p PLC) error {
 		violations = append(violations, errorf("slot: must be between 0 and 15, got %d: %w", p.Slot, ErrConfigInvalid))
 	}
 
+	if err := validateRetentionDays("retentionDays", p.RetentionDays); err != nil {
+		violations = append(violations, err)
+	}
+
 	for j, tag := range p.Tags {
 		if tag.Name == "" {
 			violations = append(violations, errorf("tags[%d].name: must not be empty: %w", j, ErrConfigInvalid))
@@ -61,10 +67,21 @@ func ValidatePLC(p PLC) error {
 			violations = append(violations, errorf("tags[%d].type: %q is not a supported Sparkplug B scalar type: %w", j, tag.Type, ErrConfigInvalid))
 		}
 		violations = append(violations, validateDeadband(j, tag)...)
+		if err := validateRetentionDays(fmt.Sprintf("tags[%d].retentionDays", j), tag.RetentionDays); err != nil {
+			violations = append(violations, err)
+		}
 		// tag.Writable is accepted without validation (PCS-CFG-5.1).
 	}
 
 	return errs.Join(violations...)
+}
+
+// validateRetentionDays checks a PLC or tag historian retention override (#85).
+func validateRetentionDays(field string, days int) error {
+	if days < 0 || days > MaxRetentionDays {
+		return errorf("%s: must be between 0 and %d, got %d: %w", field, MaxRetentionDays, days, ErrConfigInvalid)
+	}
+	return nil
 }
 
 // validateDeadband checks the change-on-value deadband of tag j (#60).

@@ -216,21 +216,24 @@ func TestHistorianAuthFlat(t *testing.T) {
 				t, &snapshotPLCManager{}, opts, nil)
 			defer stop()
 
-			req, _ := http.NewRequest(http.MethodGet, baseURL+"/api/historian/query?tag=Speed", nil)
-			if tt.withToken {
-				tok, err := tokens.Issue(1, "viewer1", auth.RoleViewer)
-				if err != nil {
-					t.Fatalf("issue token: %v", err)
+			// The retention view (#85) shares the query's auth and 503 rules.
+			for _, path := range []string{"/api/historian/query?tag=Speed", "/api/historian/retention"} {
+				req, _ := http.NewRequest(http.MethodGet, baseURL+path, nil)
+				if tt.withToken {
+					tok, err := tokens.Issue(1, "viewer1", auth.RoleViewer)
+					if err != nil {
+						t.Fatalf("issue token: %v", err)
+					}
+					req.Header.Set("Authorization", "Bearer "+tok)
 				}
-				req.Header.Set("Authorization", "Bearer "+tok)
-			}
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatalf("GET historian/query: %v", err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != tt.wantStatus {
-				t.Errorf("expected %d, got %d", tt.wantStatus, resp.StatusCode)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("GET %s: %v", path, err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode != tt.wantStatus {
+					t.Errorf("GET %s: expected %d, got %d", path, tt.wantStatus, resp.StatusCode)
+				}
 			}
 		})
 	}

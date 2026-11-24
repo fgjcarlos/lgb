@@ -46,7 +46,9 @@ The following fields MUST be present after load+validation or MUST resolve to th
 | `server.tlsEnabled` | NO | `false` | TLS on the HTTP server |
 | `auth.jwtSecret` | conditional | — | MUST be non-empty if `lgb server` is started; see §MVP-FND-3.x |
 | `auth.sessionTTL` | NO | `"8h"` | Valid Go duration string |
-| `historian.retentionDays` | NO | `90` | Positive integer |
+| `historian.retentionDays` | NO | `90` | Integer 0–36500; `0` disables the historian. Global default for tags without a PLC or tag override |
+| `plcs[i].retentionDays` | NO | `0` | Integer 0–36500; retention for this PLC's tags; `0` inherits `historian.retentionDays` |
+| `plcs[i].tags[j].retentionDays` | NO | `0` | Integer 0–36500; overrides the PLC and global retention for this tag; `0` inherits |
 
 #### Scenario: Default values are applied when fields are absent
 
@@ -65,7 +67,8 @@ The loader MUST validate the loaded config against the schema after merging all 
 - `gateway.logFormat` is one of `text|json`
 - `server.httpAddr` is a non-empty string
 - `auth.sessionTTL` is a valid Go duration string if non-empty
-- `historian.retentionDays` is a positive integer if non-zero
+- `historian.retentionDays` is a positive integer if non-zero and at most 36500
+- `plcs[i].retentionDays` and `plcs[i].tags[j].retentionDays` are between 0 and 36500
 
 #### Scenario: All violations reported at once
 

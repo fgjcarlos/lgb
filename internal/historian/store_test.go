@@ -14,7 +14,7 @@ func TestStore_InsertBatchAndQueryRange(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "lgb.db"), historian.Options{RetentionDays: 90})
+	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "lgb.db"), historian.Options{})
 	if err != nil {
 		t.Fatalf("Open returned error: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestStore_EnforceRetentionDeletesOldRows(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "lgb.db"), historian.Options{RetentionDays: 1})
+	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "lgb.db"), historian.Options{})
 	if err != nil {
 		t.Fatalf("Open returned error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestStore_EnforceRetentionDeletesOldRows(t *testing.T) {
 		t.Fatalf("InsertBatch returned error: %v", err)
 	}
 
-	if err := store.EnforceRetention(ctx, now); err != nil {
+	if err := store.EnforceRetention(ctx, now, historian.RetentionPolicy{DefaultDays: 1}); err != nil {
 		t.Fatalf("EnforceRetention returned error: %v", err)
 	}
 	got, err := store.Query(ctx, historian.Query{PLCName: "plc-a", Tag: "Temp", From: now.Add(-72 * time.Hour), To: now.Add(time.Hour)})

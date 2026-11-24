@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS plcs (
     scan_rate      TEXT    NOT NULL DEFAULT '',
     keep_alive     INTEGER NOT NULL DEFAULT 0,
     path           TEXT    NOT NULL DEFAULT '',
+    retention_days INTEGER NOT NULL DEFAULT 0,
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER NOT NULL
 );
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS plc_tags (
     opcua_write_enabled INTEGER NOT NULL DEFAULT 0,
     deadband_abs        REAL    NOT NULL DEFAULT 0,
     deadband_pct        REAL    NOT NULL DEFAULT 0,
+    retention_days      INTEGER NOT NULL DEFAULT 0,
     UNIQUE(plc_id, name)
 );`)
 	if err != nil {
@@ -123,6 +125,10 @@ CREATE TABLE IF NOT EXISTS plc_tags (
 	for _, stmt := range []string{
 		`ALTER TABLE plc_tags ADD COLUMN deadband_abs REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE plc_tags ADD COLUMN deadband_pct REAL NOT NULL DEFAULT 0`,
+		// Historian retention overrides (#85). Existing rows default to 0,
+		// which inherits the PLC default or historian.retentionDays.
+		`ALTER TABLE plcs ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE plc_tags ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, alterErr = s.db.ExecContext(ctx, stmt); alterErr != nil && !containsStr(alterErr.Error(), "duplicate column name") {
 			return alterErr
@@ -136,7 +142,7 @@ CREATE TABLE IF NOT EXISTS plc_tags (
 // List returns all PLCs ordered by name, each with their tags populated.
 func (s *Store) List(ctx context.Context) ([]config.PLC, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, address, slot, socket_timeout, scan_rate, keep_alive, path
+		`SELECT id, name, address, slot, socket_timeout, scan_rate, keep_alive, path, retention_days
 		   FROM plcs ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -150,7 +156,7 @@ func (s *Store) List(ctx context.Context) ([]config.PLC, error) {
 		var id int64
 		var keepAlive int
 		if err := rows.Scan(&id, &p.Name, &p.Address, &p.Slot,
-			&p.SocketTimeout, &p.ScanRate, &keepAlive, &p.Path); err != nil {
+			&p.SocketTimeout, &p.ScanRate, &keepAlive, &p.Path, &p.RetentionDays); err != nil {
 			return nil, err
 		}
 		p.KeepAlive = keepAlive != 0
@@ -179,10 +185,10 @@ func (s *Store) Get(ctx context.Context, name string) (config.PLC, error) {
 	var id int64
 	var keepAlive int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, address, slot, socket_timeout, scan_rate, keep_alive, path
+		`SELECT id, name, address, slot, socket_timeout, scan_rate, keep_alive, path, retention_days
 		   FROM plcs WHERE name = ?`, name).
 		Scan(&id, &p.Name, &p.Address, &p.Slot,
-			&p.SocketTimeout, &p.ScanRate, &keepAlive, &p.Path)
+			&p.SocketTimeout, &p.ScanRate, &keepAlive, &p.Path, &p.RetentionDays)
 	if errors.Is(err, sql.ErrNoRows) {
 		return config.PLC{}, ErrPLCNotFound
 	}
@@ -210,10 +216,10 @@ func (s *Store) Create(ctx context.Context, p config.PLC) error {
 
 	now := time.Now().UTC().Unix()
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO plcs(name, address, slot, socket_timeout, scan_rate, keep_alive, path, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO plcs(name, address, slot, socket_timeout, scan_rate, keep_alive, path, retention_days, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Address, p.Slot, p.SocketTimeout, p.ScanRate,
-		boolToInt(p.KeepAlive), p.Path, now, now)
+		boolToInt(p.KeepAlive), p.Path, p.RetentionDays, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrPLCAlreadyExists
@@ -241,10 +247,10 @@ func (s *Store) Update(ctx context.Context, name string, p config.PLC) error {
 	res, err := tx.ExecContext(ctx,
 		`UPDATE plcs
 		    SET name = ?, address = ?, slot = ?, socket_timeout = ?, scan_rate = ?,
-		        keep_alive = ?, path = ?, updated_at = ?
+		        keep_alive = ?, path = ?, retention_days = ?, updated_at = ?
 		  WHERE name = ?`,
 		p.Name, p.Address, p.Slot, p.SocketTimeout, p.ScanRate,
-		boolToInt(p.KeepAlive), p.Path, now, name)
+		boolToInt(p.KeepAlive), p.Path, p.RetentionDays, now, name)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrPLCAlreadyExists
@@ -336,10 +342,10 @@ func (s *Store) Seed(ctx context.Context, plcs []config.PLC) error {
 	now := time.Now().UTC().Unix()
 	for _, p := range plcs {
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO plcs(name, address, slot, socket_timeout, scan_rate, keep_alive, path, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO plcs(name, address, slot, socket_timeout, scan_rate, keep_alive, path, retention_days, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			p.Name, p.Address, p.Slot, p.SocketTimeout, p.ScanRate,
-			boolToInt(p.KeepAlive), p.Path, now, now)
+			boolToInt(p.KeepAlive), p.Path, p.RetentionDays, now, now)
 		if err != nil {
 			return err
 		}
@@ -356,7 +362,7 @@ func (s *Store) Seed(ctx context.Context, plcs []config.PLC) error {
 // listTags fetches all tags for the given PLC surrogate ID, ordered by insertion.
 func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, type, writable, dcmd_enabled, opcua_write_enabled, deadband_abs, deadband_pct
+		`SELECT name, type, writable, dcmd_enabled, opcua_write_enabled, deadband_abs, deadband_pct, retention_days
 		   FROM plc_tags WHERE plc_id = ? ORDER BY id`, plcID)
 	if err != nil {
 		return nil, err
@@ -368,7 +374,7 @@ func (s *Store) listTags(ctx context.Context, plcID int64) ([]config.TagDef, err
 		var tag config.TagDef
 		var writable, dcmdEnabled, opcuaEnabled int
 		if err := rows.Scan(&tag.Name, &tag.Type, &writable, &dcmdEnabled, &opcuaEnabled,
-			&tag.Deadband.Absolute, &tag.Deadband.Percent); err != nil {
+			&tag.Deadband.Absolute, &tag.Deadband.Percent, &tag.RetentionDays); err != nil {
 			return nil, err
 		}
 		tag.Writable = writable != 0
@@ -384,10 +390,10 @@ func insertTags(ctx context.Context, tx *sql.Tx, plcID int64, tags []config.TagD
 	for _, tag := range tags {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO plc_tags(plc_id, name, type, writable, dcmd_enabled, opcua_write_enabled,
-			                      deadband_abs, deadband_pct)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			                      deadband_abs, deadband_pct, retention_days)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			plcID, tag.Name, tag.Type, boolToInt(tag.Writable), boolToInt(tag.DCMDEnabled),
-			boolToInt(tag.OPCUAEnabled), tag.Deadband.Absolute, tag.Deadband.Percent); err != nil {
+			boolToInt(tag.OPCUAEnabled), tag.Deadband.Absolute, tag.Deadband.Percent, tag.RetentionDays); err != nil {
 			return err
 		}
 	}

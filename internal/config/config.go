@@ -140,8 +140,13 @@ type MQTTSection struct {
 	CleanSession          bool   `koanf:"cleanSession"`
 }
 
+// MaxRetentionDays bounds every historian retention setting (100 years);
+// larger values overflow time.Duration when converted to a cutoff (#85).
+const MaxRetentionDays = 36500
+
 // HistorianSection holds historian/SQLite settings.
 type HistorianSection struct {
+	// RetentionDays is the global default; PLC and tag retentionDays override it (#85).
 	RetentionDays int `koanf:"retentionDays"`
 }
 
@@ -178,6 +183,9 @@ type PLC struct {
 	KeepAlive     bool     `koanf:"keepAlive"`
 	Path          string   `koanf:"path"`
 	Tags          []TagDef `koanf:"tags"`
+	// RetentionDays is the historian retention default for this PLC's tags;
+	// 0 inherits historian.retentionDays (#85).
+	RetentionDays int `koanf:"retentionDays"`
 }
 
 // TagDef maps a PLC tag to a Sparkplug B metric.
@@ -188,6 +196,9 @@ type TagDef struct {
 	DCMDEnabled  bool     `koanf:"dcmd_enabled"`        // PCS-CFG-5.2 — per-tag DCMD opt-in; false by default
 	OPCUAEnabled bool     `koanf:"opcua_write_enabled"` // PCS-CFG-5.3 — per-tag OPC UA opt-in; false by default
 	Deadband     Deadband `koanf:"deadband"`            // change-on-value deadband (#60); zero = any change
+	// RetentionDays overrides the PLC and global historian retention for this
+	// tag; 0 inherits (#85).
+	RetentionDays int `koanf:"retentionDays"`
 }
 
 // Deadband is the optional change-on-value deadband of a numeric tag (#60).
@@ -299,6 +310,8 @@ func (c *Config) Validate() error {
 	// historian.retentionDays must be positive when non-zero.
 	if c.Historian.RetentionDays < 0 {
 		violations = append(violations, errorf("historian.retentionDays: must be a positive integer, got %d: %w", c.Historian.RetentionDays, ErrConfigInvalid))
+	} else if c.Historian.RetentionDays > MaxRetentionDays {
+		violations = append(violations, errorf("historian.retentionDays: must be at most %d, got %d: %w", MaxRetentionDays, c.Historian.RetentionDays, ErrConfigInvalid))
 	}
 
 	// backup.interval must be a valid positive duration when repos are configured.

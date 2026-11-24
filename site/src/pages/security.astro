@@ -1,0 +1,26 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+<Layout title="Security baseline — LGB" description="Operational security baseline for deploying LGB.">
+  <main class="prose prose-invert mx-auto max-w-4xl px-6 py-12">
+    <a href="/lgb/">← LGB home</a>
+    <h1>Security baseline</h1>
+    <p>LGB bridges industrial control networks. Keep it on trusted networks and review this baseline before connecting it to production.</p>
+
+    <h2>Authentication and JWT secret</h2>
+    <p>Set a unique, high-entropy <code>LGB_AUTH_JWTSECRET</code> and keep it in a secret manager. Do not commit it or expose it in logs, shell history, or process listings. Set the first admin password through a protected secret file; it is only used to create the initial user.</p>
+
+    <h2>Network exposure and HTTPS</h2>
+    <p>Do not expose LGB directly to the public internet. Restrict access with network segmentation and firewall rules to operator clients and required PLC/broker endpoints. Enable HTTPS using <code>LGB_SERVER_TLSENABLED</code>, <code>LGB_SERVER_TLSCERTFILE</code>, and <code>LGB_SERVER_TLSKEYFILE</code>; set allowed origins to the exact HTTPS origins. Plain HTTP exposes credentials and tag data.</p>
+
+    <h2>OPC UA certificates</h2>
+    <p>Do not use <code>securityMode: None</code> on networked deployments. Use <code>SignAndEncrypt</code> (or an approved secure mode), provision a site-trusted certificate, and protect the private key so only the LGB process can read it. Manage client trust lists through the plant's established process.</p>
+
+    <h2>MQTT TLS</h2>
+    <p>Use broker TLS with certificate verification, unique broker credentials, and least-privilege publish/subscribe ACLs. Do not disable certificate verification or send MQTT credentials over plaintext networks. Restrict broker connectivity to LGB and authorized consumers.</p>
+
+    <h2>Persistent data and backups</h2>
+    <p>Restrict permissions on the data directory and backup repository. Restic encrypts repository data, but protect the repository password separately: anyone holding it can decrypt backups. See the <a href="/lgb/backup-restore">backup and restore runbook</a> and the <a href="https://github.com/fgjcarlos/lgb/blob/main/SECURITY.md">repository security policy</a>.</p>
+    <p>For deployment details, see <a href="/lgb/deployment">Deployment</a>.</p>
+  </main>
+</Layout>

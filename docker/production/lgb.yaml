@@ -1,0 +1,31 @@
+# Production defaults; secrets and deployment-specific addresses are injected by Compose.
+gateway:
+  id: "lgb-production"
+  logLevel: "info"
+  logFormat: "json"
+  dataDir: "/var/lib/lgb"
+
+server:
+  httpAddr: ":8080"
+  tlsEnabled: true
+  tlsCertFile: "/run/lgb-certs/server.crt"
+  tlsKeyFile: "/run/lgb-certs/server.key"
+
+auth:
+  jwtSecret: ""
+  sessionTTL: "8h"
+
+mqtt:
+  brokerURL: "ssl://mosquitto:8883"
+  clientID: "lgb-production"
+  groupID: "lgb-production"
+  edgeNodeID: "lgb-production"
+  qos: 1
+  keepAlive: "30s"
+  cleanSession: true
+  tlsCACert: "/run/mqtt-certs/ca.crt"
+
+historian:
+  retentionDays: 30
+
+# Configure backup.repos outside the checkout before relying on scheduled backups.

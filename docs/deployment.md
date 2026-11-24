@@ -1,119 +1,104 @@
 # Deployment Guide
 
-This document covers production deployment considerations for LGB (Logix Gateway Bridge).
+This guide deploys the current checkout using the production Dockerfile, persistent state, HTTPS, and authenticated MQTT over TLS. Compose binds HTTPS to loopback and does not publish the broker. It explicitly mounts `docker/production/lgb.yaml`, matching the image command, and builds source rather than using a stale published image.
 
-## Transport Security — TLS (R72)
+## Prerequisites and secrets
 
-LGB can serve its HTTP API over TLS. TLS is strongly recommended for any deployment
-that is reachable from outside a strictly controlled local network.
-
-### Enabling TLS
-
-Set the following environment variables (or the equivalent YAML fields):
+Install Docker Engine with Compose plugin, OpenSSL, and Mosquitto utilities (`mosquitto_passwd`). Keep credentials and certificate material outside the checkout. The examples below use documentation-only names and generated ephemeral material: replace `lgb.example.test` with a DNS name you control; never copy a real private key into the repository.
 
 ```bash
-LGB_SERVER_TLSENABLED=true
-LGB_SERVER_TLSCERTFILE=/path/to/server.crt
-LGB_SERVER_TLSKEYFILE=/path/to/server.key
+umask 077
+export LGB_HOME="$HOME/.config/lgb"
+mkdir -p "$LGB_HOME/https" "$LGB_HOME/mqtt-tls" "$LGB_HOME/mqtt-secret"
+chmod 700 "$LGB_HOME" "$LGB_HOME/https" "$LGB_HOME/mqtt-tls" "$LGB_HOME/mqtt-secret"
+sudo install -d -m 0700 -o 65532 -g 65532 "$LGB_HOME/data"
+openssl rand -hex 32
+openssl rand -hex 24
 ```
 
-Or in `lgb.yaml`:
+Create `$LGB_HOME/.env` (mode `0600`) with unique generated values; never reuse secrets:
 
-```yaml
-server:
-  tlsEnabled: true
-  tlsCertFile: /path/to/server.crt
-  tlsKeyFile: /path/to/server.key
+```dotenv
+LGB_AUTH_JWTSECRET=<generated-32-byte-secret>
+LGB_AUTH_ADMIN_USER=admin
+LGB_AUTH_ADMIN_PASSWORD=<generated-password-at-least-12-characters>
+LGB_TLS_DIR=/absolute/path/to/.config/lgb/https
+LGB_MQTT_TLS_DIR=/absolute/path/to/.config/lgb/mqtt-tls
+LGB_MQTT_SECRET_DIR=/absolute/path/to/.config/lgb/mqtt-secret
+LGB_DATA_DIR=/absolute/path/to/.config/lgb/data
 ```
 
-LGB validates at startup that both `tlsCertFile` and `tlsKeyFile` are non-empty when
-`tlsEnabled: true`. If either file path is missing the server exits immediately with
-an error before binding the socket (fail-fast gate).
-
-### Allowed Origins
-
-When TLS is enabled the frontend and any external clients connect over HTTPS/WSS.
-Update `server.allowedOrigins` accordingly — use `https://` prefixes, **not** `http://`:
+The MQTT identity is intentionally fixed as `lgb`, matching `docker/production/acl`; it is not configurable through an environment variable. Generate a distinct MQTT password and save it in a password manager. Compose consumes it from `mqtt-secret/lgb-password` while Mosquitto consumes its hashed equivalent from `mqtt-secret/passwd`:
 
 ```bash
-LGB_SERVER_ALLOWEDORIGINS=https://dashboard.example.com,https://grafana.example.com
+umask 077
+printf '%s\n' '<generated-mqtt-password>' > "$LGB_HOME/mqtt-secret/lgb-password"
+mosquitto_passwd -c "$LGB_HOME/mqtt-secret/passwd" lgb
+chmod 640 "$LGB_HOME/mqtt-secret/lgb-password" "$LGB_HOME/mqtt-secret/passwd"
 ```
 
-Or in `lgb.yaml`:
+Enter the same generated MQTT password when prompted by `mosquitto_passwd`. Protect `.env` with `chmod 600 "$LGB_HOME/.env"`; do not print it in troubleshooting output or put it in the repository.
 
-```yaml
-server:
-  allowedOrigins:
-    - https://dashboard.example.com
-    - https://grafana.example.com
-```
+## TLS certificates and permissions
 
-> Note: the frontend auto-selects `wss://` when served over HTTPS — no manual
-> configuration is required on the frontend side.
-
-### Certificate Sources
-
-LGB loads cert/key files directly via Go's `crypto/tls` package. Any PEM-format
-X.509 certificate is supported:
-
-- Self-signed certs (development / closed networks)
-- Certificates from a private CA
-- Certificates from a public CA (e.g. Let's Encrypt via certbot or acme.sh)
-
-For automated renewal with Let's Encrypt, use a reverse proxy (Nginx, Caddy, Traefik)
-in front of LGB and terminate TLS there, or use a tool such as
-[autocert](https://pkg.go.dev/golang.org/x/crypto/acme/autocert) via a custom build.
-
-### Running Without TLS (Development Only)
-
-When `tlsEnabled: false` (the default), LGB logs a warning at startup:
-
-```
-WARN server running WITHOUT TLS — plaintext HTTP addr=:8080
-```
-
-This warning is intentional. Plaintext HTTP is acceptable on loopback or in a fully
-isolated development environment but should never be used in production.
-
-## Container Deployment
-
-The production Docker image (`docker/Dockerfile`) builds the web UI bundle and embeds it
-in the `lgb` binary, so the container serves the web UI at `/` alongside the JSON API.
+Create a private local CA and server certificates with SANs matching the endpoints clients actually use. The following recipe produces a CA and one certificate usable for local HTTPS and the broker: add all actual DNS/IP SANs as needed. For public or production deployments, use your organization-approved CA and renew/rotate according to its policy.
 
 ```bash
-docker build -f docker/Dockerfile -t lgb:latest .
+mkdir -p "$LGB_HOME/pki"
+cd "$LGB_HOME/pki"
+openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -keyout ca.key -out ca.crt \
+  -subj '/CN=LGB local documentation CA'
+openssl req -newkey rsa:3072 -nodes -keyout broker.key -out broker.csr \
+  -subj '/CN=lgb.example.test'
+printf 'subjectAltName=DNS:lgb.example.test,DNS:localhost,DNS:mosquitto,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > server.ext
+openssl x509 -req -in broker.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out broker.crt -days 365 -sha256 -extfile server.ext
+install -m 0644 broker.crt "$LGB_HOME/https/server.crt"
+install -m 0640 broker.key "$LGB_HOME/https/server.key"
+install -m 0644 ca.crt "$LGB_HOME/https/ca.crt"
+install -m 0644 ca.crt "$LGB_HOME/mqtt-tls/ca.crt"
+install -m 0644 broker.crt "$LGB_HOME/mqtt-tls/broker.crt"
+install -m 0640 broker.key "$LGB_HOME/mqtt-tls/broker.key"
+cd -
 ```
 
-On first start (empty `users.db` in the data directory) the server creates the first
-admin user from `LGB_AUTH_ADMIN_PASSWORD` (at least 12 characters, at most 72 bytes) and the optional
-`LGB_AUTH_ADMIN_USER` (default `admin`). Without the password the container exits with
-`no users exist and LGB_AUTH_ADMIN_PASSWORD is not set`. Once a user exists the
-variables are ignored, so you can drop them after the first run.
+The certificate must have `subjectAltName` for every HTTPS hostname/IP clients use, and `DNS:mosquitto` because LGB verifies the broker at that Compose hostname. For a real deployment, issue separate HTTPS and broker certificates with only their required SANs. The compose references above need `server.crt`/`server.key` in the HTTPS directory and `ca.crt`/`broker.crt`/`broker.key` in the MQTT TLS directory. The example CA key and signing files stay outside both mounted runtime directories; remove them securely according to your host policy after issuance.
 
-Pass the password through an env file with restricted permissions rather than an
-inline `-e` value, which would land in shell history and process listings:
+The LGB container runs as UID/GID `65532`; Mosquitto runs as `1883:1883`. Read-only file mounts avoid exposing unrelated private files from shared certificate/secret directories. Ensure the LGB process can read the HTTPS key and MQTT password, and Mosquitto can read the broker key and hashed password. A portable group-based setup is:
 
 ```bash
-(umask 077; printf 'LGB_AUTH_ADMIN_PASSWORD=%s\n' '<12+ character password>' > lgb-admin.env)
+sudo chown 65532:65532 "$LGB_HOME/https/server.key" "$LGB_HOME/mqtt-secret/lgb-password"
+sudo chmod 640 "$LGB_HOME/https/server.key" "$LGB_HOME/mqtt-secret/lgb-password"
+sudo chown 1883:1883 "$LGB_HOME/mqtt-tls/broker.key" "$LGB_HOME/mqtt-secret/passwd"
+sudo chmod 640 "$LGB_HOME/mqtt-tls/broker.key" "$LGB_HOME/mqtt-secret/passwd"
+sudo chmod 644 "$LGB_HOME/https/server.crt" "$LGB_HOME/mqtt-tls/ca.crt" "$LGB_HOME/mqtt-tls/broker.crt"
+namei -l "$LGB_HOME/https/server.key" "$LGB_HOME/mqtt-tls/broker.key" "$LGB_HOME/mqtt-secret/lgb-password" "$LGB_HOME/mqtt-secret/passwd"
 ```
 
-Mount your TLS cert and key as container secrets or volumes:
+Adjust group ownership/ACLs for your host rather than making private keys or passwords world-readable. The Docker daemon must be able to resolve the source paths. These UID/GID steps assume a rootful Linux daemon without user-namespace remapping; use the daemon's mapped IDs if applicable. Compose does not repair bind-mount permissions.
+
+## First start and bootstrap
+
+On an empty data directory, LGB requires `LGB_AUTH_ADMIN_PASSWORD` (minimum 12 characters, maximum 72 bytes) to create the first admin. Once created, remove the admin password from `.env`; the Compose setting defaults to empty, so existing installations can start without it. Do not delete persisted data to reset credentials. Recreate LGB after removing the bootstrap password so it no longer appears in the container environment.
+
+Run from repository root:
 
 ```bash
-docker run -d \
-  -e LGB_SERVER_TLSENABLED=true \
-  -e LGB_SERVER_TLSCERTFILE=/run/secrets/server.crt \
-  -e LGB_SERVER_TLSKEYFILE=/run/secrets/server.key \
-  --env-file lgb-admin.env \
-  -v /path/to/certs:/run/secrets:ro \
-  -p 8443:8080 \
-  lgb:latest
+docker compose --env-file "$LGB_HOME/.env" config --quiet
+docker compose --env-file "$LGB_HOME/.env" build lgb
+docker compose --env-file "$LGB_HOME/.env" up -d
 ```
 
-## Data Directory
+The UI is `https://localhost:8443/`; use a name covered by the HTTPS certificate in production. Check status/logs and verify TLS without disabling certificate checks:
 
-LGB stores its SQLite historian database and other persistent data in the directory
-set by `gateway.dataDir` (or `LGB_GATEWAY_DATADIR`). Ensure this directory is:
+```bash
+docker compose --env-file "$LGB_HOME/.env" ps
+docker compose --env-file "$LGB_HOME/.env" logs --tail=100 lgb mosquitto
+curl --fail --show-error --cacert "$LGB_HOME/https/ca.crt" https://localhost:8443/health
+```
 
-- Persistent across container restarts (bind mount or named volume)
-- Not world-readable (SQLite files contain tag history)
+For HTTPS hostnames other than localhost, use that hostname in the URL and configure DNS/hosts accordingly. The broker is internal-only; external consumers should use a separately managed secured broker or a reviewed override with firewall restrictions, per-user credentials, TLS, and narrow ACLs. The ACL grants only user `lgb` read/write under `spBv1.0/#`; consumers need separate users and narrow topic rules.
+
+## Persistent data and operations
+
+The host directory `LGB_DATA_DIR` is mounted at `/var/lib/lgb` and holds gateway state and the historian. Mosquitto persistence uses `mosquitto-data`. Back up both and test restores before upgrades. `docker compose down` retains data; `down -v` removes the broker volume. Renew external certificates with permissions preserved and recreate the relevant service so replaced files are bind-mounted again. Review [Backup and restore](backup-restore.md) and the [repository security policy](https://github.com/fgjcarlos/lgb/blob/main/SECURITY.md) before production use.

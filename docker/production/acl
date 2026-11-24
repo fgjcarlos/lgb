@@ -1,0 +1,8 @@
+# Runtime identity is fixed by docker-compose.yml; retain this exact username there.
+user lgb
+topic readwrite spBv1.0/#
+
+# Add separately named principals only when configuring authenticated broker
+# consumers. Replace the example identity and narrow its topic permissions.
+# user historian-reader
+# topic read spBv1.0/+/DDATA/+

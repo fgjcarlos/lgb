@@ -1,0 +1,65 @@
+# Production-oriented local deployment. Build the current checkout; never use a
+# potentially stale published image tag for this stack.
+services:
+  lgb:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_started
+    environment:
+      LGB_GATEWAY_DATADIR: /var/lib/lgb
+      LGB_SERVER_HTTPADDR: ":8080"
+      LGB_SERVER_TLSENABLED: "true"
+      LGB_SERVER_TLSCERTFILE: /run/lgb-certs/server.crt
+      LGB_SERVER_TLSKEYFILE: /run/lgb-certs/server.key
+      LGB_AUTH_JWTSECRET: ${LGB_AUTH_JWTSECRET:?Set a unique random JWT secret in .env}
+      LGB_AUTH_ADMIN_USER: ${LGB_AUTH_ADMIN_USER:-admin}
+      LGB_AUTH_ADMIN_PASSWORD: ${LGB_AUTH_ADMIN_PASSWORD:-}
+      LGB_MQTT_BROKERURL: ssl://mosquitto:8883
+      LGB_MQTT_USERNAME: lgb
+      LGB_MQTT_PASSWORDFILE: /run/mqtt-credentials/lgb-password
+      LGB_MQTT_TLSCACERT: /run/mqtt-certs/ca.crt
+    ports:
+      - "127.0.0.1:${LGB_HTTPS_PORT:-8443}:8080"
+    volumes:
+      - type: bind
+        source: ${LGB_DATA_DIR:?Set LGB_DATA_DIR to the persistent directory owned by UID 65532}
+        target: /var/lib/lgb
+        bind:
+          create_host_path: false
+      - ./docker/production/lgb.yaml:/etc/lgb/lgb.yaml:ro
+      - ${LGB_TLS_DIR:?Set LGB_TLS_DIR to a directory containing server.crt and server.key}/server.crt:/run/lgb-certs/server.crt:ro
+      - ${LGB_TLS_DIR:?Set LGB_TLS_DIR to a directory containing server.crt and server.key}/server.key:/run/lgb-certs/server.key:ro
+      - ${LGB_MQTT_TLS_DIR:?Set LGB_MQTT_TLS_DIR to a directory containing ca.crt and broker.crt}/ca.crt:/run/mqtt-certs/ca.crt:ro
+      - type: bind
+        source: ${LGB_MQTT_SECRET_DIR:?Set LGB_MQTT_SECRET_DIR to a directory containing lgb-password}/lgb-password
+        target: /run/mqtt-credentials/lgb-password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [backend]
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    user: "1883:1883"
+    volumes:
+      - ./docker/production/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/production/acl:/mosquitto/config/acl:ro
+      - ${LGB_MQTT_TLS_DIR:?Set LGB_MQTT_TLS_DIR}/ca.crt:/run/mqtt-certs/ca.crt:ro
+      - ${LGB_MQTT_TLS_DIR:?Set LGB_MQTT_TLS_DIR}/broker.crt:/run/mqtt-certs/broker.crt:ro
+      - ${LGB_MQTT_TLS_DIR:?Set LGB_MQTT_TLS_DIR}/broker.key:/run/mqtt-certs/broker.key:ro
+      - ${LGB_MQTT_SECRET_DIR:?Set LGB_MQTT_SECRET_DIR}/passwd:/run/mqtt-credentials/passwd:ro
+      - mosquitto-data:/mosquitto/data
+    networks: [backend]
+    # Intentionally no published broker port. External clients must use a
+    # separately secured broker or an explicitly firewall-restricted override.
+
+volumes:
+  mosquitto-data:
+
+networks:
+  backend:

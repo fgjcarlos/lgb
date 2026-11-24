@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import { UnavailableBanner } from "@/components/UnavailableBanner";
 import {
   useHistorianQuery,
+  useHistorianRetention,
   type HistorianQueryParams,
 } from "@/hooks/useApi";
 import { ApiError } from "@/lib/api";
@@ -76,6 +77,7 @@ export function Historian() {
   });
 
   const query = useHistorianQuery(params);
+  const retention = useHistorianRetention();
 
   const onSubmit = handleSubmit((values) => {
     setParams({
@@ -251,6 +253,60 @@ export function Historian() {
                   </TableBody>
                 </Table>
               </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {retention.data && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Retention</CardTitle>
+            <CardDescription>
+              Effective retention per tag: a tag override beats its PLC
+              default, which beats the global default of{" "}
+              {retention.data.data.default_days} days. Edit overrides on the
+              PLCs page.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {retention.data.data.plcs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No PLCs configured.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>PLC</TableHead>
+                    <TableHead>Tag</TableHead>
+                    <TableHead>Retention (days)</TableHead>
+                    <TableHead>Set by</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {retention.data.data.plcs.flatMap((plc) => [
+                    <TableRow key={plc.name}>
+                      <TableCell className="font-medium">{plc.name}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        PLC default
+                      </TableCell>
+                      <TableCell>{plc.retention_days}</TableCell>
+                      <TableCell>{plc.source}</TableCell>
+                    </TableRow>,
+                    ...plc.tags.map((tag) => (
+                      <TableRow key={`${plc.name}:${tag.name}`}>
+                        <TableCell />
+                        <TableCell className="font-mono text-xs">
+                          {tag.name}
+                        </TableCell>
+                        <TableCell>{tag.retention_days}</TableCell>
+                        <TableCell>{tag.source}</TableCell>
+                      </TableRow>
+                    )),
+                  ])}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>

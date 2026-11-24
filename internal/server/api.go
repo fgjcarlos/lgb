@@ -87,8 +87,12 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	if s.authTokens != nil {
 		mux.Handle("GET /api/historian/query",
 			withMiddleware(http.HandlerFunc(s.handleHistorianQuery), authMiddleware(s.authTokens)))
+		// Effective per-tag retention (#85) — viewer+, like the query.
+		mux.Handle("GET /api/historian/retention",
+			withMiddleware(http.HandlerFunc(s.handleHistorianRetention), authMiddleware(s.authTokens)))
 	} else {
 		mux.HandleFunc("GET /api/historian/query", s.handleHistorianQuery)
+		mux.HandleFunc("GET /api/historian/retention", s.handleHistorianRetention)
 	}
 
 	// Doctor endpoint — viewer+.

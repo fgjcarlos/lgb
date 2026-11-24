@@ -88,6 +88,19 @@ const deadbandNumber = (max?: number) =>
           .max(max, `Must be ≤ ${max}`),
   );
 
+// Historian retention days — empty means 0 (inherit the PLC/global default, #85).
+const retentionDays = z.preprocess(
+  (v) => (v === "" || v === undefined || v === null ? 0 : v),
+  z.coerce
+    .number()
+    .int("Whole days")
+    .min(0, "Must be ≥ 0")
+    .max(36500, "Must be ≤ 36500"),
+);
+
+const RETENTION_TITLE =
+  "Historian retention in days; 0 or empty inherits the PLC default, then historian.retentionDays";
+
 // Go duration as parsed by time.ParseDuration — empty is allowed (optional).
 const goDuration = z
   .string()
@@ -103,6 +116,7 @@ const plcSchema = z.object({
   scan_rate: goDuration,
   keep_alive: z.boolean(),
   path: z.string(),
+  retention_days: retentionDays,
   tags: z.array(
     z.object({
       name: z.string().min(1, "Tag name required"),
@@ -114,6 +128,7 @@ const plcSchema = z.object({
         absolute: deadbandNumber(),
         percent: deadbandNumber(100),
       }),
+      retention_days: retentionDays,
     }).superRefine((tag, ctx) => {
       if (NUMERIC_TAG_TYPES.has(tag.type)) return;
       for (const key of ["absolute", "percent"] as const) {
@@ -139,6 +154,7 @@ const emptyPLC: PLCFormValues = {
   scan_rate: "",
   keep_alive: false,
   path: "",
+  retention_days: 0,
   tags: [],
 };
 
@@ -151,6 +167,7 @@ function toFormValues(plc: PLCRow): PLCFormValues {
     scan_rate: plc.scan_rate ?? "",
     keep_alive: plc.keep_alive,
     path: plc.path ?? "",
+    retention_days: plc.retention_days ?? 0,
     tags: plc.tags.map((t) => ({
       name: t.name,
       type: t.type as (typeof TAG_TYPES)[number],
@@ -161,6 +178,7 @@ function toFormValues(plc: PLCRow): PLCFormValues {
         absolute: t.deadband?.absolute ?? 0,
         percent: t.deadband?.percent ?? 0,
       },
+      retention_days: t.retention_days ?? 0,
     })),
   };
 }
@@ -461,6 +479,24 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
           <Label htmlFor="path">Path</Label>
           <Input id="path" autoComplete="off" {...register("path")} />
         </div>
+        <div className="space-y-2">
+          <Label htmlFor="retention_days">Historian retention (days)</Label>
+          <Input
+            id="retention_days"
+            type="number"
+            min={0}
+            max={36500}
+            step={1}
+            placeholder="inherit"
+            title={RETENTION_TITLE}
+            {...register("retention_days")}
+          />
+          {errors.retention_days && (
+            <p className="text-xs text-destructive">
+              {errors.retention_days.message}
+            </p>
+          )}
+        </div>
       </div>
 
       <label className="flex items-center gap-2 text-sm">
@@ -483,6 +519,7 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                 dcmd_enabled: false,
                 opcua_write_enabled: false,
                 deadband: { absolute: 0, percent: 0 },
+                retention_days: 0,
               })
             }
           >
@@ -503,11 +540,12 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
               );
               const deadbandError =
                 errors.tags?.[index]?.deadband?.absolute?.message ??
-                errors.tags?.[index]?.deadband?.percent?.message;
+                errors.tags?.[index]?.deadband?.percent?.message ??
+                errors.tags?.[index]?.retention_days?.message;
               return (
               <div
                 key={field.id}
-                className="grid grid-cols-[1fr_140px_88px_88px_auto_auto_auto_auto] items-center gap-2"
+                className="grid grid-cols-[1fr_140px_88px_88px_88px_auto_auto_auto_auto] items-center gap-2"
               >
                 <div>
                   <Input
@@ -561,6 +599,16 @@ function PLCForm({ editing, onDone }: PLCFormProps) {
                   title={`${DEADBAND_TITLE} (percent of last value)`}
                   disabled={!deadbandEnabled}
                   {...register(`tags.${index}.deadband.percent`)}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={36500}
+                  step={1}
+                  placeholder="Retention d"
+                  aria-label={`Historian retention days for tag ${index + 1}`}
+                  title={RETENTION_TITLE}
+                  {...register(`tags.${index}.retention_days`)}
                 />
                 <label className="flex items-center gap-1 text-xs text-muted-foreground">
                   <input

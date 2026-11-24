@@ -144,6 +144,44 @@ components:
         quality:
           type: string
 
+    HistorianRetention:
+      type: object
+      description: >
+        Effective historian retention. A tag override beats its PLC default, which
+        beats the global default; source names the level that set each value.
+      required: [default_days, plcs]
+      properties:
+        default_days:
+          type: integer
+          description: Global historian.retentionDays.
+        plcs:
+          type: array
+          items:
+            type: object
+            required: [name, retention_days, source, tags]
+            properties:
+              name:
+                type: string
+              retention_days:
+                type: integer
+                description: Default applied to this PLC's tags without an override.
+              source:
+                type: string
+                enum: [plc, global]
+              tags:
+                type: array
+                items:
+                  type: object
+                  required: [name, retention_days, source]
+                  properties:
+                    name:
+                      type: string
+                    retention_days:
+                      type: integer
+                    source:
+                      type: string
+                      enum: [tag, plc, global]
+
     DoctorCheck:
       type: object
       required: [name, status, message]
@@ -307,6 +345,14 @@ components:
               minimum: 0
               maximum: 100
               default: 0
+        retention_days:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          default: 0
+          description: >
+            Historian retention override for this tag, in days. 0 inherits the PLC's
+            retention_days, then the global historian.retentionDays.
 
     PLCRequest:
       type: object
@@ -343,6 +389,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PLCTag"
+        retention_days:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          default: 0
+          description: >
+            Historian retention default for this PLC's tags, in days. 0 inherits the
+            global historian.retentionDays. A tag's own retention_days wins.
 
     PLCStatus:
       type: object
@@ -430,7 +484,7 @@ components:
 
     PLCResponse:
       type: object
-      required: [name, address, slot, socket_timeout, scan_rate, keep_alive, path, tags]
+      required: [name, address, slot, socket_timeout, scan_rate, keep_alive, path, tags, retention_days]
       properties:
         name:
           type: string
@@ -450,6 +504,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PLCTag"
+        retention_days:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          default: 0
+          description: >
+            Historian retention default for this PLC's tags, in days. 0 inherits the
+            global historian.retentionDays. A tag's own retention_days wins.
 
     ACLRule:
       type: object
@@ -710,6 +772,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "503":
+          description: Historian store not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/historian/retention:
+    get:
+      summary: Effective historian retention per PLC and tag
+      description: >
+        Requires viewer role or higher. Lists every configured PLC and tag with the
+        retention (days) the hourly retention job applies and the level that set it.
+      responses:
+        "200":
+          description: Effective retention.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/HistorianRetention"
         "401":
           description: Missing or invalid bearer token.
         "503":

@@ -53,7 +53,7 @@ interface WriteControlProps {
   type: string;
 }
 
-function WriteControl({ plc, tag, writable, type }: WriteControlProps) {
+export function WriteControl({ plc, tag, writable, type }: WriteControlProps) {
   const writeMutation = useWriteTag(plc, tag);
   const inputRef = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState(false);

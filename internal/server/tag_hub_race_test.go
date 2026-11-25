@@ -27,7 +27,7 @@ func TestTagHub_COV_ConcurrentRegisterPublish(t *testing.T) {
 		}()
 	}
 	for i := 0; i < 300; i++ {
-		sub := newTagSubscriber(4, i%2 == 0)
+		sub := newTagSubscriber(4, i%2 == 0, 0)
 		sub.setFilter("", "")
 		h.register(sub)
 		go func() {

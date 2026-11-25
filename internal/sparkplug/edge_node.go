@@ -38,6 +38,9 @@ type EdgeNodeConfig struct {
 	// deadband (#60). The filter is reset on every birth so current values
 	// are re-sent after NBIRTH/DBIRTH.
 	ChangeOnValue bool
+	// ChangeOnValueHeartbeat > 0 re-publishes an unchanged value when no DDATA
+	// carried that tag within the interval (#122). Ignored without ChangeOnValue.
+	ChangeOnValueHeartbeat time.Duration
 }
 
 // EdgeNode orchestrates the Sparkplug B lifecycle.
@@ -78,7 +81,7 @@ func NewEdgeNode(cfg EdgeNodeConfig) *EdgeNode {
 	}
 	var filter *cov.Filter
 	if cfg.ChangeOnValue {
-		filter = cov.NewFilter()
+		filter = cov.NewHeartbeatFilter(cfg.ChangeOnValueHeartbeat)
 	}
 	e := &EdgeNode{
 		cov:          filter,

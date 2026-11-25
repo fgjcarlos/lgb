@@ -129,3 +129,29 @@ func TestEdgeNode_COV_ResetOnRebirth(t *testing.T) {
 	en.HandleTagUpdate(upd(5, cov.Deadband{}))
 	waitDDATA(t, mc, []float64{5, 5})
 }
+
+// TestEdgeNode_COV_Heartbeat verifies #122: with a heartbeat an unchanged
+// value is re-published as DDATA once the interval elapsed, not before.
+func TestEdgeNode_COV_Heartbeat(t *testing.T) {
+	t.Parallel()
+	const heartbeat = 200 * time.Millisecond
+	mc := &mockMQTTClient{}
+	en := sparkplug.NewEdgeNode(sparkplug.EdgeNodeConfig{
+		GroupID:                "plant-a",
+		NodeID:                 "lgb-1",
+		Client:                 mc,
+		Devices:                []sparkplug.DeviceConfig{{DeviceID: "plc-a"}},
+		ChangeOnValue:          true,
+		ChangeOnValueHeartbeat: heartbeat,
+	})
+	if err := en.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = en.Stop() })
+
+	en.HandleTagUpdate(upd(5, cov.Deadband{}))
+	en.HandleTagUpdate(upd(5, cov.Deadband{})) // within the interval
+	time.Sleep(heartbeat + 50*time.Millisecond)
+	en.HandleTagUpdate(upd(5, cov.Deadband{}))
+	waitDDATA(t, mc, []float64{5, 5})
+}

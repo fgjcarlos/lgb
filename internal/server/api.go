@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/fgjcarlos/lgb/internal/auth"
+	"github.com/fgjcarlos/lgb/internal/config"
 	"github.com/fgjcarlos/lgb/internal/plc"
 )
 
@@ -276,7 +277,7 @@ func (s *Server) handleTagsWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sub := newTagSubscriber(16, s.cfg.ChangeOnValue.Realtime)
+	sub := newTagSubscriber(16, s.cfg.ChangeOnValue.Realtime, config.HeartbeatInterval(s.cfg.ChangeOnValue.RealtimeHeartbeat))
 	sub.setFilter(r.URL.Query().Get("plc"), r.URL.Query().Get("tag"))
 	s.tagHub.register(sub)
 	defer s.tagHub.unregister(sub)

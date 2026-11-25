@@ -22,7 +22,7 @@ import (
 // dcmdFakePLCManager records WriteTag calls and satisfies PLCManager.
 type dcmdFakePLCManager struct {
 	fakePLCManager
-	mu        sync.Mutex
+	mu         sync.Mutex
 	writeCalls []dcmdWriteCall
 	writeErr   error
 }
@@ -375,5 +375,70 @@ func TestDCMDHandler_AllowAuditHasNoActor(t *testing.T) {
 	ev := events[0]
 	if ev.Username != "" {
 		t.Errorf("Username = %q on allow path; DCMD must always have empty Username", ev.Username)
+	}
+}
+
+// ─── TWA-DCMD-3.2 Scenario (e): value coerced to the declared type ────────────
+
+// TestDCMDHandler_CoercesCompatibleValue verifies that a sender type different
+// from the tag's declared type is converted before the driver write: a Double
+// 2.5 for a Float tag reaches WriteTag as float32(2.5). (TWA-DCMD-3.2 e, #125)
+func TestDCMDHandler_CoercesCompatibleValue(t *testing.T) {
+	t.Parallel()
+	env := newDCMDTestEnv(t)
+
+	env.srv.SparkplugCommandHandler()("Silo-1", "Feed.Rate", float64(2.5))
+
+	if env.mgr.writeCount() != 1 {
+		t.Fatalf("expected 1 WriteTag call, got %d", env.mgr.writeCount())
+	}
+	env.mgr.mu.Lock()
+	got := env.mgr.writeCalls[0].Val
+	env.mgr.mu.Unlock()
+	if v, ok := got.(float32); !ok || v != 2.5 {
+		t.Fatalf("WriteTag value = %#v (%T); want float32(2.5)", got, got)
+	}
+	events := readAuditEventsDCMD(t, env.auditDir)
+	if len(events) != 1 || !strings.Contains(events[0].Detail, "outcome=allow") {
+		t.Fatalf("audit = %+v; want exactly one allow event", events)
+	}
+}
+
+// ─── TWA-DCMD-3.2 Scenario (f): incompatible value denied, not written ───────
+
+// TestDCMDHandler_DeniesIncompatibleValue verifies that a value that cannot
+// represent the tag's declared type is not written and emits a tag.write deny
+// audit with source=dcmd and reason=invalid value. (TWA-DCMD-3.2 f, #125)
+func TestDCMDHandler_DeniesIncompatibleValue(t *testing.T) {
+	t.Parallel()
+	cases := map[string]any{
+		"out of range":     float64(1e300),
+		"bool to numeric":  true,
+		"string to number": "3.0",
+	}
+	for name, value := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := newDCMDTestEnv(t)
+
+			env.srv.SparkplugCommandHandler()("Silo-1", "Feed.Rate", value)
+
+			if n := env.mgr.writeCount(); n != 0 {
+				t.Fatalf("WriteTag called %d times; want 0", n)
+			}
+			events := readAuditEventsDCMD(t, env.auditDir)
+			if len(events) != 1 {
+				t.Fatalf("got %d audit events; want 1", len(events))
+			}
+			ev := events[0]
+			if ev.Action != "tag.write" || ev.Username != "" {
+				t.Errorf("Action=%q Username=%q; want tag.write and empty username", ev.Action, ev.Username)
+			}
+			for _, want := range []string{"outcome=deny", "source=dcmd", "reason=invalid value"} {
+				if !strings.Contains(ev.Detail, want) {
+					t.Errorf("Detail = %q; want %s", ev.Detail, want)
+				}
+			}
+		})
 	}
 }

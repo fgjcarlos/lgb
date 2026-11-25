@@ -202,6 +202,24 @@ func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value 
 	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username, r.RemoteAddr)
 }
 
+// declaredTagType returns the declared Sparkplug type of plcName/tag, or ""
+// when the store is absent or the tag cannot be found.
+func (s *Server) declaredTagType(ctx context.Context, plcName, tag string) string {
+	if s.plcStore == nil {
+		return ""
+	}
+	plc, err := s.plcStore.Get(ctx, plcName)
+	if err != nil {
+		return ""
+	}
+	for _, t := range plc.Tags {
+		if t.Name == tag {
+			return t.Type
+		}
+	}
+	return ""
+}
+
 // SparkplugCommandHandler returns a sparkplug.CommandHandler closure that
 // enforces the DCMD write gate and audits every attempt (allow AND deny).
 //
@@ -225,11 +243,19 @@ func (s *Server) SparkplugCommandHandler() sparkplug.CommandHandler {
 			s.emitWriteAuditDetail(plcName, tag, value, "deny", decision.Reason, "dcmd", "", dcmdAuditIP)
 			return
 		}
-		// Allow path: write then audit.
-		if err := s.plcMgr.WriteTag(plcName, tag, value); err != nil {
-			s.emitWriteAuditDetail(plcName, tag, value, "deny", fmt.Sprintf("write error: %v", err), "dcmd", "", dcmdAuditIP)
+		// The decoded value carries the sender's metric type; the driver picks
+		// the on-wire CIP type from the Go type, so coerce to the tag's declared
+		// type. An unknown type (lookup failed) is rejected by Coerce: fail closed.
+		val, err := tagvalue.Coerce(value, s.declaredTagType(ctx, plcName, tag))
+		if err != nil {
+			s.emitWriteAuditDetail(plcName, tag, value, "deny", "invalid value", "dcmd", "", dcmdAuditIP)
 			return
 		}
-		s.emitWriteAuditDetail(plcName, tag, value, "allow", "", "dcmd", "", dcmdAuditIP)
+		// Allow path: write then audit.
+		if err := s.plcMgr.WriteTag(plcName, tag, val); err != nil {
+			s.emitWriteAuditDetail(plcName, tag, val, "deny", fmt.Sprintf("write error: %v", err), "dcmd", "", dcmdAuditIP)
+			return
+		}
+		s.emitWriteAuditDetail(plcName, tag, val, "allow", "", "dcmd", "", dcmdAuditIP)
 	}
 }

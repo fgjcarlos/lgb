@@ -354,8 +354,9 @@ The DCMD handler MUST:
 
 1. Parse the DCMD payload to extract `(plc, tag, value)`.
 2. Call `AuthorizeDCMD(ctx, plcName, tagName)` — no actor, no role, no credential lookup.
-3. On allow: call `Driver.WriteTag`, emit audit event with `source="dcmd"`.
-4. On deny: drop the command silently (no MQTT error response), emit audit event with `outcome="deny"`, `source="dcmd"`.
+3. On allow: coerce the decoded value to the tag's declared Sparkplug type with `tagvalue.Coerce` (the same rules as the HTTP and OPC UA surfaces). The decoded value carries the **sender's** metric datatype, while the driver picks the on-wire CIP type from the Go type, so the value MUST NOT reach the driver uncoerced. A value that cannot represent the declared type (out of range, non-integral for an integer type, bool for a numeric type, string for a non-String type, unknown tag type) is NOT written: drop it and emit an audit event with `outcome="deny"`, `source="dcmd"`, `reason="invalid value"`.
+4. On a coerced value: call `Driver.WriteTag` with the coerced value, emit audit event with `source="dcmd"`.
+5. On deny: drop the command silently (no MQTT error response), emit audit event with `outcome="deny"`, `source="dcmd"`.
 
 The DCMD handler MUST NOT call `aclStore.CanWrite` or `AuthorizeHTTP`. No MQTT credential is resolved. An operator-level HTTP ACL rule granting write on a tag does NOT enable DCMD writes to that tag.
 
@@ -390,6 +391,20 @@ The DCMD handler MUST NOT call `aclStore.CanWrite` or `AuthorizeHTTP`. No MQTT c
 - WHEN a DCMD metric is received and denied
 - THEN the audit event contains `source="dcmd"`
 - AND the audit event does NOT contain an actor username or role field (or records them as empty/absent)
+
+#### Scenario: (e) DCMD value coerced to the declared type
+
+- GIVEN tag `Feed.Rate` is declared `Float` with `Writable=true` AND `DCMDEnabled=true`
+- WHEN a DCMD `Double` metric for `Feed.Rate` with value `2.5` is received
+- THEN `Driver.WriteTag("Feed.Rate", float32(2.5))` is called
+- AND an audit event with `outcome="allow"`, `source="dcmd"` is recorded
+
+#### Scenario: (f) DCMD value that cannot represent the type is denied
+
+- GIVEN tag `Feed.Rate` is declared `Float` with `Writable=true` AND `DCMDEnabled=true`
+- WHEN a DCMD metric for `Feed.Rate` carries a value outside the float32 range, a `Boolean`, or a `String`
+- THEN `Driver.WriteTag` is NOT called
+- AND an audit event with `action="tag.write"`, `outcome="deny"`, `source="dcmd"`, `reason="invalid value"` is recorded
 
 ---
 
@@ -525,6 +540,8 @@ Note on plc/tag existence validation: the ACL store accepts free-form `plc`/`tag
 | TWA-DCMD-3.2 | (b) DCMD dropped when DCMDEnabled=false; ACL rule irrelevant | Unit |
 | TWA-DCMD-3.2 | (c) DCMD dropped when Writable=false; DCMDEnabled irrelevant | Unit |
 | TWA-DCMD-3.2 | (d) DCMD deny audit has source=dcmd and no role | Unit |
+| TWA-DCMD-3.2 | (e) DCMD value coerced to the declared type (Double 2.5 → float32 for Float) | Unit |
+| TWA-DCMD-3.2 | (f) Out-of-range / bool / string value for a numeric tag denied with reason=invalid value, no write | Unit |
 | TWA-AUDIT-4.1 | Denied HTTP write produces audit event with source=http | Unit |
 | TWA-AUDIT-4.1 | Allowed HTTP write produces audit event with source=http | Unit |
 | TWA-AUDIT-4.1 | Denied DCMD write produces audit event with source=dcmd and no role | Unit |

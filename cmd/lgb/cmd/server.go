@@ -9,6 +9,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -566,17 +568,23 @@ func mqttOptions(m config.MQTTSection, keepAlive time.Duration, logger *slog.Log
 	}
 }
 
+// historianDropLogInterval bounds how often historian drops are logged.
+const historianDropLogInterval = 10 * time.Second
+
 // buildTagCallback creates a fan-out callback that sends tag updates to both
 // the historian writer and the sparkplug edge node.
 // R70-1/R70-4: Quality is propagated from the plc.TagUpdate to all consumers.
 // #60: with historianCOV the historian keeps its own change-on-value filter,
 // independent of the Sparkplug edge node's filter; historianHeartbeat > 0
 // re-stores unchanged values after that interval (#122).
+// #123: historian enqueue never blocks; when its buffer is full the sample is
+// dropped (not recorded as delivered by the COV filter) and logged, rate-limited.
 func buildTagCallback(ctx context.Context, hw *historian.Writer, historianCOV bool, historianHeartbeat time.Duration, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
 	var histFilter *cov.Filter
 	if historianCOV {
 		histFilter = cov.NewHeartbeatFilter(historianHeartbeat)
 	}
+	var lastDropLog atomic.Int64
 	return func(u plc.TagUpdate) {
 		if hw != nil {
 			sample := cov.Sample{Key: u.PLCName + "/" + u.Tag, Value: u.Value, Quality: u.Quality, Deadband: u.Deadband}
@@ -588,7 +596,15 @@ func buildTagCallback(ctx context.Context, hw *historian.Writer, historianCOV bo
 					Timestamp: u.Timestamp,
 					Quality:   u.Quality,
 				})
-				if err != nil {
+				if errors.Is(err, historian.ErrBufferFull) {
+					// Rate-limited: a stalled store drops every sample of every scan.
+					now, last := time.Now().UnixNano(), lastDropLog.Load()
+					if now-last >= int64(historianDropLogInterval) && lastDropLog.CompareAndSwap(last, now) {
+						logger.Warn("historian buffer full, dropping samples",
+							slog.String("component", "historian"),
+							slog.Uint64("dropped_total", hw.Dropped()))
+					}
+				} else if err != nil {
 					logger.Warn("historian enqueue error",
 						slog.String("component", "historian"),
 						slog.String("tag", u.Tag),

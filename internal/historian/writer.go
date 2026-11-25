@@ -2,8 +2,14 @@ package historian
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"time"
 )
+
+// ErrBufferFull is returned by Enqueue when the writer buffer is full: the
+// sample is dropped instead of blocking the caller (the PLC scan, #123).
+var ErrBufferFull = errors.New("historian: writer buffer full, sample dropped")
 
 // defaultFlushTimeout bounds the final flush performed while the writer shuts
 // down. The final flush runs with a context detached from the caller's, so it
@@ -25,6 +31,8 @@ type Writer struct {
 	ch    chan Sample
 	done  chan struct{}
 	errCh chan error
+	// dropped counts samples rejected by Enqueue because the buffer was full.
+	dropped atomic.Uint64
 }
 
 func NewWriter(store *Store, opts WriterOptions) *Writer {
@@ -47,13 +55,26 @@ func (w *Writer) Start(ctx context.Context) {
 	go w.run(ctx)
 }
 
+// Enqueue buffers a sample for the background writer without ever blocking:
+// when the buffer is full (slow or stalled store) the sample is dropped,
+// counted in Dropped and ErrBufferFull is returned (#123).
 func (w *Writer) Enqueue(ctx context.Context, sample Sample) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case w.ch <- sample:
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		w.dropped.Add(1)
+		return ErrBufferFull
 	}
+}
+
+// Dropped returns the total number of samples Enqueue dropped because the
+// buffer was full.
+func (w *Writer) Dropped() uint64 {
+	return w.dropped.Load()
 }
 
 func (w *Writer) Stop(ctx context.Context) error {

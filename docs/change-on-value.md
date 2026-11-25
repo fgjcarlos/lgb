@@ -19,6 +19,15 @@ WebSocket client's buffer is full, the update it missed is offered again on the
 next scan, while other clients are unaffected. A dropped delivery is never
 recorded as delivered.
 
+The historian follows the same drop policy: samples go through a bounded
+in-memory buffer (1024 samples) to a background writer. If the store is slow or
+stalled (disk stall, long SQLite write, a backup's `VACUUM INTO`) and the buffer
+fills up, new samples are dropped instead of blocking PLC scanning or the other
+consumers. Drops are counted and logged as `historian buffer full, dropping
+samples` (at most once every 10 seconds, with the running `dropped_total`). With
+`changeOnValue.historian` on, a dropped sample is offered again on the next scan;
+with it off, the samples of the stalled period are lost.
+
 An update is always delivered when:
 
 - it is the first value the consumer sees for that tag;

@@ -213,10 +213,25 @@ type Deadband struct {
 // ChangeOnValueSection enables change-on-value filtering per consumer (#60).
 // Each enabled consumer keeps its own filter, so one consumer never affects
 // what another receives.
+//
+// The optional <consumer>Heartbeat (#122) is a Go duration: when set, that
+// consumer also receives an unchanged value if nothing was delivered for the
+// tag within the interval. Empty (the default) disables it.
 type ChangeOnValueSection struct {
 	Sparkplug bool `koanf:"sparkplug"` // DDATA only on change; default true
 	Realtime  bool `koanf:"realtime"`  // WebSocket tag feed only on change; default true
 	Historian bool `koanf:"historian"` // historian samples only on change; default false
+
+	SparkplugHeartbeat string `koanf:"sparkplugHeartbeat"`
+	RealtimeHeartbeat  string `koanf:"realtimeHeartbeat"`
+	HistorianHeartbeat string `koanf:"historianHeartbeat"`
+}
+
+// HeartbeatInterval parses a validated changeOnValue heartbeat; empty (disabled)
+// or invalid yields 0.
+func HeartbeatInterval(s string) time.Duration {
+	d, _ := time.ParseDuration(s)
+	return max(d, 0)
 }
 
 // Validate checks the loaded config against schema constraints.
@@ -320,6 +335,22 @@ func (c *Config) Validate() error {
 			violations = append(violations, errorf("backup.interval: %q is not a valid Go duration: %w", c.Backup.Interval, ErrConfigInvalid))
 		} else if d <= 0 {
 			violations = append(violations, errorf("backup.interval: must be positive, got %q: %w", c.Backup.Interval, ErrConfigInvalid))
+		}
+	}
+
+	// changeOnValue.<consumer>Heartbeat must be a positive duration when set (#122).
+	for _, hb := range []struct{ field, val string }{
+		{"sparkplugHeartbeat", c.ChangeOnValue.SparkplugHeartbeat},
+		{"realtimeHeartbeat", c.ChangeOnValue.RealtimeHeartbeat},
+		{"historianHeartbeat", c.ChangeOnValue.HistorianHeartbeat},
+	} {
+		if hb.val == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(hb.val); err != nil {
+			violations = append(violations, errorf("changeOnValue.%s: %q is not a valid Go duration: %w", hb.field, hb.val, ErrConfigInvalid))
+		} else if d <= 0 {
+			violations = append(violations, errorf("changeOnValue.%s: must be positive, got %q: %w", hb.field, hb.val, ErrConfigInvalid))
 		}
 	}
 

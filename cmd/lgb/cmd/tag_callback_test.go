@@ -13,35 +13,66 @@ import (
 	"github.com/fgjcarlos/lgb/internal/testutil"
 )
 
-// runTagCallback feeds values through buildTagCallback and returns what the
-// historian stored and what the Sparkplug handler received.
-func runTagCallback(t *testing.T, historianCOV bool, values []float64, db cov.Deadband) (stored []any, sp []sparkplug.TagUpdate) {
+// startTagCallback builds the callback under test; collect stops the
+// historian writer and returns what it stored and what Sparkplug received.
+func startTagCallback(t *testing.T, historianCOV bool, heartbeat time.Duration) (cb plc.TagCallback, collect func() ([]any, []sparkplug.TagUpdate)) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "h.db"), historian.Options{})
 	if err != nil {
 		t.Fatalf("historian.Open: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() { store.Close() })
 	hw := historian.NewWriter(store, historian.WriterOptions{})
 	hw.Start(ctx)
 
-	cb := buildTagCallback(ctx, hw, historianCOV, func(u sparkplug.TagUpdate) { sp = append(sp, u) }, testutil.NewLogger(t))
+	var sp []sparkplug.TagUpdate
+	cb = buildTagCallback(ctx, hw, historianCOV, heartbeat, func(u sparkplug.TagUpdate) { sp = append(sp, u) }, testutil.NewLogger(t))
+	return cb, func() ([]any, []sparkplug.TagUpdate) {
+		if err := hw.Stop(ctx); err != nil {
+			t.Fatalf("writer Stop: %v", err)
+		}
+		samples, err := store.Query(ctx, historian.Query{PLCName: "p1", Tag: "Speed", From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Hour), Limit: 100})
+		if err != nil {
+			t.Fatalf("Query: %v", err)
+		}
+		var stored []any
+		for _, s := range samples {
+			stored = append(stored, s.Value)
+		}
+		return stored, sp
+	}
+}
+
+func speedUpdate(v float64, ts time.Time, db cov.Deadband) plc.TagUpdate {
+	return plc.TagUpdate{PLCName: "p1", Tag: "Speed", Value: v, Timestamp: ts, Quality: "good", Deadband: db}
+}
+
+// runTagCallback feeds values through buildTagCallback and returns what the
+// historian stored and what the Sparkplug handler received.
+func runTagCallback(t *testing.T, historianCOV bool, values []float64, db cov.Deadband) (stored []any, sp []sparkplug.TagUpdate) {
+	t.Helper()
+	cb, collect := startTagCallback(t, historianCOV, 0)
 	base := time.Now()
 	for i, v := range values {
-		cb(plc.TagUpdate{PLCName: "p1", Tag: "Speed", Value: v, Timestamp: base.Add(time.Duration(i) * time.Millisecond), Quality: "good", Deadband: db})
+		cb(speedUpdate(v, base.Add(time.Duration(i)*time.Millisecond), db))
 	}
-	if err := hw.Stop(ctx); err != nil {
-		t.Fatalf("writer Stop: %v", err)
+	return collect()
+}
+
+// TestBuildTagCallback_HistorianHeartbeat verifies #122: with
+// changeOnValue.historianHeartbeat a constant value is stored again once the
+// interval elapsed, not before.
+func TestBuildTagCallback_HistorianHeartbeat(t *testing.T) {
+	const heartbeat = 200 * time.Millisecond
+	cb, collect := startTagCallback(t, true, heartbeat)
+	cb(speedUpdate(10, time.Now(), cov.Deadband{}))
+	cb(speedUpdate(10, time.Now().Add(time.Millisecond), cov.Deadband{})) // within the interval
+	time.Sleep(heartbeat + 50*time.Millisecond)
+	cb(speedUpdate(10, time.Now(), cov.Deadband{}))
+	if stored, _ := collect(); len(stored) != 2 {
+		t.Fatalf("historian stored %v; want 2 samples (first and heartbeat)", stored)
 	}
-	samples, err := store.Query(ctx, historian.Query{PLCName: "p1", Tag: "Speed", From: base.Add(-time.Hour), To: base.Add(time.Hour), Limit: 100})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	for _, s := range samples {
-		stored = append(stored, s.Value)
-	}
-	return stored, sp
 }
 
 // TestBuildTagCallback_HistorianCOV verifies #60: with changeOnValue.historian

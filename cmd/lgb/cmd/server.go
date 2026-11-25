@@ -171,7 +171,7 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 		if h, ok := spNode.(interface{ HandleTagUpdate(sparkplug.TagUpdate) }); ok {
 			spHandler = h.HandleTagUpdate
 		}
-		tagCb = buildTagCallback(ctx, histWriter, cfg.ChangeOnValue.Historian, spHandler, logger)
+		tagCb = buildTagCallback(ctx, histWriter, cfg.ChangeOnValue.Historian, config.HeartbeatInterval(cfg.ChangeOnValue.HistorianHeartbeat), spHandler, logger)
 	}
 
 	// Open the PLC store (plcs.db). Seeds from YAML on first boot; store wins thereafter.
@@ -524,7 +524,8 @@ func defaultSparkplugNodeFactory(cfg *config.Config) server.SparkplugNode {
 		Devices: devices,
 		Log:     slog.Default(),
 		// #60: DDATA only on change, per tag deadband; reset on every birth.
-		ChangeOnValue: cfg.ChangeOnValue.Sparkplug,
+		ChangeOnValue:          cfg.ChangeOnValue.Sparkplug,
+		ChangeOnValueHeartbeat: config.HeartbeatInterval(cfg.ChangeOnValue.SparkplugHeartbeat), // #122
 	})
 }
 
@@ -569,11 +570,12 @@ func mqttOptions(m config.MQTTSection, keepAlive time.Duration, logger *slog.Log
 // the historian writer and the sparkplug edge node.
 // R70-1/R70-4: Quality is propagated from the plc.TagUpdate to all consumers.
 // #60: with historianCOV the historian keeps its own change-on-value filter,
-// independent of the Sparkplug edge node's filter.
-func buildTagCallback(ctx context.Context, hw *historian.Writer, historianCOV bool, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
+// independent of the Sparkplug edge node's filter; historianHeartbeat > 0
+// re-stores unchanged values after that interval (#122).
+func buildTagCallback(ctx context.Context, hw *historian.Writer, historianCOV bool, historianHeartbeat time.Duration, spHandler func(sparkplug.TagUpdate), logger *slog.Logger) plc.TagCallback {
 	var histFilter *cov.Filter
 	if historianCOV {
-		histFilter = cov.NewFilter()
+		histFilter = cov.NewHeartbeatFilter(historianHeartbeat)
 	}
 	return func(u plc.TagUpdate) {
 		if hw != nil {

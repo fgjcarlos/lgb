@@ -31,6 +31,32 @@ state resets when it (re)subscribes.
 
 OPC UA is not affected: its clients poll or use their own monitored-item deadbands.
 
+## Heartbeat
+
+With COV a tag that stays constant is never re-sent, so a consumer cannot tell
+"unchanged" from "stale/lost". Each consumer accepts an optional heartbeat: even
+when the value did not change beyond the deadband, the current value is delivered
+if nothing was delivered for that tag within the interval.
+
+```yaml
+changeOnValue:
+  sparkplugHeartbeat: 60s   # re-publish unchanged tags as DDATA at least every 60s
+  realtimeHeartbeat: 30s    # per WebSocket client
+  historianHeartbeat: 15m   # at least one historian sample per tag every 15m
+```
+
+- Disabled by default (empty). When set it must be a positive Go duration
+  (`30s`, `5m`, `1h`); `lgb config validate` rejects anything else.
+- It only applies to a consumer with change-on-value enabled; without COV that
+  consumer already receives every scan.
+- It lives in each consumer's own COV state (no global timer): a heartbeat
+  delivery resets the interval exactly like a change, a dropped delivery does not
+  and is retried on the next scan.
+- It is evaluated when a scan offers the tag, so a heartbeat fires on the first
+  scan at or after the interval (resolution = the PLC's `scanRate`).
+- Like the other settings, it can be set from the environment, e.g.
+  `LGB_CHANGEONVALUE_SPARKPLUGHEARTBEAT=60s`.
+
 ## Deadband
 
 Numeric tags accept an optional deadband:

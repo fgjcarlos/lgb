@@ -5,12 +5,17 @@
 // each key and suppresses updates that do not differ from it by more than the
 // tag's deadband. Because each consumer owns its own Filter, one consumer's
 // state or dropped deliveries never affect what another consumer receives.
+//
+// An optional heartbeat (#122) re-delivers an unchanged value when nothing was
+// delivered for that key within the interval. It is evaluated on Offer, so its
+// resolution is the rate at which samples are offered (the scan rate).
 package cov
 
 import (
 	"math"
 	"reflect"
 	"sync"
+	"time"
 )
 
 // Deadband is the optional numeric deadband of a tag. Zero values disable the
@@ -40,22 +45,31 @@ type Sample struct {
 type entry struct {
 	value   any
 	quality string
+	at      time.Time // when it was delivered
 }
 
 // Filter is a per-consumer change-on-value filter. It is safe for concurrent
 // use. A nil *Filter means COV is disabled: every sample is delivered.
 type Filter struct {
-	mu   sync.Mutex
-	last map[string]entry
+	mu        sync.Mutex
+	last      map[string]entry
+	heartbeat time.Duration // 0 = no heartbeat
+	now       func() time.Time
 }
 
-// NewFilter returns an empty Filter.
-func NewFilter() *Filter {
-	return &Filter{last: make(map[string]entry)}
+// NewFilter returns an empty Filter without heartbeat.
+func NewFilter() *Filter { return NewHeartbeatFilter(0) }
+
+// NewHeartbeatFilter returns an empty Filter that also delivers an unchanged
+// value when nothing was delivered for its key within heartbeat. A heartbeat
+// <= 0 disables it.
+func NewHeartbeatFilter(heartbeat time.Duration) *Filter {
+	return &Filter{last: make(map[string]entry), heartbeat: heartbeat, now: time.Now}
 }
 
-// Offer calls deliver when s differs from the last value delivered for s.Key
-// and returns the delivery result. The sample becomes the new reference only
+// Offer calls deliver when s differs from the last value delivered for s.Key,
+// or when the heartbeat interval elapsed since that delivery, and returns the
+// delivery result. The sample becomes the new reference only
 // when deliver returns true, so a dropped delivery is retried on the next
 // offer. deliver runs under the filter lock: it must not block or call back
 // into the filter.
@@ -68,13 +82,14 @@ func (f *Filter) Offer(s Sample, deliver func() bool) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if prev, ok := f.last[s.Key]; ok && !changed(prev, s.Value, quality, s.Deadband) {
+	now := f.now()
+	if prev, ok := f.last[s.Key]; ok && !changed(prev, s.Value, quality, s.Deadband) && !f.heartbeatDue(prev, now) {
 		return false
 	}
 	if !deliver() {
 		return false
 	}
-	f.last[s.Key] = entry{value: s.Value, quality: quality}
+	f.last[s.Key] = entry{value: s.Value, quality: quality, at: now}
 	return true
 }
 
@@ -87,6 +102,10 @@ func (f *Filter) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	clear(f.last)
+}
+
+func (f *Filter) heartbeatDue(prev entry, now time.Time) bool {
+	return f.heartbeat > 0 && now.Sub(prev.at) >= f.heartbeat
 }
 
 func normQuality(q string) string {

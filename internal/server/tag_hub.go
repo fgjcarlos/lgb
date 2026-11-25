@@ -2,6 +2,7 @@ package server
 
 import (
 	"sync"
+	"time"
 
 	"github.com/fgjcarlos/lgb/internal/cov"
 	"github.com/fgjcarlos/lgb/internal/plc"
@@ -23,11 +24,12 @@ type tagSubscriber struct {
 
 // newTagSubscriber returns a subscriber with a buffer of size updates. With
 // changeOnValue it gets its own COV filter, so its deadband state and dropped
-// updates never affect other subscribers.
-func newTagSubscriber(buffer int, changeOnValue bool) *tagSubscriber {
+// updates never affect other subscribers. heartbeat > 0 re-sends unchanged
+// values after that interval (#122).
+func newTagSubscriber(buffer int, changeOnValue bool, heartbeat time.Duration) *tagSubscriber {
 	sub := &tagSubscriber{ch: make(chan plc.TagUpdate, buffer)}
 	if changeOnValue {
-		sub.cov = cov.NewFilter()
+		sub.cov = cov.NewHeartbeatFilter(heartbeat)
 	}
 	return sub
 }

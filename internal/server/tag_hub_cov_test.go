@@ -43,7 +43,7 @@ func assertValues(t *testing.T, name string, got []any, want ...any) {
 // receive updates whose value did not change beyond the deadband.
 func TestTagHub_COV_SuppressesUnchanged(t *testing.T) {
 	h := newTagHub()
-	sub := newTagSubscriber(16, true)
+	sub := newTagSubscriber(16, true, 0)
 	sub.setFilter("", "")
 	h.register(sub)
 
@@ -57,7 +57,7 @@ func TestTagHub_COV_SuppressesUnchanged(t *testing.T) {
 // when realtime change-on-value is off.
 func TestTagHub_COV_Disabled_ReceivesEveryUpdate(t *testing.T) {
 	h := newTagHub()
-	sub := newTagSubscriber(16, false)
+	sub := newTagSubscriber(16, false, 0)
 	sub.setFilter("", "")
 	h.register(sub)
 
@@ -72,8 +72,8 @@ func TestTagHub_COV_Disabled_ReceivesEveryUpdate(t *testing.T) {
 // the update it missed is re-delivered once it has room.
 func TestTagHub_COV_PerSubscriberIndependence(t *testing.T) {
 	h := newTagHub()
-	slow := newTagSubscriber(1, true)
-	fast := newTagSubscriber(16, true)
+	slow := newTagSubscriber(1, true, 0)
+	fast := newTagSubscriber(16, true, 0)
 	slow.setFilter("", "")
 	fast.setFilter("", "")
 	h.register(slow)
@@ -93,7 +93,7 @@ func TestTagHub_COV_PerSubscriberIndependence(t *testing.T) {
 // filter resets COV, so the client gets current values again.
 func TestTagHub_COV_ResubscribeResends(t *testing.T) {
 	h := newTagHub()
-	sub := newTagSubscriber(16, true)
+	sub := newTagSubscriber(16, true, 0)
 	sub.setFilter("packaging", "")
 	h.register(sub)
 
@@ -137,4 +137,20 @@ func TestServer_TagsWebSocket_ChangeOnValue(t *testing.T) {
 			t.Fatalf("got %#v; want tag_update %v (duplicates must be suppressed)", msg, want)
 		}
 	}
+}
+
+// TestTagHub_COV_Heartbeat verifies #122: with changeOnValue.realtimeHeartbeat
+// a subscriber receives an unchanged value again once the interval elapsed.
+func TestTagHub_COV_Heartbeat(t *testing.T) {
+	const heartbeat = 200 * time.Millisecond
+	h := newTagHub()
+	sub := newTagSubscriber(16, true, heartbeat)
+	sub.setFilter("", "")
+	h.register(sub)
+
+	h.publish(speed(5))
+	h.publish(speed(5)) // within the interval
+	time.Sleep(heartbeat + 50*time.Millisecond)
+	h.publish(speed(5))
+	assertValues(t, "subscriber", drain(sub.ch), 5.0, 5.0)
 }

@@ -202,22 +202,22 @@ func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value 
 	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username, r.RemoteAddr)
 }
 
-// declaredTagType returns the declared Sparkplug type of plcName/tag, or ""
-// when the store is absent or the tag cannot be found.
-func (s *Server) declaredTagType(ctx context.Context, plcName, tag string) string {
+// declaredTagType returns the declared Sparkplug type of plcName/tag; ok is
+// false when the store is absent, the lookup fails or the tag is not declared.
+func (s *Server) declaredTagType(ctx context.Context, plcName, tag string) (typ string, ok bool) {
 	if s.plcStore == nil {
-		return ""
+		return "", false
 	}
 	plc, err := s.plcStore.Get(ctx, plcName)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	for _, t := range plc.Tags {
 		if t.Name == tag {
-			return t.Type
+			return t.Type, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // SparkplugCommandHandler returns a sparkplug.CommandHandler closure that
@@ -245,8 +245,13 @@ func (s *Server) SparkplugCommandHandler() sparkplug.CommandHandler {
 		}
 		// The decoded value carries the sender's metric type; the driver picks
 		// the on-wire CIP type from the Go type, so coerce to the tag's declared
-		// type. An unknown type (lookup failed) is rejected by Coerce: fail closed.
-		val, err := tagvalue.Coerce(value, s.declaredTagType(ctx, plcName, tag))
+		// type. Without a declared type, fail closed.
+		declaredType, ok := s.declaredTagType(ctx, plcName, tag)
+		if !ok {
+			s.emitWriteAuditDetail(plcName, tag, value, "deny", "tag lookup failed", "dcmd", "", dcmdAuditIP)
+			return
+		}
+		val, err := tagvalue.Coerce(value, declaredType)
 		if err != nil {
 			s.emitWriteAuditDetail(plcName, tag, value, "deny", "invalid value", "dcmd", "", dcmdAuditIP)
 			return

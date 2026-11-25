@@ -82,6 +82,8 @@ func newDCMDTestEnv(t *testing.T) *dcmdTestEnv {
 			{Name: "Feed.Rate", Type: "Float", Writable: true, DCMDEnabled: true},
 			{Name: "Emergency.Stop", Type: "Boolean", Writable: false, DCMDEnabled: true},
 			{Name: "NoCommand.Tag", Type: "Float", Writable: true, DCMDEnabled: false},
+			{Name: "Speed.Set", Type: "Int16", Writable: true, DCMDEnabled: true},
+			{Name: "Recipe.Name", Type: "String", Writable: true, DCMDEnabled: true},
 		},
 	}); err != nil {
 		t.Fatalf("seed PLC: %v", err)
@@ -411,17 +413,23 @@ func TestDCMDHandler_CoercesCompatibleValue(t *testing.T) {
 // audit with source=dcmd and reason=invalid value. (TWA-DCMD-3.2 f, #125)
 func TestDCMDHandler_DeniesIncompatibleValue(t *testing.T) {
 	t.Parallel()
-	cases := map[string]any{
-		"out of range":     float64(1e300),
-		"bool to numeric":  true,
-		"string to number": "3.0",
+	cases := map[string]struct {
+		tag   string
+		value any
+	}{
+		"out of range":            {"Feed.Rate", float64(1e300)},
+		"bool to numeric":         {"Feed.Rate", true},
+		"string to number":        {"Feed.Rate", "3.0"},
+		"non-integral to integer": {"Speed.Set", float64(2.5)},
+		"integer out of range":    {"Speed.Set", int32(70000)},
+		"number to string":        {"Recipe.Name", float64(1)},
 	}
-	for name, value := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			env := newDCMDTestEnv(t)
 
-			env.srv.SparkplugCommandHandler()("Silo-1", "Feed.Rate", value)
+			env.srv.SparkplugCommandHandler()("Silo-1", tc.tag, tc.value)
 
 			if n := env.mgr.writeCount(); n != 0 {
 				t.Fatalf("WriteTag called %d times; want 0", n)
@@ -440,5 +448,75 @@ func TestDCMDHandler_DeniesIncompatibleValue(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDCMDHandler_CoercesIntegerAndString verifies coercion for integer and
+// String tags: an Int32 100 reaches an Int16 tag as int16(100) and a string is
+// written unchanged to a String tag. (TWA-DCMD-3.2 e)
+func TestDCMDHandler_CoercesIntegerAndString(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		tag   string
+		value any
+		want  any
+	}{
+		"Int32 to Int16":   {"Speed.Set", int32(100), int16(100)},
+		"string to String": {"Recipe.Name", "batch-7", "batch-7"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := newDCMDTestEnv(t)
+
+			env.srv.SparkplugCommandHandler()("Silo-1", tc.tag, tc.value)
+
+			if env.mgr.writeCount() != 1 {
+				t.Fatalf("expected 1 WriteTag call, got %d", env.mgr.writeCount())
+			}
+			env.mgr.mu.Lock()
+			got := env.mgr.writeCalls[0].Val
+			env.mgr.mu.Unlock()
+			if got != tc.want {
+				t.Fatalf("WriteTag value = %#v (%T); want %#v (%T)", got, got, tc.want, tc.want)
+			}
+		})
+	}
+}
+
+// TestDCMDHandler_DeniesWhenTypeLookupFails verifies that when the declared
+// type cannot be looked up (no PLC store wired), the command is not written
+// and is audited as a deny with reason=tag lookup failed — distinct from a bad
+// sender value. (TWA-DCMD-3.2 g)
+func TestDCMDHandler_DeniesWhenTypeLookupFails(t *testing.T) {
+	t.Parallel()
+	env := newDCMDTestEnv(t)
+	auditLogger, err := auth.OpenAuditLogger(env.auditDir)
+	if err != nil {
+		t.Fatalf("audit logger: %v", err)
+	}
+	t.Cleanup(func() { _ = auditLogger.Close() })
+	// The guard still authorizes from the store, but the server has no store
+	// to read the declared type from.
+	srv := New(minimalCfgForDCMD(t), nil, nil, Opts{
+		PLCMgr:     env.mgr,
+		ACLStore:   env.aclStore,
+		WriteGuard: writeguard.NewGuard(&plcstoreTagReader{store: env.plcStore}, env.aclStore),
+		AuditLog:   auditLogger,
+	})
+
+	srv.SparkplugCommandHandler()("Silo-1", "Feed.Rate", float32(3))
+
+	if n := env.mgr.writeCount(); n != 0 {
+		t.Fatalf("WriteTag called %d times; want 0", n)
+	}
+	events := readAuditEventsDCMD(t, env.auditDir)
+	if len(events) != 1 {
+		t.Fatalf("got %d audit events; want 1", len(events))
+	}
+	for _, want := range []string{"outcome=deny", "source=dcmd", "reason=tag lookup failed"} {
+		if !strings.Contains(events[0].Detail, want) {
+			t.Errorf("Detail = %q; want %s", events[0].Detail, want)
+		}
 	}
 }

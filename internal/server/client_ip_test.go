@@ -9,7 +9,7 @@ import (
 
 // Trusted-proxy client IP resolution tests (#137).
 
-func TestClientAddr(t *testing.T) {
+func TestResolveClientAddr(t *testing.T) {
 	trusted := []netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/8"),
 		netip.MustParsePrefix("fd00::/8"),
@@ -53,24 +53,9 @@ func TestClientAddr(t *testing.T) {
 			if tc.forwarded != "" {
 				r.Header.Set("Forwarded", tc.forwarded)
 			}
-			if got := clientAddr(r, tc.trusted); got != tc.want {
-				t.Errorf("clientAddr = %q, want %q", got, tc.want)
+			if got := resolveClientAddr(r, tc.trusted); got != tc.want {
+				t.Errorf("resolveClientAddr = %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestLoginIPKey(t *testing.T) {
-	cases := map[string]string{
-		"192.0.2.1:1000":    "192.0.2.1",
-		"192.0.2.1":         "192.0.2.1",
-		"[2001:db8::1]:443": "2001:db8::/64",
-		"2001:db8::ffff:1":  "2001:db8::/64",
-		"2001:db8:0:1::1":   "2001:db8:0:1::/64",
-	}
-	for in, want := range cases {
-		if got := loginIPKey(in); got != want {
-			t.Errorf("loginIPKey(%q) = %q, want %q", in, got, want)
-		}
 	}
 }

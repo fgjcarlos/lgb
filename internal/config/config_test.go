@@ -938,6 +938,19 @@ func TestServerTrustedProxies(t *testing.T) {
 		t.Fatalf("writing proxies.yaml: %v", err)
 	}
 
+	yp := filepath.Join(dir, "proxies-yaml.yaml")
+	withProxies := content + "  trustedProxies:\n    - \"10.0.0.0/8\"\n    - \"fd00::/8\"\n"
+	if err := os.WriteFile(yp, []byte(withProxies), 0600); err != nil {
+		t.Fatalf("writing proxies-yaml.yaml: %v", err)
+	}
+	cfgY, err := config.Load(yp)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got := strings.Join(cfgY.Server.TrustedProxies, "|"); got != "10.0.0.0/8|fd00::/8" {
+		t.Errorf("YAML TrustedProxies = %q; want %q", got, "10.0.0.0/8|fd00::/8")
+	}
+
 	cfg, err := config.Load(y)
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)

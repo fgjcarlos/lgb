@@ -20,14 +20,14 @@ func parseTrustedProxies(cidrs []string) []netip.Prefix {
 	return out
 }
 
-// clientAddr returns the client address used for rate limiting and audit
-// events. Unless the TCP peer is a trusted proxy it returns r.RemoteAddr
-// unchanged, so forwarding headers from anyone else are ignored. From a
+// resolveClientAddr returns the client address used for rate limiting and
+// audit events. Unless the TCP peer is a trusted proxy it returns r.RemoteAddr
+// unchanged ("host:port"), so forwarding headers from anyone else are ignored. From a
 // trusted peer it walks X-Forwarded-For (or Forwarded when XFF is absent)
-// right to left and returns the first untrusted hop. An unparseable hop stops
+// right to left and returns the first untrusted hop as a bare IP (no port). An unparseable hop stops
 // the walk at the last trusted address, so it is never attacker-chosen; if
 // every hop is trusted the left-most one is the client.
-func clientAddr(r *http.Request, trusted []netip.Prefix) string {
+func resolveClientAddr(r *http.Request, trusted []netip.Prefix) string {
 	peer, ok := parseHop(r.RemoteAddr)
 	if !ok || !isTrusted(peer, trusted) {
 		return r.RemoteAddr
@@ -87,18 +87,22 @@ func forwardedHops(h http.Header) []string {
 // parseHop parses "ip", "ip:port", "[ipv6]" or "[ipv6]:port". IPv4-mapped
 // IPv6 addresses are unmapped so they match IPv4 CIDRs.
 func parseHop(s string) (netip.Addr, bool) {
-	ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(s, "["), "]"))
-	if ap, perr := netip.ParseAddrPort(s); perr == nil {
-		ip, err = ap.Addr(), nil
+	var ip netip.Addr
+	if ap, err := netip.ParseAddrPort(s); err == nil {
+		ip = ap.Addr()
+	} else if a, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(s, "["), "]")); err == nil {
+		ip = a
+	} else {
+		return netip.Addr{}, false
 	}
-	if err != nil || ip.Zone() != "" { // zoned addresses never match a CIDR
+	if ip.Zone() != "" { // zoned addresses never match a CIDR
 		return netip.Addr{}, false
 	}
 	return ip.Unmap(), true
 }
 
 // clientAddr is the request's client address under this server's
-// trusted-proxy configuration.
+// trusted-proxy configuration; see resolveClientAddr for its format.
 func (s *Server) clientAddr(r *http.Request) string {
-	return clientAddr(r, s.trustedProxies)
+	return resolveClientAddr(r, s.trustedProxies)
 }

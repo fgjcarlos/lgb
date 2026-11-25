@@ -228,6 +228,21 @@ func TestLoginLimit_IPv6GroupedBy64(t *testing.T) {
 	expectStatus(t, loginFrom(srv, "[2001:db8:0:1::1]:1", "alice", "secret"), http.StatusOK, "other /64")
 }
 
+func TestLoginIPKey(t *testing.T) {
+	cases := map[string]string{
+		"192.0.2.1:1000":    "192.0.2.1",
+		"192.0.2.1":         "192.0.2.1",
+		"[2001:db8::1]:443": "2001:db8::/64",
+		"2001:db8::ffff:1":  "2001:db8::/64",
+		"2001:db8:0:1::1":   "2001:db8:0:1::/64",
+	}
+	for in, want := range cases {
+		if got := loginIPKey(in); got != want {
+			t.Errorf("loginIPKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // #137: with no trusted proxies, a spoofed X-Forwarded-For does not escape the
 // peer's bucket; behind a trusted proxy each forwarded client gets its own.
 func TestLoginLimit_TrustedProxy(t *testing.T) {

@@ -10,8 +10,6 @@ import (
 	"github.com/fgjcarlos/lgb/internal/backup"
 )
 
-// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
-
 func newRestoreManager(t *testing.T, failCmd string) (*backup.Manager, string) {
 	t.Helper()
 	logPath := filepath.Join(t.TempDir(), "calls.log")

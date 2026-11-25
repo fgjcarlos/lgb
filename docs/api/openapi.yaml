@@ -616,8 +616,8 @@ paths:
         15-minute window ends. Answers 204 whether or not the username exists
         or is locked. Every unlock is audited as `login.unlock` with the acting
         admin, the target username in the detail, and the source address; if
-        the audit event cannot be written the unlock is refused with 500 and
-        the lockout stays. Does not reset the per-IP rate limit. Lockout
+        the audit event cannot be written (or no audit log is configured) the
+        unlock is refused with 500 and the lockout stays. Does not reset the per-IP rate limit. Lockout
         state is in-memory and per process. Request bodies over 4 KiB are
         rejected with 400.
       requestBody:
@@ -642,7 +642,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
-          description: The audit event could not be written; nothing was unlocked.
+          description: The audit event could not be written (or no audit log is configured); nothing was unlocked.
           content:
             application/json:
               schema:

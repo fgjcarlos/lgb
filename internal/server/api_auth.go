@@ -127,7 +127,8 @@ func (s *Server) handleUnlockLogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "username is required")
 		return
 	}
-	// Audit first and fail closed: an unlock that cannot be recorded does not happen.
+	// Audit first and fail closed: an unlock that cannot be recorded does not
+	// happen. A nil audit log counts as unrecordable; the server always wires one.
 	if s.auditLog == nil || s.auditLog.Log(auth.AuditEvent{
 		Action:   "login.unlock",
 		Username: actorFromContext(r),

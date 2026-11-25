@@ -563,8 +563,11 @@ paths:
         Brute-force protection: at most 20 attempts per minute per client IP
         (per /64 for IPv6), and 5 consecutive failed attempts lock the
         username for 15 minutes (known and unknown usernames alike). Both limits answer 429 with a
-        Retry-After header. Failed attempts are audited as `login_failed`
-        with the username and source address. Request bodies over 4 KiB are
+        Retry-After header. Invalid credentials (401) and username lockouts
+        (429) are audited as `login_failed` with the username (first 256
+        bytes) and source address; IP-limited (429) and malformed (400)
+        requests are not audited. A credential store fault answers 500 and
+        does not count against the username. Request bodies over 4 KiB are
         rejected with 400. An admin can lift a username lockout early with
         `POST /api/auth/unlock`.
       security: []
@@ -602,6 +605,12 @@ paths:
               description: Seconds until another attempt may succeed.
               schema:
                 type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Credentials could not be verified (store fault).
           content:
             application/json:
               schema:

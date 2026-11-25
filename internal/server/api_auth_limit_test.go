@@ -347,3 +347,119 @@ func TestLoginLimit_UsernameKeyBounded(t *testing.T) {
 		}
 	}
 }
+
+// #140: a store fault (here a cancelled request context) is not a failed
+// login: it answers 500, is not audited, and does not consume the budget.
+func TestLoginLimit_StoreErrorNotCountedAsFailure(t *testing.T) {
+	srv, _ := newLimitTestServer(t)
+	dir := t.TempDir()
+	al, err := auth.OpenAuditLogger(dir)
+	if err != nil {
+		t.Fatalf("open audit logger: %v", err)
+	}
+	t.Cleanup(func() { al.Close() })
+	srv.auditLog = al
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 1; i <= loginMaxFailures+1; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"alice","password":"secret"}`)).WithContext(ctx)
+		req.RemoteAddr = "192.0.2.1:1000"
+		srv.handleLogin(rec, req)
+		expectStatus(t, rec, http.StatusInternalServerError, fmt.Sprintf("store error %d", i))
+		assertErrorCode(t, rec, "internal_error")
+	}
+	if events := readAuditEvents(t, filepath.Join(dir, "events.jsonl")); len(events) != 0 {
+		t.Fatalf("store errors audited: %+v", events)
+	}
+	for i := 1; i < loginMaxFailures; i++ {
+		expectStatus(t, loginFrom(srv, "192.0.2.1:1000", "alice", "wrong"), http.StatusUnauthorized, fmt.Sprintf("failure %d after recovery", i))
+	}
+	expectStatus(t, loginFrom(srv, "192.0.2.1:1000", "alice", "secret"), http.StatusOK, "not locked by store errors")
+}
+
+// #140: the audited username is bounded like the limiter key.
+func TestLoginLimit_AuditedUsernameTruncated(t *testing.T) {
+	srv, _ := newLimitTestServer(t)
+	dir := t.TempDir()
+	al, err := auth.OpenAuditLogger(dir)
+	if err != nil {
+		t.Fatalf("open audit logger: %v", err)
+	}
+	t.Cleanup(func() { al.Close() })
+	srv.auditLog = al
+
+	long := strings.Repeat("p", 3000)
+	expectStatus(t, loginFrom(srv, "192.0.2.1:1000", long, "x"), http.StatusUnauthorized, "long username")
+	events := readAuditEvents(t, filepath.Join(dir, "events.jsonl"))
+	if len(events) != 1 || events[0].Username != long[:loginMaxKeyLen] {
+		t.Fatalf("audited username len = %v, want one event of %d bytes", len(events), loginMaxKeyLen)
+	}
+}
+
+// #140: bodies over 4 KiB are rejected with 400 and not counted against the username.
+func TestLoginLimit_OversizedBodyRejected(t *testing.T) {
+	srv, _ := newLimitTestServer(t)
+	for i := 1; i <= loginMaxFailures; i++ {
+		rec := loginFrom(srv, "192.0.2.1:1000", "alice", strings.Repeat("x", 4<<10))
+		expectStatus(t, rec, http.StatusBadRequest, fmt.Sprintf("oversized %d", i))
+		assertErrorCode(t, rec, "bad_request")
+	}
+	expectStatus(t, loginFrom(srv, "192.0.2.1:1000", "alice", "secret"), http.StatusOK, "username not charged")
+}
+
+// #140: only credential and lockout failures are audited; IP-limited (429)
+// and malformed (400) requests are not, as documented in the OpenAPI spec.
+func TestLoginLimit_IPLimitedAndMalformedNotAudited(t *testing.T) {
+	srv, _ := newLimitTestServer(t)
+	dir := t.TempDir()
+	al, err := auth.OpenAuditLogger(dir)
+	if err != nil {
+		t.Fatalf("open audit logger: %v", err)
+	}
+	t.Cleanup(func() { al.Close() })
+	srv.auditLog = al
+
+	expectStatus(t, loginFrom(srv, "192.0.2.1:1000", "", "x"), http.StatusBadRequest, "malformed")
+	for i := 1; i < loginIPLimit; i++ {
+		expectStatus(t, loginFrom(srv, "192.0.2.1:1000", "alice", "secret"), http.StatusOK, fmt.Sprintf("attempt %d", i))
+	}
+	expectStatus(t, loginFrom(srv, "192.0.2.1:1000", "alice", "wrong"), http.StatusTooManyRequests, "IP limited")
+
+	for _, ev := range readAuditEvents(t, filepath.Join(dir, "events.jsonl")) {
+		if ev.Action == "login_failed" {
+			t.Fatalf("unexpected login_failed audit: %+v", ev)
+		}
+	}
+}
+
+// #140: with the prune sweep gated, stale entries are still evictable, so a
+// full table of expired lockouts admits a new key at once.
+func TestLoginLimit_FullTableEvictsStale(t *testing.T) {
+	l := newLoginLimiter()
+	clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	l.now = clock.now
+	for i := 0; i < loginMaxKeys; i++ {
+		l.users.m[fmt.Sprintf("u%d", i)] = &attemptCounter{n: loginMaxFailures, t: clock.now()}
+	}
+	clock.advance(loginLockout)
+	l.users.lastPrune = clock.now()
+	if wait := l.beginUser("newcomer"); wait != 0 {
+		t.Fatalf("stale lockouts not evicted: %v", wait)
+	}
+}
+
+// #140: when every entry is blocking, eviction scans a bounded number of
+// entries instead of the whole table.
+func TestLoginLimit_EvictionScanBounded(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c := counterMap{m: map[string]*attemptCounter{}, ttl: loginLockout, limit: loginMaxFailures, lastPrune: now}
+	for i := 0; i < loginMaxKeys; i++ {
+		c.m[fmt.Sprintf("u%d", i)] = &attemptCounter{n: loginMaxFailures, t: now}
+	}
+	scanned, ok := c.evictOne(now)
+	if ok || scanned > loginEvictScan {
+		t.Fatalf("evictOne = (%d, %v), want (<= %d, false)", scanned, ok, loginEvictScan)
+	}
+}

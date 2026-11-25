@@ -14,18 +14,12 @@ import (
 )
 
 func TestManager_BackupAllRunsEveryRepository(t *testing.T) {
-	// Not parallel: exec of a just-written script fails with ETXTBSY
-	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
-
-	fake := filepath.Join(t.TempDir(), "restic")
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "` + logPath + `"
 printf '{"message_type":"summary","snapshot_id":"abc123"}\n'
 `
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake restic: %v", err)
-	}
+	fake := writeFakeRestic(t, script)
 	mgr := backup.NewManager(backup.NewRunner(fake), []backup.Repository{
 		{URL: "local-a", Password: "[REDACTED]"},
 		{URL: "local-b", Password: "[REDACTED]"},
@@ -43,16 +37,10 @@ printf '{"message_type":"summary","snapshot_id":"abc123"}\n'
 }
 
 func TestManager_SnapshotsDelegatesToFirstRepo(t *testing.T) {
-	// Not parallel: exec of a just-written script fails with ETXTBSY
-	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
-
-	fake := filepath.Join(t.TempDir(), "restic")
 	script := `#!/bin/sh
 printf '[{"short_id":"snap1","time":"2026-05-26T10:00:00Z","hostname":"box","paths":["/data"]}]\n'
 `
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake restic: %v", err)
-	}
+	fake := writeFakeRestic(t, script)
 	mgr := backup.NewManager(backup.NewRunner(fake), []backup.Repository{
 		{URL: "local-a", Password: "pw"},
 	})
@@ -95,7 +83,6 @@ func countLines(s string) int {
 }
 
 func TestManager_BackupAllForgetsPerRepoPolicy(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "")), []backup.Repository{
 		{URL: "with-policy", Retention: backup.RetentionPolicy{KeepDaily: 7, Prune: true}},
@@ -115,7 +102,6 @@ func TestManager_BackupAllForgetsPerRepoPolicy(t *testing.T) {
 }
 
 func TestManager_BackupAllForgetFailureDoesNotStopOtherRepos(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	policy := backup.RetentionPolicy{KeepDaily: 7}
 	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "forget")), []backup.Repository{
@@ -132,7 +118,6 @@ func TestManager_BackupAllForgetFailureDoesNotStopOtherRepos(t *testing.T) {
 }
 
 func TestManager_BackupFailureSkipsForget(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "backup")), []backup.Repository{
 		{URL: "a", Retention: backup.RetentionPolicy{KeepDaily: 7, Prune: true}},
@@ -146,7 +131,6 @@ func TestManager_BackupFailureSkipsForget(t *testing.T) {
 }
 
 func TestScheduler_OnResultReceivesScheduledRunError(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	mgr := backup.NewManager(backup.NewRunner(writeLoggingRestic(t, logPath, "forget")), []backup.Repository{
 		{URL: "a", Retention: backup.RetentionPolicy{KeepDaily: 7}},
@@ -169,7 +153,6 @@ func TestScheduler_OnResultReceivesScheduledRunError(t *testing.T) {
 }
 
 func TestManager_BackupAllRetentionErrorOnlyWhenBackupsSucceeded(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	policy := backup.RetentionPolicy{KeepDaily: 7}
 
 	logPath := filepath.Join(t.TempDir(), "calls.log")
@@ -193,14 +176,10 @@ func TestManager_BackupAllRetentionErrorOnlyWhenBackupsSucceeded(t *testing.T) {
 }
 
 func TestScheduler_CancelledRunIsNotReported(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	started := filepath.Join(t.TempDir(), "started")
-	fake := filepath.Join(t.TempDir(), "restic")
 	// exec replaces sh so the context kill reaches sleep directly.
 	script := "#!/bin/sh\ntouch " + started + "\nexec sleep 10\n"
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake restic: %v", err)
-	}
+	fake := writeFakeRestic(t, script)
 	sched := backup.NewScheduler(backup.NewManager(backup.NewRunner(fake), []backup.Repository{{URL: "a"}}),
 		[]string{"/data"}, 10*time.Millisecond)
 	var calls atomic.Int32

@@ -11,10 +11,6 @@ import (
 )
 
 func TestRunner_InitBackupCheckUseJSONAndPasswordEnv(t *testing.T) {
-	// Not parallel: exec of a just-written script fails with ETXTBSY
-	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
-
-	fake := filepath.Join(t.TempDir(), "restic")
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	script := `#!/bin/sh
 printf '%s|%s\n' "$*" "$RESTIC_PASSWORD" >> "` + logPath + `"
@@ -23,9 +19,7 @@ case "$1" in
   *) printf '{"message_type":"summary","snapshot_id":"abc123"}\n' ;;
 esac
 `
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake restic: %v", err)
-	}
+	fake := writeFakeRestic(t, script)
 
 	runner := backup.NewRunner(fake)
 	repo := backup.Repository{URL: filepath.Join(t.TempDir(), "repo"), Password: "[REDACTED]"}
@@ -62,20 +56,11 @@ esac
 }
 
 func TestRunner_Snapshots(t *testing.T) {
-	// Not parallel: exec of a just-written script fails with ETXTBSY
-	// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
-
 	t.Run("two snapshots JSON returns two Snapshot values", func(t *testing.T) {
-		// Not parallel: exec of a just-written script fails with ETXTBSY
-		// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
-
-		fake := filepath.Join(t.TempDir(), "restic")
 		script := `#!/bin/sh
 printf '[{"short_id":"abc123","time":"2026-05-26T10:00:00Z","hostname":"host1","paths":["/data"]},{"short_id":"def456","time":"2026-05-27T12:00:00Z","hostname":"host2","paths":["/data","/etc"]}]\n'
 `
-		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-			t.Fatalf("write fake restic: %v", err)
-		}
+		fake := writeFakeRestic(t, script)
 
 		runner := backup.NewRunner(fake)
 		repo := backup.Repository{URL: filepath.Join(t.TempDir(), "repo"), Password: "secret"}
@@ -104,14 +89,8 @@ printf '[{"short_id":"abc123","time":"2026-05-26T10:00:00Z","hostname":"host1","
 	})
 
 	t.Run("empty JSON array returns empty slice not nil", func(t *testing.T) {
-		// Not parallel: exec of a just-written script fails with ETXTBSY
-		// ("text file busy") if a concurrent fork inherits its write fd (golang/go#22315).
-
-		fake := filepath.Join(t.TempDir(), "restic")
 		script := "#!/bin/sh\nprintf '[]\n'\n"
-		if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-			t.Fatalf("write fake restic: %v", err)
-		}
+		fake := writeFakeRestic(t, script)
 
 		runner := backup.NewRunner(fake)
 		repo := backup.Repository{URL: filepath.Join(t.TempDir(), "repo"), Password: "secret"}
@@ -151,15 +130,12 @@ func TestRunner_RestoreRequiresCleanDestination(t *testing.T) {
 // exits with failCode when its first argument after "-r URL" equals failCmd.
 func writeLoggingRestic(t *testing.T, logPath, failCmd string) string {
 	t.Helper()
-	fake := filepath.Join(t.TempDir(), "restic")
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "` + logPath + `"
 if [ "$3" = "` + failCmd + `" ]; then echo "boom" >&2; exit 1; fi
 printf '{"message_type":"summary"}\n'
 `
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake restic: %v", err)
-	}
+	fake := writeFakeRestic(t, script)
 	return fake
 }
 
@@ -176,7 +152,6 @@ func readCalls(t *testing.T, logPath string) []string {
 }
 
 func TestRunner_ForgetArgs(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	cases := []struct {
 		name   string
 		policy backup.RetentionPolicy
@@ -204,7 +179,6 @@ func TestRunner_ForgetArgs(t *testing.T) {
 }
 
 func TestRunner_ForgetRejectsEmptyPolicy(t *testing.T) {
-	// Not parallel: ETXTBSY on freshly written scripts (golang/go#22315).
 	logPath := filepath.Join(t.TempDir(), "calls.log")
 	runner := backup.NewRunner(writeLoggingRestic(t, logPath, ""))
 	if _, err := runner.Forget(context.Background(), backup.Repository{URL: "repo"}, backup.RetentionPolicy{Prune: true}); err == nil {

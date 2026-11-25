@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Card,
   CardContent,
@@ -52,6 +53,11 @@ function ACLCell({ role, plc, tagName, rule }: CellProps) {
   const createMutation = useCreateACLRule();
   const updateMutation = useUpdateACLRule();
   const deleteMutation = useDeleteACLRule();
+  const [error, setError] = useState<string | null>(null);
+  const callbacks = {
+    onSuccess: () => setError(null),
+    onError: (err: Error) => setError(err.message || "change failed"),
+  };
 
   const isChecked = rule?.allow_write === true;
   const isPending =
@@ -64,18 +70,21 @@ function ACLCell({ role, plc, tagName, rule }: CellProps) {
       // unchecked → checked
       if (!rule) {
         // No rule exists — create with allow_write=true
-        createMutation.mutate({ role, plc, tag: tagName, allow_write: true });
+        createMutation.mutate(
+          { role, plc, tag: tagName, allow_write: true },
+          callbacks,
+        );
       } else {
         // Rule exists with allow_write=false — update to true
-        updateMutation.mutate({
-          id: rule.id,
-          input: { role, plc, tag: tagName, allow_write: true },
-        });
+        updateMutation.mutate(
+          { id: rule.id, input: { role, plc, tag: tagName, allow_write: true } },
+          callbacks,
+        );
       }
     } else {
       // checked → unchecked — DELETE the rule for a clean matrix
       if (rule) {
-        deleteMutation.mutate(rule.id);
+        deleteMutation.mutate(rule.id, callbacks);
       }
     }
   }
@@ -89,7 +98,13 @@ function ACLCell({ role, plc, tagName, rule }: CellProps) {
         onChange={(e) => handleChange(e.target.checked)}
         className="h-4 w-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
         aria-label={`Allow ${role} to write ${plc}/${tagName}`}
+        aria-invalid={error !== null}
       />
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </TableCell>
   );
 }
@@ -138,7 +153,8 @@ export function ACL() {
           <CardTitle>ACL matrix</CardTitle>
           <CardDescription>
             Check a cell to allow that role to write the tag. Uncheck to revoke.
-            Changes take effect immediately.
+            Changes take effect immediately; a failed change is shown in its
+            cell and the cell keeps the permission the server holds.
           </CardDescription>
         </CardHeader>
         <CardContent>

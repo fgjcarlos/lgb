@@ -45,6 +45,26 @@ describe("Backup", () => {
     expect(restorePolls).toHaveLength(1);
   });
 
+  it("asks for confirmation before triggering a backup", async () => {
+    const fetchMock = vi.fn(async (path: string) =>
+      path === "/api/backup/status" ? json({ status: "idle" }) : json({ data: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Backup />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Idle")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Trigger backup" }));
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([p]) => p === "/api/backup/trigger")).toBe(false);
+  });
+
   describe("after a manual trigger", () => {
     let status: "idle" | "running";
     let fetchMock: ReturnType<typeof vi.fn>;
@@ -81,6 +101,7 @@ describe("Backup", () => {
       expect(await screen.findByText("Idle")).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Trigger backup" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Start backup" }));
       expect(await screen.findByText("Running")).toBeInTheDocument();
 
       rerender(tree());

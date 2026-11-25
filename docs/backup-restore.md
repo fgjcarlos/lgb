@@ -20,7 +20,7 @@ and you can inspect the result before it goes into service.
 
 Set `historian.retentionDays` above zero and configure `backup.repos` with a repository URL and password stored in protected configuration. Set `backup.interval` for scheduled backups. The Compose example does not configure a backup destination; mount a protected, site-specific copy of its LGB configuration and provision any storage/credentials required by your backend before relying on backups.
 
-Use the **Backup** UI to trigger a snapshot on a running gateway. Use `lgb backup run --config /path/to/lgb.yaml` from an instance with access to the configured data directory and restic; avoid overlapping it with scheduled or UI runs. Confirm the command succeeds and the repository contains a fresh snapshot. Run `lgb backup check --config /path/to/lgb.yaml` to check all configured repositories. For a single repository, use restic directly with the password supplied securely:
+Use the **Backup** UI to trigger a snapshot on a running gateway: click **Trigger backup**, then confirm with **Start backup**. Use `lgb backup run --config /path/to/lgb.yaml` from an instance with access to the configured data directory and restic; avoid overlapping it with scheduled or UI runs. Confirm the command succeeds and the repository contains a fresh snapshot. Run `lgb backup check --config /path/to/lgb.yaml` to check all configured repositories. For a single repository, use restic directly with the password supplied securely:
 
 ```bash
 export RESTIC_PASSWORD='<repository password>'

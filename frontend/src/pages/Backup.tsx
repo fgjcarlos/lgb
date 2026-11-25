@@ -25,6 +25,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -283,19 +284,38 @@ export function Backup() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-2">
-            <Button
-              onClick={() => trigger.mutate()}
-              disabled={
-                trigger.isPending ||
-                polling ||
-                statusQuery.data?.status === "running"
-              }
-            >
-              <HardDriveDownload className="mr-2 h-4 w-4" />
-              {polling || statusQuery.data?.status === "running"
-                ? "Running…"
-                : "Trigger backup"}
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  disabled={
+                    trigger.isPending ||
+                    polling ||
+                    statusQuery.data?.status === "running"
+                  }
+                >
+                  <HardDriveDownload className="mr-2 h-4 w-4" />
+                  {polling || statusQuery.data?.status === "running"
+                    ? "Running…"
+                    : "Trigger backup"}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Start a backup now?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The gateway takes a snapshot with its configured backup
+                    settings. The run uses disk and network I/O until it
+                    finishes.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => trigger.mutate()}>
+                    Start backup
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button
               variant="outline"
               size="icon"

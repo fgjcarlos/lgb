@@ -444,7 +444,8 @@ export function useCreateACLRule(): UseMutationResult<
         
         body: JSON.stringify(input),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+    // Re-read on failure too, so the matrix always shows what the server holds.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
 }
 
@@ -461,7 +462,8 @@ export function useUpdateACLRule(): UseMutationResult<
         
         body: JSON.stringify(input),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+    // Re-read on failure too, so the matrix always shows what the server holds.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
 }
 
@@ -477,7 +479,8 @@ export function useDeleteACLRule(): UseMutationResult<
         method: "DELETE",
         
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+    // Re-read on failure too, so the matrix always shows what the server holds.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
 }
 

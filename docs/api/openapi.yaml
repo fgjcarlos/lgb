@@ -565,7 +565,8 @@ paths:
         username for 15 minutes (known and unknown usernames alike). Both limits answer 429 with a
         Retry-After header. Failed attempts are audited as `login_failed`
         with the username and source address. Request bodies over 4 KiB are
-        rejected with 400.
+        rejected with 400. An admin can lift a username lockout early with
+        `POST /api/auth/unlock`.
       security: []
       requestBody:
         required: true
@@ -605,6 +606,51 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/auth/unlock:
+    post:
+      summary: Clear a username's login lockout
+      description: >-
+        Admin only. Resets the failed-login counter for the username, lifting
+        any active lockout, so its owner can log in again before the
+        15-minute window ends. Answers 204 whether or not the username exists
+        or is locked. Every unlock is audited as `login.unlock` with the acting
+        admin, the target username in the detail, and the source address; if
+        the audit event cannot be written (or no audit log is configured) the
+        unlock is refused with 500 and the lockout stays. Does not reset the per-IP rate limit. Lockout
+        state is in-memory and per process. Request bodies over 4 KiB are
+        rejected with 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  description: Username to unlock, exactly as used to log in.
+      responses:
+        "204":
+          description: Lockout cleared (or there was none).
+        "400":
+          description: Malformed body or missing username.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: The audit event could not be written (or no audit log is configured); nothing was unlocked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+        "403":
+          description: Caller is not an admin.
 
   /api/auth/refresh:
     post:

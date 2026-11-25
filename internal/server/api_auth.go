@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -78,7 +79,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 		return
 	}
-	s.loginLimiter.succeeded(req.Username)
+	s.loginLimiter.resetUser(req.Username)
 
 	token, err := s.authTokens.Issue(user.ID, user.Username, user.Role)
 	if err != nil {
@@ -108,6 +109,37 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Token:     token,
 		ExpiresAt: claims.ExpiresAt.Time,
 	})
+}
+
+type unlockRequest struct {
+	Username string `json:"username"`
+}
+
+// handleUnlockLogin clears a username's login lockout (#138). Admin only via
+// the route middleware. The username travels in the body because a URL path
+// cannot carry every name intact (ServeMux cleans "." and ".." segments).
+// It answers 204 whether or not the username exists or is locked, so it
+// reveals neither.
+func (s *Server) handleUnlockLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req unlockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "username is required")
+		return
+	}
+	// Audit first and fail closed: an unlock that cannot be recorded does not
+	// happen. A nil audit log counts as unrecordable; the server always wires one.
+	if s.auditLog == nil || s.auditLog.Log(auth.AuditEvent{
+		Action:   "login.unlock",
+		Username: actorFromContext(r),
+		Detail:   fmt.Sprintf("username=%q", req.Username), // quoted: a crafted name cannot forge key=value pairs
+		IP:       s.clientAddr(r),
+	}) != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not record audit event")
+		return
+	}
+	s.loginLimiter.resetUser(req.Username)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) auditLoginFailure(r *http.Request, username, detail string) {

@@ -153,6 +153,8 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 			withMiddleware(http.HandlerFunc(s.handleUpdateUserPassword), adminMWs...))
 		mux.Handle("DELETE /api/users/{id}",
 			withMiddleware(http.HandlerFunc(s.handleDeleteUser), adminMWs...))
+		mux.Handle("POST /api/auth/unlock",
+			withMiddleware(http.HandlerFunc(s.handleUnlockLogin), adminMWs...))
 	}
 
 	// Tag write endpoint — requires both plcStore and writeGuard wired.

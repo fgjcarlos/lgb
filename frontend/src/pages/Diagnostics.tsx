@@ -171,6 +171,7 @@ export function Diagnostics() {
           <CardTitle>Checks</CardTitle>
           <CardDescription>
             Each registered doctor.Check contributes to the overall severity.
+            Refreshed every 10 s.
           </CardDescription>
         </CardHeader>
         <CardContent>

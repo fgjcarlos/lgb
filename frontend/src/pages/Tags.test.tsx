@@ -3,10 +3,15 @@ import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useTagWriteMetaMap, WriteControl } from "@/pages/Tags";
+import { Tags, useTagWriteMetaMap, WriteControl } from "@/pages/Tags";
+
+const auth = vi.hoisted(() => ({ role: "operator" }));
 
 vi.mock("@/contexts/auth", () => ({
-  useAuth: () => ({ getWsToken: () => "tok" }),
+  useAuth: () => ({
+    getWsToken: () => "tok",
+    user: { id: 1, username: "u", role: auth.role },
+  }),
 }));
 
 const fetchMock = vi.fn();
@@ -21,6 +26,7 @@ function renderControl(type = "Int16") {
 }
 
 beforeEach(() => {
+  auth.role = "operator";
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -111,5 +117,67 @@ describe("WriteControl", () => {
     );
     expect(screen.getByText("read-only")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("Tags page", () => {
+  const json = (body: unknown) => new Response(JSON.stringify(body));
+  let count: number;
+
+  beforeEach(() => {
+    count = 1;
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path === "/api/plcs") {
+        return json({
+          data: [{ name: "p1", tags: [{ name: "t1", writable: true, type: "Int16" }] }],
+        });
+      }
+      if (path.startsWith("/api/tags/current")) {
+        const offset = Number(new URLSearchParams(path.split("?")[1]).get("offset"));
+        const rows =
+          offset < count
+            ? [{ plc: "p1", tag: "t1", value: 1, quality: "good", timestamp: "2026-01-01T00:00:00Z" }]
+            : [];
+        return json({ data: rows, pagination: { limit: 25, offset, count } });
+      }
+      return json({ data: [] });
+    });
+  });
+
+  function renderPage() {
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <Tags />
+      </QueryClientProvider>,
+    );
+    return client;
+  }
+
+  it("is read-only for viewers", async () => {
+    auth.role = "viewer";
+    renderPage();
+    expect(await screen.findByText("t1")).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Write" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Write" })).not.toBeInTheDocument();
+  });
+
+  it.each(["operator", "admin"])("keeps write controls for %s", async (role) => {
+    auth.role = role;
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Write" })).toBeInTheDocument();
+  });
+
+  it("returns to the last page when the tag count shrinks", async () => {
+    count = 30;
+    const client = renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await screen.findByText("Showing 26–30 of 30");
+
+    count = 3;
+    await client.refetchQueries();
+
+    expect(await screen.findByText("Showing 1–3 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
   });
 });

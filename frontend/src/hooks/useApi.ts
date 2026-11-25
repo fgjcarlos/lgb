@@ -173,14 +173,19 @@ export interface UserRow {
   created_at: string;
 }
 
-export function useUsers(): UseQueryResult<
-  PagedResponse<UserRow>,
-  ApiError | Error
-> {
+export function useUsers(
+  params: { limit?: number; offset?: number } = {},
+): UseQueryResult<PagedResponse<UserRow>, ApiError | Error> {
   const { getWsToken } = useAuth();
+  const limit = params.limit ?? 100;
+  const offset = params.offset ?? 0;
   return useQuery({
-    queryKey: ["users"],
-    queryFn: () => apiFetch<PagedResponse<UserRow>>("/api/users", {}),
+    queryKey: ["users", limit, offset],
+    queryFn: () =>
+      apiFetch<PagedResponse<UserRow>>(
+        `/api/users?limit=${limit}&offset=${offset}`,
+        {},
+      ),
     enabled: !!getWsToken,
   });
 }
@@ -232,6 +237,7 @@ export function useDoctorChecks(): UseQueryResult<
     queryKey: ["doctor"],
     queryFn: () => apiFetch<DoctorResponse>("/api/doctor", {}),
     enabled: !!getWsToken,
+    refetchInterval: 10_000,
   });
 }
 
@@ -444,7 +450,8 @@ export function useCreateACLRule(): UseMutationResult<
         
         body: JSON.stringify(input),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+    // Re-read on failure too, so the matrix always shows what the server holds.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
 }
 
@@ -461,7 +468,8 @@ export function useUpdateACLRule(): UseMutationResult<
         
         body: JSON.stringify(input),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+    // Re-read on failure too, so the matrix always shows what the server holds.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
 }
 
@@ -477,7 +485,8 @@ export function useDeleteACLRule(): UseMutationResult<
         method: "DELETE",
         
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
+    // Re-read on failure too, so the matrix always shows what the server holds.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["acl"] }),
   });
 }
 

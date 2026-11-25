@@ -57,6 +57,9 @@ function toNumeric(value: unknown): number | null {
   return null;
 }
 
+// datetime-local inputs carry no zone: they are read as browser-local time.
+const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 function toIsoOrUndef(local: string | undefined): string | undefined {
   if (!local) return undefined;
   const d = new Date(local);
@@ -114,7 +117,9 @@ export function Historian() {
         <CardHeader>
           <CardTitle>Query</CardTitle>
           <CardDescription>
-            Tag is required. From / to default to all-time when blank.
+            Tag is required. From / to default to all-time when blank and are
+            in your browser&apos;s time zone ({LOCAL_TZ}); they are sent to the
+            gateway as UTC.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -134,7 +139,7 @@ export function Historian() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="from">From</Label>
+              <Label htmlFor="from">From ({LOCAL_TZ})</Label>
               <Input
                 id="from"
                 type="datetime-local"
@@ -142,7 +147,7 @@ export function Historian() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="to">To</Label>
+              <Label htmlFor="to">To ({LOCAL_TZ})</Label>
               <Input id="to" type="datetime-local" {...register("to")} />
             </div>
             <div className="space-y-2">

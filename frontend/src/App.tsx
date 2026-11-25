@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import { Layout } from "@/components/Layout";
+import { PageTitle } from "@/components/PageTitle";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Login } from "@/pages/Login";
 import { routes } from "@/router";
@@ -7,7 +8,14 @@ import { routes } from "@/router";
 export function App() {
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      <Route
+        path="/login"
+        element={
+          <PageTitle title="Sign in">
+            <Login />
+          </PageTitle>
+        }
+      />
       <Route
         element={
           <ProtectedRoute>
@@ -20,13 +28,15 @@ export function App() {
             key={r.path}
             path={r.path}
             element={
-              r.requiredRole ? (
-                <ProtectedRoute requiredRole={r.requiredRole}>
-                  {r.element}
-                </ProtectedRoute>
-              ) : (
-                r.element
-              )
+              <PageTitle title={r.label}>
+                {r.requiredRole ? (
+                  <ProtectedRoute requiredRole={r.requiredRole}>
+                    {r.element}
+                  </ProtectedRoute>
+                ) : (
+                  r.element
+                )}
+              </PageTitle>
             }
           />
         ))}

@@ -237,6 +237,7 @@ export function useDoctorChecks(): UseQueryResult<
     queryKey: ["doctor"],
     queryFn: () => apiFetch<DoctorResponse>("/api/doctor", {}),
     enabled: !!getWsToken,
+    refetchInterval: 10_000,
   });
 }
 

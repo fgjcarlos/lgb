@@ -2,6 +2,7 @@ package historian_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -118,5 +119,61 @@ func TestWriter_StopFlushesBufferedSamplesWithLiveContext(t *testing.T) {
 
 	if got := countSamples(t, store, ts); got != 20 {
 		t.Fatalf("Query returned %d samples; want 20", got)
+	}
+}
+
+// TestWriter_EnqueueDropsWhenBufferFull covers issue #123: while the store is
+// stalled and the buffer is full, Enqueue must return ErrBufferFull at once
+// (never block the PLC scan) and count the dropped sample.
+func TestWriter_EnqueueDropsWhenBufferFull(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	store.SetBeforeWriteHook(func() {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+	})
+
+	writer := historian.NewWriter(store, historian.WriterOptions{BufferSize: 1, BatchSize: 1, FlushInterval: time.Hour})
+	writer.Start(context.Background())
+
+	sample := historian.Sample{PLCName: "plc-a", Tag: "Temp", Timestamp: time.Now().UTC(), Value: 1.0}
+	if err := writer.Enqueue(context.Background(), sample); err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	select {
+	case <-entered: // the writer is now stuck inside InsertBatch
+	case <-time.After(2 * time.Second):
+		t.Fatal("writer never reached the store")
+	}
+	if err := writer.Enqueue(context.Background(), sample); err != nil {
+		t.Fatalf("second Enqueue (fills the buffer): %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- writer.Enqueue(context.Background(), sample) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, historian.ErrBufferFull) {
+			t.Fatalf("Enqueue on full buffer = %v; want ErrBufferFull", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Enqueue blocked while the store was stalled")
+	}
+	if got := writer.Dropped(); got != 1 {
+		t.Fatalf("Dropped() = %d; want 1", got)
+	}
+
+	close(release)
+	if err := writer.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := countSamples(t, store, sample.Timestamp); got != 2 {
+		t.Fatalf("persisted %d samples; want 2 (the dropped one is not stored)", got)
 	}
 }

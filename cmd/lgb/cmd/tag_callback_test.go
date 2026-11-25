@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -100,5 +101,70 @@ func TestBuildTagCallback_HistorianCOVOff(t *testing.T) {
 	stored, _ := runTagCallback(t, false, []float64{10, 10, 10}, cov.Deadband{})
 	if len(stored) != 3 {
 		t.Fatalf("historian stored %v; want 3 samples", stored)
+	}
+}
+
+// TestBuildTagCallback_StalledHistorianDoesNotBlock covers issue #123: with the
+// historian store blocked and its buffer full, the scan callback returns at
+// once and Sparkplug keeps receiving every update. With historian COV on, a
+// dropped sample is not recorded as delivered, so the same value is stored
+// once the historian recovers.
+func TestBuildTagCallback_StalledHistorianDoesNotBlock(t *testing.T) {
+	ctx := context.Background()
+	store, err := historian.Open(ctx, filepath.Join(t.TempDir(), "h.db"), historian.Options{})
+	if err != nil {
+		t.Fatalf("historian.Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	release := make(chan struct{})
+	store.SetBeforeWriteHook(func() { <-release })
+	hw := historian.NewWriter(store, historian.WriterOptions{BufferSize: 2, BatchSize: 1, FlushInterval: time.Hour})
+	hw.Start(ctx)
+
+	var sp []sparkplug.TagUpdate
+	cb := buildTagCallback(ctx, hw, true, 0, func(u sparkplug.TagUpdate) { sp = append(sp, u) }, testutil.NewLogger(t))
+
+	const updates = 50
+	base := time.Now()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < updates; i++ {
+			cb(speedUpdate(float64(i), base.Add(time.Duration(i)*time.Millisecond), cov.Deadband{}))
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("scan callback blocked while the historian store was stalled")
+	}
+	if len(sp) != updates {
+		t.Fatalf("sparkplug got %d updates; want %d", len(sp), updates)
+	}
+	if hw.Dropped() == 0 {
+		t.Fatal("Dropped() = 0; want the samples that did not fit in the buffer")
+	}
+
+	// The last value (49) was dropped, so COV must offer it again.
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		dropped := hw.Dropped()
+		cb(speedUpdate(updates-1, base.Add(time.Second), cov.Deadband{}))
+		if hw.Dropped() == dropped || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := hw.Stop(ctx); err != nil {
+		t.Fatalf("writer Stop: %v", err)
+	}
+	samples, err := store.Query(ctx, historian.Query{PLCName: "p1", Tag: "Speed", From: base.Add(-time.Hour), To: base.Add(time.Hour), Limit: 100})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if n := len(samples); n == 0 || fmt.Sprint(samples[n-1].Value) != fmt.Sprint(updates-1) {
+		t.Fatalf("stored %v; want the last value %d stored after recovery", samples, updates-1)
 	}
 }

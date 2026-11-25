@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useMemo, useState, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -30,11 +30,12 @@ interface TagWriteMeta {
 }
 
 // Build a fast lookup: "plcName|tagName" → { writable, declared type }
-function useTagWriteMetaMap(): Map<string, TagWriteMeta> {
-  const plcsQuery = usePLCs();
-  const map = new Map<string, TagWriteMeta>();
-  if (plcsQuery.data) {
-    for (const plc of plcsQuery.data.data) {
+// Rebuilt only when the PLC list changes, not on every render.
+export function useTagWriteMetaMap(): Map<string, TagWriteMeta> {
+  const plcs = usePLCs().data;
+  return useMemo(() => {
+    const map = new Map<string, TagWriteMeta>();
+    for (const plc of plcs?.data ?? []) {
       for (const tag of plc.tags) {
         map.set(`${plc.name}|${tag.name}`, {
           writable: tag.writable,
@@ -42,8 +43,8 @@ function useTagWriteMetaMap(): Map<string, TagWriteMeta> {
         });
       }
     }
-  }
-  return map;
+    return map;
+  }, [plcs]);
 }
 
 interface WriteControlProps {

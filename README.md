@@ -170,6 +170,16 @@ curl http://localhost:8080/health
 make docker-down
 ```
 
+### Frontend checks
+
+CI runs the same commands on every pull request:
+
+```sh
+cd frontend
+npm run lint   # ESLint (--max-warnings 0) + tsc type check
+npm test       # Vitest + React Testing Library
+```
+
 ### Authentication requirement
 
 The dev stack **requires** `LGB_AUTH_JWTSECRET` (or its legacy spelling

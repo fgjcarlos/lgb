@@ -146,11 +146,11 @@ func writeTooManyLogins(w http.ResponseWriter, wait time.Duration) {
 	writeAPIError(w, http.StatusTooManyRequests, "too_many_requests", "too many login attempts, try again later")
 }
 
-// loginIPKey returns the rate-limit key for the client: the RemoteAddr host
-// for IPv4, its /64 network for IPv6 (one host usually owns a whole /64).
-// Proxy headers are not trusted: lgb has no trusted-proxy configuration.
-func loginIPKey(r *http.Request) string {
-	host := r.RemoteAddr
+// loginIPKey returns the rate-limit key for a client address (as returned by
+// clientAddr, with or without port): the host for IPv4, its /64 network for
+// IPv6 (one host usually owns a whole /64).
+func loginIPKey(addr string) string {
+	host := addr
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}

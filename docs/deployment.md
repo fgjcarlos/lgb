@@ -99,6 +99,21 @@ curl --fail --show-error --cacert "$LGB_HOME/https/ca.crt" https://localhost:844
 
 For HTTPS hostnames other than localhost, use that hostname in the URL and configure DNS/hosts accordingly. The broker is internal-only; external consumers should use a separately managed secured broker or a reviewed override with firewall restrictions, per-user credentials, TLS, and narrow ACLs. The ACL grants only user `lgb` read/write under `spBv1.0/#`; consumers need separate users and narrow topic rules.
 
+## Behind a reverse proxy
+
+By default lgb trusts nobody: the login rate limit (20 attempts per minute per IP, IPv6 grouped by /64) and audit events use the TCP peer address, and `X-Forwarded-For` / `Forwarded` headers are ignored. Behind nginx, Traefik, or a load balancer every client would then share the proxy's address and its rate-limit bucket.
+
+List the proxies' addresses as CIDRs in `server.trustedProxies` (or `LGB_SERVER_TRUSTEDPROXIES`, comma-separated):
+
+```yaml
+server:
+  trustedProxies:
+    - "10.0.0.0/8"
+    - "fd00::/8"
+```
+
+Only when the peer is inside one of these CIDRs does lgb read the forwarding header, walking it right to left and using the first hop that is not itself a trusted proxy. `X-Forwarded-For` takes precedence; `Forwarded` (RFC 7239 `for=`) is used only when `X-Forwarded-For` is absent, so the proxy must append to or overwrite the header lgb reads (nginx `proxy_add_x_forwarded_for`, Traefik's default) and must not pass a client-supplied `X-Forwarded-For` through untouched while setting only `Forwarded`. An unparseable hop (for example `unknown`) stops the walk at the last trusted address. Never list a range that untrusted clients can connect from: any such client could then choose its own IP. The setting is read at startup; restart after changing it.
+
 ## Persistent data and operations
 
 The host directory `LGB_DATA_DIR` is mounted at `/var/lib/lgb` and holds gateway state and the historian. Mosquitto persistence uses `mosquitto-data`. Back up both and test restores before upgrades. `docker compose down` retains data; `down -v` removes the broker volume. Renew external certificates with permissions preserved and recreate the relevant service so replaced files are bind-mounted again. Review [Backup and restore](backup-restore.md) and the [repository security policy](https://github.com/fgjcarlos/lgb/blob/main/SECURITY.md) before production use.

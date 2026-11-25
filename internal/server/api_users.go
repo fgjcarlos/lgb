@@ -273,7 +273,7 @@ func (s *Server) auditUserAction(r *http.Request, action string, targetID int64,
 		Username: actorFromContext(r),
 		TargetID: targetID,
 		Detail:   detail,
-		IP:       r.RemoteAddr,
+		IP:       s.clientAddr(r),
 	})
 }
 

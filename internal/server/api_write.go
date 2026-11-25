@@ -199,7 +199,7 @@ const dcmdAuditIP = "<mqtt-dcmd>"
 // It exists to preserve the existing call sites in handleWriteTag.
 // (TWA-AUDIT-4.1)
 func (s *Server) emitWriteAudit(r *http.Request, plcName, tagName string, value any, outcome, reason, source, username string) {
-	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username, r.RemoteAddr)
+	s.emitWriteAuditDetail(plcName, tagName, value, outcome, reason, source, username, s.clientAddr(r))
 }
 
 // declaredTagType returns the declared Sparkplug type of plcName/tag; ok is

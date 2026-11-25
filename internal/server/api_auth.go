@@ -53,7 +53,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if wait := s.loginLimiter.allowIP(loginIPKey(r)); wait > 0 {
+	if wait := s.loginLimiter.allowIP(loginIPKey(s.clientAddr(r))); wait > 0 {
 		writeTooManyLogins(w, wait)
 		return
 	}
@@ -100,7 +100,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		_ = s.auditLog.Log(auth.AuditEvent{
 			Action:   "login",
 			Username: user.Username,
-			IP:       r.RemoteAddr,
+			IP:       s.clientAddr(r),
 		})
 	}
 
@@ -118,7 +118,7 @@ func (s *Server) auditLoginFailure(r *http.Request, username, detail string) {
 		Action:   "login_failed",
 		Username: username,
 		Detail:   detail,
-		IP:       r.RemoteAddr,
+		IP:       s.clientAddr(r),
 	})
 }
 
@@ -203,7 +203,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		_ = s.auditLog.Log(auth.AuditEvent{
 			Action:   "logout",
 			Username: username,
-			IP:       r.RemoteAddr,
+			IP:       s.clientAddr(r),
 		})
 	}
 

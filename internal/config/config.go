@@ -20,6 +20,7 @@
 package config
 
 import (
+	"net/netip"
 	"os"
 	"reflect"
 	"strconv"
@@ -98,6 +99,12 @@ type ServerSection struct {
 	// (comma-separated) or the server.allowedOrigins YAML field.
 	// R71-2: origin enforcement.
 	AllowedOrigins []string `koanf:"allowedOrigins"`
+	// TrustedProxies lists the CIDRs of reverse proxies whose X-Forwarded-For /
+	// Forwarded headers are believed when resolving the client IP for the login
+	// rate limit and audit events (#137). Empty (default) trusts nobody: the
+	// TCP peer address is used and forwarding headers are ignored. Set via
+	// LGB_SERVER_TRUSTEDPROXIES (comma-separated) or server.trustedProxies.
+	TrustedProxies []string `koanf:"trustedProxies"`
 
 	// HTTP server timeouts (R75-1). Duration strings following Go time.ParseDuration
 	// format (e.g. "5s", "30s"). Empty string uses the compiled-in default.
@@ -276,6 +283,13 @@ func (c *Config) Validate() error {
 	for i, origin := range c.Server.AllowedOrigins {
 		if origin == "" {
 			violations = append(violations, errorf("server.allowedOrigins[%d]: entry must not be empty: %w", i, ErrConfigInvalid))
+		}
+	}
+
+	// server.trustedProxies: each entry must be a CIDR (#137).
+	for i, cidr := range c.Server.TrustedProxies {
+		if _, err := netip.ParsePrefix(cidr); err != nil {
+			violations = append(violations, errorf("server.trustedProxies[%d]: %q is not a valid CIDR (e.g. 10.0.0.0/8): %w", i, cidr, ErrConfigInvalid))
 		}
 	}
 

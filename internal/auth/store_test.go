@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func openTestStore(t *testing.T) *UserStore {
@@ -241,5 +243,33 @@ func TestUserStore_CountByRole(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("CountByRole(operator) = %d; want 0", n)
+	}
+}
+
+func TestUserStore_Authenticate_UnknownUserRunsDummyBcrypt(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	var hashes [][]byte
+	orig := compareHash
+	compareHash = func(hash, password []byte) error {
+		hashes = append(hashes, hash)
+		return orig(hash, password)
+	}
+	t.Cleanup(func() { compareHash = orig })
+
+	_, err := s.Authenticate(ctx, "nobody", "whatever")
+	if err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound for unknown user, got %v", err)
+	}
+	if len(hashes) != 1 {
+		t.Fatalf("expected 1 bcrypt comparison on unknown-user path, got %d", len(hashes))
+	}
+	cost, err := bcrypt.Cost(hashes[0])
+	if err != nil {
+		t.Fatalf("dummy hash is not a bcrypt hash: %v", err)
+	}
+	if cost != bcrypt.DefaultCost {
+		t.Errorf("dummy hash cost = %d; want %d", cost, bcrypt.DefaultCost)
 	}
 }

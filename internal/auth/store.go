@@ -61,6 +61,8 @@ func OpenUserStore(ctx context.Context, path string) (*UserStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Warm the dummy hash so the first unknown-user login is not slower than the rest.
+	dummyHash()
 	return s, nil
 }
 

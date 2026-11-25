@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -18,6 +19,19 @@ var (
 	ErrUserNotFound      = errors.New("user not found")
 	ErrUserAlreadyExists = errors.New("user already exists")
 )
+
+// compareHash is a seam so tests can observe bcrypt comparisons.
+var compareHash = bcrypt.CompareHashAndPassword
+
+// dummyHash is compared on the unknown-user path so it costs the same bcrypt
+// work as a wrong password, preventing username enumeration by timing.
+var dummyHash = sync.OnceValue(func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte("lgb-dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(fmt.Sprintf("generate dummy bcrypt hash: %v", err))
+	}
+	return h
+})
 
 type User struct {
 	ID           int64     `json:"id"`
@@ -158,10 +172,14 @@ func (s *UserStore) CountByRole(ctx context.Context, role Role) (int, error) {
 
 func (s *UserStore) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	user, err := s.GetByUsername(ctx, username)
+	if errors.Is(err, ErrUserNotFound) {
+		_ = compareHash(dummyHash(), []byte(password))
+		return nil, ErrUserNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := compareHash([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, ErrUserNotFound
 	}
 	return user, nil

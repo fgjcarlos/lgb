@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -78,7 +79,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 		return
 	}
-	s.loginLimiter.succeeded(req.Username)
+	s.loginLimiter.resetUser(req.Username)
 
 	token, err := s.authTokens.Issue(user.ID, user.Username, user.Role)
 	if err != nil {
@@ -108,6 +109,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Token:     token,
 		ExpiresAt: claims.ExpiresAt.Time,
 	})
+}
+
+// handleUnlockLogin clears a username's login lockout (#138). Admin only via
+// the route middleware. It answers 204 whether or not the username exists or
+// is locked, so it reveals neither; every call is audited.
+func (s *Server) handleUnlockLogin(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	s.loginLimiter.resetUser(username)
+	if s.auditLog != nil {
+		_ = s.auditLog.Log(auth.AuditEvent{
+			Action:   "login.unlock",
+			Username: actorFromContext(r),
+			Detail:   fmt.Sprintf("username=%q", username), // quoted: a crafted name cannot forge key=value pairs
+			IP:       s.clientAddr(r),
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) auditLoginFailure(r *http.Request, username, detail string) {

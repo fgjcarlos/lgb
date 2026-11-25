@@ -119,8 +119,9 @@ func (l *loginLimiter) beginUser(username string) time.Duration {
 	return 0
 }
 
-// succeeded resets the username's failure counter after a correct password.
-func (l *loginLimiter) succeeded(username string) {
+// resetUser clears the username's failure counter and any active lockout:
+// after a correct password, or on an admin unlock (#138).
+func (l *loginLimiter) resetUser(username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.users.m, userKey(username))

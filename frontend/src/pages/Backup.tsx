@@ -188,6 +188,9 @@ export function Backup() {
   const [restoreTarget, setRestoreTarget] = useState<Snapshot | null>(null);
 
   const statusQuery = useBackupStatus(true);
+  // refetch is stable; the query object is not, so depending on it would
+  // re-register the polling intervals on every render.
+  const { refetch: refetchStatus } = statusQuery;
   const snapshotsQuery = useQuery({
     queryKey: ["backup", "snapshots"],
     queryFn: () => apiFetch<SnapshotsResponse>("/api/backup/snapshots", {}),
@@ -225,10 +228,10 @@ export function Backup() {
   useEffect(() => {
     if (!polling) return;
     const id = window.setInterval(() => {
-      statusQuery.refetch();
+      refetchStatus();
     }, 5000);
     return () => window.clearInterval(id);
-  }, [polling, statusQuery]);
+  }, [polling, refetchStatus]);
 
   // While a restore runs, refetch every 2s until it succeeds or fails.
   const restoreStatus = statusQuery.data?.restore;
@@ -236,10 +239,10 @@ export function Backup() {
   useEffect(() => {
     if (!restoring) return;
     const id = window.setInterval(() => {
-      statusQuery.refetch();
+      refetchStatus();
     }, 2000);
     return () => window.clearInterval(id);
-  }, [restoring, statusQuery]);
+  }, [restoring, refetchStatus]);
 
   const unavailable =
     (statusQuery.error instanceof ApiError &&

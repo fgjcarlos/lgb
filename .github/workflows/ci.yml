@@ -84,10 +84,14 @@ jobs:
         if: steps.fecheck.outputs.has_frontend == 'true'
         working-directory: frontend
         run: npm ci
-      - name: lint (tsc --noEmit)
+      - name: lint (ESLint + tsc)
         if: steps.fecheck.outputs.has_frontend == 'true'
         working-directory: frontend
         run: npm run lint
+      - name: test (Vitest)
+        if: steps.fecheck.outputs.has_frontend == 'true'
+        working-directory: frontend
+        run: npm test
       - name: build
         if: steps.fecheck.outputs.has_frontend == 'true'
         working-directory: frontend

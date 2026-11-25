@@ -230,6 +230,8 @@ func TestServer_RestartServesAddressSpace(t *testing.T) {
 			t.Errorf("Start #%d: Level = %+v, want Good", i+1, dv)
 		}
 		cancel()
-		s.srv.Close()
+		if err := s.Stop(); err != nil {
+			t.Fatalf("Stop #%d: %v", i+1, err)
+		}
 	}
 }

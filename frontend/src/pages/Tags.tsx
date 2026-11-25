@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { UnavailableBanner } from "@/components/UnavailableBanner";
 import { useCurrentTags, useMappings, usePLCs, useWriteTag } from "@/hooks/useApi";
+import { useAuth } from "@/contexts/auth";
 import { ApiError } from "@/lib/api";
 import { inputPropsFor, parseWriteValue } from "@/lib/writeValue";
 
@@ -179,9 +180,18 @@ export function Tags() {
   const [offset, setOffset] = useState(0);
   const tagsQuery = useCurrentTags({ limit: PAGE_SIZE, offset });
   const tagWriteMeta = useTagWriteMetaMap();
+  // Viewers can never write; the server would answer 403 anyway.
+  const canWrite = useAuth().user?.role !== "viewer";
 
   const data = tagsQuery.data;
   const count = data?.pagination.count ?? 0;
+
+  // The inventory shrank under the current page: jump back to the last page.
+  useEffect(() => {
+    if (data && offset > 0 && offset >= count) {
+      setOffset(Math.max(0, Math.ceil(count / PAGE_SIZE) - 1) * PAGE_SIZE);
+    }
+  }, [data, offset, count]);
   const hasPrev = offset > 0;
   const hasNext = data ? offset + PAGE_SIZE < count : false;
 
@@ -191,6 +201,7 @@ export function Tags() {
         <h1 className="text-2xl font-semibold">Tags</h1>
         <p className="text-sm text-muted-foreground">
           Current PLC tag inventory and most recent values.
+          {!canWrite && " Read-only: your role cannot write tags."}
         </p>
       </header>
 
@@ -221,7 +232,7 @@ export function Tags() {
                   <TableHead>Value</TableHead>
                   <TableHead>Quality</TableHead>
                   <TableHead>Timestamp</TableHead>
-                  <TableHead>Write</TableHead>
+                  {canWrite && <TableHead>Write</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -238,14 +249,16 @@ export function Tags() {
                       <TableCell className="text-xs text-muted-foreground">
                         {new Date(row.timestamp).toLocaleString()}
                       </TableCell>
-                      <TableCell>
-                        <WriteControl
-                          plc={row.plc}
-                          tag={row.tag}
-                          writable={meta?.writable ?? false}
-                          type={meta?.type ?? ""}
-                        />
-                      </TableCell>
+                      {canWrite && (
+                        <TableCell>
+                          <WriteControl
+                            plc={row.plc}
+                            tag={row.tag}
+                            writable={meta?.writable ?? false}
+                            type={meta?.type ?? ""}
+                          />
+                        </TableCell>
+                      )}
                     </TableRow>
                   );
                 })}

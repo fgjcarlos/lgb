@@ -124,7 +124,6 @@ interface CreateUserCardProps {
 }
 
 function CreateUserCard({ onCreated }: CreateUserCardProps) {
-  const { getWsToken } = useAuth();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {

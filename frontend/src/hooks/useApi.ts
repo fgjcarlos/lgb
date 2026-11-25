@@ -290,7 +290,6 @@ export function useCreatePLC(): UseMutationResult<
   ApiError | Error,
   PLCRow
 > {
-  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (plc: PLCRow) =>
@@ -308,7 +307,6 @@ export function useUpdatePLC(): UseMutationResult<
   ApiError | Error,
   { name: string; plc: PLCRow }
 > {
-  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ name, plc }: { name: string; plc: PLCRow }) =>
@@ -326,7 +324,6 @@ export function useDeletePLC(): UseMutationResult<
   ApiError | Error,
   string
 > {
-  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
@@ -439,7 +436,6 @@ export function useCreateACLRule(): UseMutationResult<
   ApiError | Error,
   ACLRuleInput
 > {
-  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ACLRuleInput) =>
@@ -457,7 +453,6 @@ export function useUpdateACLRule(): UseMutationResult<
   ApiError | Error,
   { id: number; input: ACLRuleInput }
 > {
-  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: ACLRuleInput }) =>
@@ -475,7 +470,6 @@ export function useDeleteACLRule(): UseMutationResult<
   ApiError | Error,
   number
 > {
-  const { getWsToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) =>
@@ -493,7 +487,6 @@ export function useWriteTag(
   plcName: string,
   tagName: string,
 ): UseMutationResult<void, ApiError | Error, { value: unknown }> {
-  const { getWsToken } = useAuth();
   return useMutation({
     mutationFn: ({ value }: { value: unknown }) =>
       apiFetch<void>(

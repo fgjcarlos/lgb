@@ -71,6 +71,9 @@ export function Login() {
               <Input
                 id="username"
                 autoComplete="username"
+                // The form is the page's only content, so focusing its first
+                // field skips nothing a screen-reader user needs first.
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
                 {...register("username")}
               />

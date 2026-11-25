@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WriteControl } from "@/pages/Tags";
+import { useTagWriteMetaMap, WriteControl } from "@/pages/Tags";
 
 vi.mock("@/contexts/auth", () => ({
-  useAuth: () => ({ getWsToken: () => null }),
+  useAuth: () => ({ getWsToken: () => "tok" }),
 }));
 
 const fetchMock = vi.fn();
@@ -26,6 +27,31 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("useTagWriteMetaMap", () => {
+  it("maps plc|tag to write meta and keeps the same Map across re-renders", async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ name: "p1", tags: [{ name: "t1", writable: true, type: "Int16" }] }],
+          }),
+        ),
+    );
+    const client = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(() => useTagWriteMetaMap(), { wrapper });
+
+    await waitFor(() => expect(result.current.size).toBe(1));
+    expect(result.current.get("p1|t1")).toEqual({ writable: true, type: "Int16" });
+
+    const first = result.current;
+    rerender();
+    expect(result.current).toBe(first);
+  });
 });
 
 describe("WriteControl", () => {

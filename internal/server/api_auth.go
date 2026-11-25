@@ -45,8 +45,9 @@ type authUserView struct {
 //
 // Brute-force protection (#74): attempts are rate limited per client IP,
 // and loginMaxFailures consecutive failures lock the username for
-// loginLockout. Both answer the same 429 for known and unknown usernames,
-// and every failed attempt is audited as "login_failed".
+// loginLockout. Both answer the same 429 for known and unknown usernames.
+// Credential failures and lockouts are audited as "login_failed"; store
+// faults answer 500 and do not count against the username (#140).
 // POST /api/auth/login (public)
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.userStore == nil || s.authTokens == nil {
@@ -74,6 +75,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := s.userStore.Authenticate(r.Context(), req.Username, req.Password)
+	if err != nil && !errors.Is(err, auth.ErrUserNotFound) {
+		// Only the user lookup can fail this way, before any password check.
+		s.loginLimiter.refundUser(req.Username)
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not verify credentials")
+		return
+	}
 	if err != nil {
 		s.auditLoginFailure(r, req.Username, "invalid credentials")
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
@@ -148,7 +155,7 @@ func (s *Server) auditLoginFailure(r *http.Request, username, detail string) {
 	}
 	_ = s.auditLog.Log(auth.AuditEvent{
 		Action:   "login_failed",
-		Username: username,
+		Username: userKey(username), // bounded: users sometimes type the password here
 		Detail:   detail,
 		IP:       s.clientAddr(r),
 	})

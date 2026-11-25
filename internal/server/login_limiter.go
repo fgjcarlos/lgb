@@ -17,6 +17,7 @@ const (
 	loginIPWindow    = time.Minute
 	loginMaxKeys     = 100_000 // bound on tracked usernames / IPs
 	loginMaxKeyLen   = 256     // usernames are tracked by this many leading bytes
+	loginEvictScan   = 1024    // max entries examined per eviction when the table is full
 )
 
 // attemptCounter counts attempts for one key; it is stale once ttl has
@@ -52,19 +53,33 @@ func (c *counterMap) get(key string, now time.Time) *attemptCounter {
 		}
 	}
 	if len(c.m) >= loginMaxKeys {
-		for k, e := range c.m { // map order is random, so the victim is too
-			if e.n < c.limit {
-				delete(c.m, k)
-				break
-			}
+		if _, ok := c.evictOne(now); !ok {
+			return nil
 		}
-	}
-	if len(c.m) >= loginMaxKeys {
-		return nil
 	}
 	e := &attemptCounter{t: now}
 	c.m[key] = e
 	return e
+}
+
+// evictOne drops one non-blocking or stale entry, scanning at most
+// loginEvictScan entries so a table full of lockouts cannot make every
+// request walk it under the limiter lock. It reports how many entries it
+// scanned and whether one was dropped.
+// shortcut: a table that is >99% live lockouts may refuse a new key although
+// an evictable entry exists; track a non-blocking count if that ever matters.
+func (c *counterMap) evictOne(now time.Time) (scanned int, ok bool) {
+	for k, e := range c.m { // map order is random, so the victim is too
+		if scanned == loginEvictScan {
+			break
+		}
+		scanned++
+		if e.n < c.limit || now.Sub(e.t) >= c.ttl {
+			delete(c.m, k)
+			return scanned, true
+		}
+	}
+	return scanned, false
 }
 
 type loginLimiter struct {
@@ -117,6 +132,16 @@ func (l *loginLimiter) beginUser(username string) time.Duration {
 	c.n++
 	c.t = now
 	return 0
+}
+
+// refundUser returns a reservation taken by beginUser whose password was never
+// checked (a store fault), so infrastructure errors do not lock users out.
+func (l *loginLimiter) refundUser(username string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e, ok := l.users.m[userKey(username)]; ok && e.n > 0 {
+		e.n--
+	}
 }
 
 // resetUser clears the username's failure counter and any active lockout:

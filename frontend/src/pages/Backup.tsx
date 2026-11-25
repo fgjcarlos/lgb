@@ -205,6 +205,12 @@ export function Backup() {
       }),
     onSuccess: () => {
       setTriggerError(null);
+      // The server is already running; the cached pre-trigger "idle" would
+      // otherwise stop polling at once (#158).
+      queryClient.setQueryData<BackupStatusResponse>(
+        ["backup", "status"],
+        (prev) => (prev ? { ...prev, status: "running" } : prev),
+      );
       setPolling(true);
       queryClient.invalidateQueries({ queryKey: ["backup", "status"] });
     },

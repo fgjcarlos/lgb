@@ -111,20 +111,33 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type unlockRequest struct {
+	Username string `json:"username"`
+}
+
 // handleUnlockLogin clears a username's login lockout (#138). Admin only via
-// the route middleware. It answers 204 whether or not the username exists or
-// is locked, so it reveals neither; every call is audited.
+// the route middleware. The username travels in the body because a URL path
+// cannot carry every name intact (ServeMux cleans "." and ".." segments).
+// It answers 204 whether or not the username exists or is locked, so it
+// reveals neither.
 func (s *Server) handleUnlockLogin(w http.ResponseWriter, r *http.Request) {
-	username := r.PathValue("username")
-	s.loginLimiter.resetUser(username)
-	if s.auditLog != nil {
-		_ = s.auditLog.Log(auth.AuditEvent{
-			Action:   "login.unlock",
-			Username: actorFromContext(r),
-			Detail:   fmt.Sprintf("username=%q", username), // quoted: a crafted name cannot forge key=value pairs
-			IP:       s.clientAddr(r),
-		})
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req unlockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "username is required")
+		return
 	}
+	// Audit first and fail closed: an unlock that cannot be recorded does not happen.
+	if s.auditLog == nil || s.auditLog.Log(auth.AuditEvent{
+		Action:   "login.unlock",
+		Username: actorFromContext(r),
+		Detail:   fmt.Sprintf("username=%q", req.Username), // quoted: a crafted name cannot forge key=value pairs
+		IP:       s.clientAddr(r),
+	}) != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "could not record audit event")
+		return
+	}
+	s.loginLimiter.resetUser(req.Username)
 	w.WriteHeader(http.StatusNoContent)
 }
 

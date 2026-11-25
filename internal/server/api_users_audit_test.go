@@ -17,6 +17,7 @@ type usersAuditEnv struct {
 	tokens   *auth.TokenService
 	baseURL  string
 	auditDir string
+	auditLog *auth.AuditLogger
 }
 
 func newUsersAuditEnv(t *testing.T) *usersAuditEnv {
@@ -39,7 +40,7 @@ func newUsersAuditEnv(t *testing.T) *usersAuditEnv {
 		_ = auditLog.Close()
 		_ = store.Close()
 	})
-	return &usersAuditEnv{store: store, tokens: tokens, baseURL: baseURL, auditDir: auditDir}
+	return &usersAuditEnv{store: store, tokens: tokens, baseURL: baseURL, auditDir: auditDir, auditLog: auditLog}
 }
 
 // seedUser creates a user directly in the store (no audit) and returns it.

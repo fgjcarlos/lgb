@@ -153,7 +153,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 			withMiddleware(http.HandlerFunc(s.handleUpdateUserPassword), adminMWs...))
 		mux.Handle("DELETE /api/users/{id}",
 			withMiddleware(http.HandlerFunc(s.handleDeleteUser), adminMWs...))
-		mux.Handle("DELETE /api/auth/lockouts/{username}",
+		mux.Handle("POST /api/auth/unlock",
 			withMiddleware(http.HandlerFunc(s.handleUnlockLogin), adminMWs...))
 	}
 

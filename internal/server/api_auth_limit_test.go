@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/lgb/internal/auth"
+	"github.com/fgjcarlos/lgb/internal/config"
 )
 
 // Login brute-force protection tests (#74).
@@ -26,9 +27,9 @@ type fakeClock struct{ t time.Time }
 func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
-func newLimitTestServer(t *testing.T) (*Server, *fakeClock) {
+func newLimitTestServer(t *testing.T, cfgFns ...func(*config.Config)) (*Server, *fakeClock) {
 	t.Helper()
-	srv, store, _, stop := newAuthTestServer(t)
+	srv, store, _, stop := newAuthTestServer(t, cfgFns...)
 	t.Cleanup(stop)
 	if _, err := store.Create(context.Background(), "alice", "secret", auth.RoleAdmin); err != nil {
 		t.Fatalf("create user: %v", err)
@@ -39,11 +40,19 @@ func newLimitTestServer(t *testing.T) (*Server, *fakeClock) {
 }
 
 func loginFrom(srv *Server, remoteAddr, username, password string) *httptest.ResponseRecorder {
+	return loginVia(srv, remoteAddr, "", username, password)
+}
+
+// loginVia is loginFrom with an X-Forwarded-For header (omitted when empty).
+func loginVia(srv *Server, remoteAddr, xff, username, password string) *httptest.ResponseRecorder {
 	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = remoteAddr
+	if xff != "" {
+		req.Header.Set("X-Forwarded-For", xff)
+	}
 	srv.handleLogin(rec, req)
 	return rec
 }
@@ -217,6 +226,52 @@ func TestLoginLimit_IPv6GroupedBy64(t *testing.T) {
 	}
 	expectStatus(t, loginFrom(srv, "[2001:db8::ffff]:1", "alice", "secret"), http.StatusTooManyRequests, "same /64")
 	expectStatus(t, loginFrom(srv, "[2001:db8:0:1::1]:1", "alice", "secret"), http.StatusOK, "other /64")
+}
+
+// #137: with no trusted proxies, a spoofed X-Forwarded-For does not escape the
+// peer's bucket; behind a trusted proxy each forwarded client gets its own.
+func TestLoginLimit_TrustedProxy(t *testing.T) {
+	t.Run("untrusted peer spoofing XFF shares its bucket", func(t *testing.T) {
+		srv, _ := newLimitTestServer(t)
+		for i := 1; i <= loginIPLimit; i++ {
+			expectStatus(t, loginVia(srv, "10.0.0.1:1", fmt.Sprintf("203.0.113.%d", i), fmt.Sprintf("user%d", i), "x"), http.StatusUnauthorized, fmt.Sprintf("attempt %d", i))
+		}
+		expectStatus(t, loginVia(srv, "10.0.0.1:1", "198.51.100.1", "alice", "secret"), http.StatusTooManyRequests, "spoofed header ignored")
+	})
+
+	t.Run("trusted proxy splits buckets per client", func(t *testing.T) {
+		srv, _ := newLimitTestServer(t, func(c *config.Config) { c.Server.TrustedProxies = []string{"10.0.0.0/8"} })
+		dir := t.TempDir()
+		al, err := auth.OpenAuditLogger(dir)
+		if err != nil {
+			t.Fatalf("open audit logger: %v", err)
+		}
+		t.Cleanup(func() { al.Close() })
+		srv.auditLog = al
+
+		for i := 1; i <= loginIPLimit; i++ {
+			expectStatus(t, loginVia(srv, "10.0.0.1:1", "203.0.113.9", fmt.Sprintf("user%d", i), "x"), http.StatusUnauthorized, fmt.Sprintf("attempt %d", i))
+		}
+		expectStatus(t, loginVia(srv, "10.0.0.1:1", "6.6.6.6, 203.0.113.9, 10.0.0.2", "alice", "secret"), http.StatusTooManyRequests, "same client via chained hops")
+		expectStatus(t, loginVia(srv, "10.0.0.1:1", "203.0.113.10", "alice", "secret"), http.StatusOK, "other client via same proxy")
+
+		events := readAuditEvents(t, filepath.Join(dir, "events.jsonl"))
+		if len(events) == 0 || events[0].Action != "login_failed" || events[0].IP != "203.0.113.9" {
+			t.Fatalf("first audit event = %+v, want login_failed from 203.0.113.9", events)
+		}
+		if last := events[len(events)-1]; last.IP != "203.0.113.10" {
+			t.Errorf("last audit event IP = %q, want 203.0.113.10", last.IP)
+		}
+	})
+
+	t.Run("trusted proxy keeps IPv6 /64 grouping", func(t *testing.T) {
+		srv, _ := newLimitTestServer(t, func(c *config.Config) { c.Server.TrustedProxies = []string{"10.0.0.0/8"} })
+		for i := 1; i <= loginIPLimit; i++ {
+			expectStatus(t, loginVia(srv, "10.0.0.1:1", fmt.Sprintf("2001:db8::%x", i), fmt.Sprintf("user%d", i), "x"), http.StatusUnauthorized, fmt.Sprintf("attempt %d", i))
+		}
+		expectStatus(t, loginVia(srv, "10.0.0.1:1", "2001:db8::ffff", "alice", "secret"), http.StatusTooManyRequests, "same /64")
+		expectStatus(t, loginVia(srv, "10.0.0.1:1", "2001:db8:0:1::1", "alice", "secret"), http.StatusOK, "other /64")
+	})
 }
 
 // A flood of distinct usernames must neither lift an existing lockout nor

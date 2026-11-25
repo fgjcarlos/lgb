@@ -16,7 +16,7 @@ import (
 
 // newAuthTestServer builds a *Server with real in-memory UserStore + TokenService
 // suitable for login/refresh handler tests. Returns (srv, userStore, tokens, stop).
-func newAuthTestServer(t *testing.T) (*Server, *auth.UserStore, *auth.TokenService, func()) {
+func newAuthTestServer(t *testing.T, cfgFns ...func(*config.Config)) (*Server, *auth.UserStore, *auth.TokenService, func()) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := auth.OpenUserStore(ctx, ":memory:")
@@ -26,6 +26,9 @@ func newAuthTestServer(t *testing.T) (*Server, *auth.UserStore, *auth.TokenServi
 	tokens := auth.NewTokenService("test-secret-32bytes-long!!", time.Hour)
 	cfg := testutil.MinimalConfig(t)
 	cfg.Server.HTTPAddr = "127.0.0.1:0"
+	for _, fn := range cfgFns {
+		fn(cfg)
+	}
 	logger := testutil.NewLogger(t)
 	srv := New(cfg, logger, nil, Opts{
 		AuthTokens: tokens,

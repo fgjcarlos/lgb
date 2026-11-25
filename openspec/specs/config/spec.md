@@ -44,6 +44,7 @@ The following fields MUST be present after load+validation or MUST resolve to th
 | `gateway.dataDir` | NO | platform default | See `data-dir` spec |
 | `server.httpAddr` | NO | `":8080"` | TCP listen address |
 | `server.tlsEnabled` | NO | `false` | TLS on the HTTP server |
+| `server.trustedProxies` | NO | `[]` | CIDRs of reverse proxies whose `X-Forwarded-For` / `Forwarded` headers are trusted for the client IP (login rate limit, audit). Each entry MUST be a valid CIDR. Env: `LGB_SERVER_TRUSTEDPROXIES` (comma-separated) |
 | `auth.jwtSecret` | conditional | — | MUST be non-empty if `lgb server` is started; see §MVP-FND-3.x |
 | `auth.sessionTTL` | NO | `"8h"` | Valid Go duration string |
 | `historian.retentionDays` | NO | `90` | Integer 0–36500; `0` disables the historian. Global default for tags without a PLC or tag override |

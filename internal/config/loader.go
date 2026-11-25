@@ -195,14 +195,11 @@ func Load(path string) (*Config, error) {
 	// string because env vars are untyped. We comma-split it manually and assign
 	// to cfg.Server.AllowedOrigins so callers get a proper []string. (R71-2)
 	if raw := os.Getenv("LGB_SERVER_ALLOWEDORIGINS"); raw != "" {
-		parts := strings.Split(raw, ",")
-		origins := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if t := strings.TrimSpace(p); t != "" {
-				origins = append(origins, t)
-			}
-		}
-		cfg.Server.AllowedOrigins = origins
+		cfg.Server.AllowedOrigins = splitEnvList(raw)
+	}
+	// LGB_SERVER_TRUSTEDPROXIES — same comma-split treatment (#137).
+	if raw := os.Getenv("LGB_SERVER_TRUSTEDPROXIES"); raw != "" {
+		cfg.Server.TrustedProxies = splitEnvList(raw)
 	}
 
 	// Apply per-PLC defaults for fields that koanf confmap cannot set on slice elements.
@@ -278,4 +275,15 @@ func extractRawPLCMaps(k *koanf.Koanf) []map[string]interface{} {
 		}
 	}
 	return result
+}
+
+// splitEnvList comma-splits a list-valued env var, dropping blank entries.
+func splitEnvList(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

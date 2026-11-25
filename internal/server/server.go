@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -106,6 +107,8 @@ type Server struct {
 
 	// loginLimiter guards POST /api/auth/login against brute force (#74).
 	loginLimiter *loginLimiter
+	// trustedProxies are the parsed server.trustedProxies CIDRs (#137).
+	trustedProxies []netip.Prefix
 
 	// tlsConfig is the test seam injected via Opts.TLSConfig. When non-nil and
 	// cfg.Server.TLSEnabled is true, Run uses tls.NewListener instead of ServeTLS.
@@ -195,7 +198,8 @@ func New(cfg *config.Config, log *slog.Logger, checks []doctor.Check, opts Opts)
 		tlsConfig:  opts.TLSConfig,
 		bkpStatus:  backupStatus{status: "idle"},
 
-		loginLimiter: newLoginLimiter(),
+		loginLimiter:   newLoginLimiter(),
+		trustedProxies: parseTrustedProxies(cfg.Server.TrustedProxies),
 	}
 }
 

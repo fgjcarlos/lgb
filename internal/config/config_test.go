@@ -928,6 +928,47 @@ func TestServerAllowedOriginsValidateEmptyEntry(t *testing.T) {
 	}
 }
 
+// TestServerTrustedProxies covers #137: LGB_SERVER_TRUSTEDPROXIES is
+// comma-split, the default is empty, and entries must be valid CIDRs.
+func TestServerTrustedProxies(t *testing.T) {
+	dir := t.TempDir()
+	y := filepath.Join(dir, "proxies.yaml")
+	content := "gateway:\n  id: \"test\"\nserver:\n  httpAddr: \":8080\"\n"
+	if err := os.WriteFile(y, []byte(content), 0600); err != nil {
+		t.Fatalf("writing proxies.yaml: %v", err)
+	}
+
+	cfg, err := config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Server.TrustedProxies) != 0 {
+		t.Fatalf("default TrustedProxies = %v; want empty", cfg.Server.TrustedProxies)
+	}
+
+	t.Setenv("LGB_SERVER_TRUSTEDPROXIES", "10.0.0.0/8, fd00::/8")
+	cfg, err = config.Load(y)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got := strings.Join(cfg.Server.TrustedProxies, "|"); got != "10.0.0.0/8|fd00::/8" {
+		t.Errorf("TrustedProxies = %q; want %q", got, "10.0.0.0/8|fd00::/8")
+	}
+
+	for _, bad := range []string{"10.0.0.1", "not-a-cidr", ""} {
+		cfg := validConfig(t)
+		cfg.Server.TrustedProxies = []string{"10.0.0.0/8", bad}
+		err := cfg.Validate()
+		if !errors.Is(err, errs.ErrConfigInvalid) {
+			t.Errorf("Validate(%q) = %v; want ErrConfigInvalid", bad, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "server.trustedProxies[1]") {
+			t.Errorf("Validate(%q) error does not name server.trustedProxies[1]: %v", bad, err)
+		}
+	}
+}
+
 // TestServerAllowedOriginsValidateNilIsOK asserts R71-2: a nil AllowedOrigins
 // slice passes validation (same-origin-only mode).
 func TestServerAllowedOriginsValidateNilIsOK(t *testing.T) {

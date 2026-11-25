@@ -69,7 +69,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 			Action:   "backup.restore",
 			Username: actorFromContext(r),
 			Detail:   fmt.Sprintf("repo=%d snapshot=%s destination=%s", req.Repo, req.SnapshotID, dest),
-			IP:       r.RemoteAddr,
+			IP:       s.clientAddr(r),
 		})
 	}
 

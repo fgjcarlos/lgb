@@ -173,14 +173,19 @@ export interface UserRow {
   created_at: string;
 }
 
-export function useUsers(): UseQueryResult<
-  PagedResponse<UserRow>,
-  ApiError | Error
-> {
+export function useUsers(
+  params: { limit?: number; offset?: number } = {},
+): UseQueryResult<PagedResponse<UserRow>, ApiError | Error> {
   const { getWsToken } = useAuth();
+  const limit = params.limit ?? 100;
+  const offset = params.offset ?? 0;
   return useQuery({
-    queryKey: ["users"],
-    queryFn: () => apiFetch<PagedResponse<UserRow>>("/api/users", {}),
+    queryKey: ["users", limit, offset],
+    queryFn: () =>
+      apiFetch<PagedResponse<UserRow>>(
+        `/api/users?limit=${limit}&offset=${offset}`,
+        {},
+      ),
     enabled: !!getWsToken,
   });
 }

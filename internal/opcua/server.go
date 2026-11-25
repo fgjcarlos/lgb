@@ -185,14 +185,15 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go s.refreshLoop(ctx, srv)
 
-	err = srv.Start(ctx)
-
-	s.mu.Lock()
-	s.running = false
-	s.mu.Unlock()
-
-	if err != nil && ctx.Err() == nil {
-		return fmt.Errorf("opcua: start: %w", err)
+	// gopcua's Start is non-blocking: on success the server keeps running and
+	// only Stop clears the flag, so Stop still reaches srv.Close (#143).
+	if err = srv.Start(ctx); err != nil {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+		if ctx.Err() == nil {
+			return fmt.Errorf("opcua: start: %w", err)
+		}
 	}
 	return nil
 }

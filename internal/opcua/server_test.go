@@ -86,15 +86,19 @@ func TestServer_StartStop(t *testing.T) {
 	if err := srv.Start(ctx); err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
-	if srv.srv != nil {
-		defer srv.srv.Close()
-	}
+	defer cancel()
 
-	cancel()
-
-	// Stop should be idempotent and clean.
+	// Stop must close the gopcua server, not only flip the running flag (#143).
 	if err := srv.Stop(); err != nil {
 		t.Fatalf("Stop returned error: %v", err)
+	}
+	if state, _ := srv.Health(); state != "Shutdown" {
+		t.Fatalf("after Stop: state = %q, want Shutdown", state)
+	}
+
+	// Stop should be idempotent.
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("second Stop returned error: %v", err)
 	}
 }
 
@@ -243,7 +247,7 @@ func TestServer_EndpointSecurityMatrix(t *testing.T) {
 			if err := srv.Start(ctx); err != nil {
 				t.Fatalf("Start() returned error: %v", err)
 			}
-			defer srv.srv.Close()
+			defer func() { _ = srv.Stop() }()
 
 			endpoints := srv.srv.Endpoints()
 			if len(endpoints) != 1 {
@@ -355,8 +359,10 @@ func TestServer_Health(t *testing.T) {
 		t.Fatalf("after Start: Health() = %q %v, want Running at port %d", state, urls, port)
 	}
 
-	srv.srv.Close()
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
 	if state, _ := srv.Health(); state != "Shutdown" {
-		t.Fatalf("after Close: state = %q, want Shutdown", state)
+		t.Fatalf("after Stop: state = %q, want Shutdown", state)
 	}
 }

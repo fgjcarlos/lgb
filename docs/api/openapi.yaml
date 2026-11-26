@@ -869,8 +869,9 @@ paths:
         Requires viewer role or higher. Returns the result of each registered
         doctor.Check plus an aggregated overall severity (`fail > warn > pass`).
 
-        Besides the offline checks shared with `lgb doctor`, the running server
-        adds live checks: `mqtt-broker` (when Sparkplug is configured: `fail`
+        The running server skips `http-port-available` because it already owns
+        the listening port. The offline `lgb doctor` command still runs that check.
+        The server adds live checks: `mqtt-broker` (when Sparkplug is configured: `fail`
         while the MQTT client is not connected; the broker password is
         redacted) and `opcua-server` (when OPC UA is enabled: `fail` unless the
         server state is `Running`). The OPC UA stack does not expose its

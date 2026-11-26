@@ -10,9 +10,12 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +98,71 @@ func TestServerCmd_JwtFromEnv(t *testing.T) {
 	err := <-errCh
 	if err != nil {
 		t.Errorf("expected clean shutdown, got: %v", err)
+	}
+}
+
+func TestServerCmd_DoctorSkipsOwnHTTPPort(t *testing.T) {
+	cfg := testutil.MinimalConfig(t)
+	cfg.Server.HTTPAddr = fmt.Sprintf("127.0.0.1:%d", freeTCPPort(t))
+	cfg.Historian.RetentionDays = 0
+	cfg.MQTT.GroupID = ""
+	d := &Deps{Config: cfg, UserStoreFactory: seededUserStoreFactory(t)}
+
+	token, err := auth.NewTokenService(cfg.Auth.JwtSecret, time.Hour).Issue(1, "admin", auth.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan error, 1)
+	go func() { stopped <- runServerTo(ctx, d, io.Discard, io.Discard) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-stopped; err != nil {
+			t.Errorf("server exited with error: %v", err)
+		}
+	})
+
+	requestCtx, stopRequest := context.WithTimeout(ctx, 5*time.Second)
+	defer stopRequest()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://"+cfg.Server.HTTPAddr+"/api/doctor", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	var resp *http.Response
+	for {
+		resp, err = http.DefaultClient.Do(req)
+		if err == nil {
+			break
+		}
+		select {
+		case <-requestCtx.Done():
+			t.Fatalf("GET /api/doctor: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/doctor: got status %d, want 200", resp.StatusCode)
+	}
+	var report struct {
+		Overall string `json:"overall"`
+		Checks  []struct {
+			Name    string `json:"name"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range report.Checks {
+		if check.Name == "http-port-available" {
+			t.Errorf("running server reported %s as %s: %s", check.Name, check.Status, check.Message)
+		}
+	}
+	if report.Overall != "pass" && report.Overall != "warn" {
+		t.Errorf("overall = %q, want pass or warn", report.Overall)
 	}
 }
 

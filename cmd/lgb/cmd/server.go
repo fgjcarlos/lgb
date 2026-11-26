@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -127,8 +128,10 @@ func runServerTo(ctx context.Context, d *Deps, stdout, stderr io.Writer) error {
 	}
 	probePlCSim(logger, plcsimAddr)
 
-	// Build doctor checks for the server.
-	checks := doctor.Default(cfg).Checks()
+	// The port availability check is only useful before the server binds it.
+	checks := slices.DeleteFunc(doctor.Default(cfg).Checks(), func(check doctor.Check) bool {
+		return check.Name() == "http-port-available"
+	})
 
 	// Create the Sparkplug Edge Node when MQTT + GroupID are configured.
 	var spNode server.SparkplugNode
